@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -8,24 +8,59 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ArrowRight, ArrowLeft, Sparkles } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
 
 export default function Onboarding() {
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
+  const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     sector: "",
     contentType: "",
     tone: "",
-    frequency: "",
+    frequency: "2",
     description: "",
   });
 
-  const handleNext = () => {
+  useEffect(() => {
+    // Check if user is authenticated
+    const checkAuth = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        navigate('/auth');
+      }
+    };
+    checkAuth();
+  }, [navigate]);
+
+  const handleNext = async () => {
     if (step < 3) {
       setStep(step + 1);
     } else {
-      toast.success("Profil configuré ! Redirection vers le dashboard...");
-      setTimeout(() => navigate("/dashboard"), 1500);
+      // Save profile to database
+      setLoading(true);
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.user) throw new Error("Non authentifié");
+
+        const { error } = await supabase.from('profiles').upsert({
+          id: session.user.id,
+          email: session.user.email,
+          sector: formData.sector,
+          content_types: [formData.contentType],
+          tone: formData.tone,
+          post_frequency: parseInt(formData.frequency),
+        });
+
+        if (error) throw error;
+
+        toast.success("Profil configuré ! Redirection vers le dashboard...");
+        setTimeout(() => navigate("/dashboard"), 1500);
+      } catch (error: any) {
+        toast.error(error.message || "Erreur lors de la sauvegarde");
+      } finally {
+        setLoading(false);
+      }
     }
   };
 
@@ -199,10 +234,10 @@ export default function Onboarding() {
 
             <Button
               onClick={handleNext}
-              disabled={!canProceed()}
+              disabled={!canProceed() || loading}
               className="bg-gradient-to-r from-primary to-secondary hover:opacity-90"
             >
-              {step === 3 ? "Terminer" : "Suivant"}
+              {loading ? "Sauvegarde..." : step === 3 ? "Terminer" : "Suivant"}
               <ArrowRight className="w-4 h-4 ml-2" />
             </Button>
           </div>

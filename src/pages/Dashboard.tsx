@@ -1,58 +1,83 @@
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Calendar, TrendingUp, Clock, CheckCircle, Sparkles, Pencil } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
-import { useNavigate } from "react-router-dom";
-import { toast } from "sonner";
-import { useState } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Calendar, TrendingUp, CheckCircle, Clock, Edit2, Sparkles, LogOut } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
+import { useNavigate } from "react-router-dom";
 
 type Post = {
   id: string;
-  platform: string;
-  date: string;
-  time: string;
+  user_id?: string;
+  platform?: string;
+  platforms?: string[];
+  date?: string;
+  time?: string;
+  scheduled_for?: string;
   title: string;
-  content?: string;
+  content: string;
   status: "pending" | "validated";
 };
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const [posts, setPosts] = useState<Post[]>([
-    {
-      id: "1",
-      platform: "Instagram",
-      date: "2025-10-10",
-      time: "14:00",
-      title: "5 conseils pour améliorer votre productivité",
-      content: "Découvrez nos meilleurs conseils pour booster votre productivité au quotidien ! #productivité #motivation",
-      status: "pending"
-    },
-    {
-      id: "2",
-      platform: "LinkedIn",
-      date: "2025-10-11",
-      time: "09:00",
-      title: "Comment l'IA transforme le marketing digital",
-      content: "L'intelligence artificielle révolutionne le marketing digital. Voici comment en tirer parti pour votre entreprise.",
-      status: "validated"
-    },
-    {
-      id: "3",
-      platform: "TikTok",
-      date: "2025-10-12",
-      time: "18:00",
-      title: "Démonstration rapide de notre produit",
-      content: "Une démo express de notre nouveau produit ! 🚀 #innovation #tech",
-      status: "pending"
-    }
-  ]);
+  const [posts, setPosts] = useState<Post[]>([]);
   const [editingPost, setEditingPost] = useState<Post | null>(null);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [userProfile, setUserProfile] = useState<any>(null);
+
+  useEffect(() => {
+    checkAuthAndLoadData();
+  }, []);
+
+  const checkAuthAndLoadData = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        navigate('/auth');
+        return;
+      }
+
+      // Load user profile
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', session.user.id)
+        .maybeSingle();
+      
+      setUserProfile(profile);
+
+      // Load posts
+      const { data: postsData, error } = await supabase
+        .from('posts')
+        .select('*')
+        .eq('user_id', session.user.id)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      
+      // Transform database posts to match component format
+      const transformedPosts = (postsData || []).map(post => ({
+        ...post,
+        platform: post.platforms?.[0] || 'Instagram',
+        date: post.scheduled_for ? new Date(post.scheduled_for).toISOString().split('T')[0] : '',
+        time: post.scheduled_for ? new Date(post.scheduled_for).toTimeString().substring(0, 5) : '',
+        status: (post.status === 'validated' ? 'validated' : 'pending') as 'pending' | 'validated',
+      }));
+      
+      setPosts(transformedPosts);
+    } catch (error: any) {
+      console.error('Error loading data:', error);
+      toast.error('Erreur lors du chargement des données');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
@@ -60,11 +85,22 @@ export default function Dashboard() {
     navigate("/");
   };
 
-  const handleValidate = (postId: string) => {
-    setPosts(prev => prev.map(post => 
-      post.id === postId ? { ...post, status: "validated" as const } : post
-    ));
-    toast.success("Post validé avec succès !");
+  const handleValidate = async (postId: string) => {
+    try {
+      const { error } = await supabase
+        .from('posts')
+        .update({ status: 'validated' })
+        .eq('id', postId);
+
+      if (error) throw error;
+
+      setPosts(posts.map(post => 
+        post.id === postId ? { ...post, status: "validated" as const } : post
+      ));
+      toast.success("Post validé !");
+    } catch (error: any) {
+      toast.error('Erreur lors de la validation');
+    }
   };
 
   const handleEdit = (post: Post) => {
@@ -72,28 +108,84 @@ export default function Dashboard() {
     setIsEditDialogOpen(true);
   };
 
-  const handleSaveEdit = () => {
+  const handleSaveEdit = async () => {
     if (editingPost) {
-      setPosts(prev => prev.map(post => 
-        post.id === editingPost.id ? editingPost : post
-      ));
-      setIsEditDialogOpen(false);
-      toast.success("Post modifié avec succès !");
+      try {
+        const { error } = await supabase
+          .from('posts')
+          .update({
+            title: editingPost.title,
+            content: editingPost.content,
+            scheduled_for: editingPost.date && editingPost.time 
+              ? `${editingPost.date}T${editingPost.time}:00` 
+              : null,
+          })
+          .eq('id', editingPost.id);
+
+        if (error) throw error;
+
+        setPosts(posts.map(post => 
+          post.id === editingPost.id ? editingPost : post
+        ));
+        setIsEditDialogOpen(false);
+        setEditingPost(null);
+        toast.success("Post modifié !");
+      } catch (error: any) {
+        toast.error('Erreur lors de la modification');
+      }
     }
   };
 
-  const handleGenerate = () => {
-    const newPost: Post = {
-      id: Date.now().toString(),
-      platform: "Instagram",
-      date: new Date(Date.now() + 86400000 * 3).toISOString().split('T')[0],
-      time: "15:00",
-      title: "Nouveau contenu généré par l'IA",
-      content: "Contenu généré automatiquement par notre IA. Personnalisez-le selon vos besoins !",
-      status: "pending"
-    };
-    setPosts(prev => [...prev, newPost]);
-    toast.success("Nouveau contenu généré !");
+  const handleGenerate = async () => {
+    try {
+      const loadingToast = toast.loading("Génération de contenu en cours...");
+      
+      const { data, error } = await supabase.functions.invoke('generate-content', {
+        body: { 
+          prompt: "Génère un post engageant pour mes réseaux sociaux",
+          userPreferences: userProfile 
+        }
+      });
+
+      toast.dismiss(loadingToast);
+
+      if (error) throw error;
+
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error("Non authentifié");
+
+      // Save to database
+      const newPost = {
+        user_id: session.user.id,
+        title: "Nouveau contenu IA",
+        content: data.content,
+        status: 'pending',
+        platforms: ['Instagram'],
+      };
+
+      const { data: savedPost, error: saveError } = await supabase
+        .from('posts')
+        .insert(newPost)
+        .select()
+        .single();
+
+      if (saveError) throw saveError;
+
+      // Transform to match component format
+      const transformedPost = {
+        ...savedPost,
+        platform: savedPost.platforms?.[0] || 'Instagram',
+        date: savedPost.scheduled_for ? new Date(savedPost.scheduled_for).toISOString().split('T')[0] : '',
+        time: savedPost.scheduled_for ? new Date(savedPost.scheduled_for).toTimeString().substring(0, 5) : '',
+        status: (savedPost.status === 'validated' ? 'validated' : 'pending') as 'pending' | 'validated',
+      };
+
+      setPosts([transformedPost, ...posts]);
+      toast.success("Contenu généré avec succès !");
+    } catch (error: any) {
+      console.error('Generation error:', error);
+      toast.error(error.message || 'Erreur lors de la génération');
+    }
   };
 
   const handleCalendar = () => {
@@ -102,6 +194,20 @@ export default function Dashboard() {
 
   const handleStats = () => {
     toast.info("Statistiques - Fonctionnalité à venir");
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-pulse">Chargement...</div>
+      </div>
+    );
+  }
+
+  const stats = {
+    scheduled: posts.length,
+    validated: posts.filter(p => p.status === 'validated').length,
+    pending: posts.filter(p => p.status === 'pending').length,
   };
 
   return (
@@ -129,7 +235,7 @@ export default function Dashboard() {
           <Card className="glass-card p-6 animate-fade-in">
             <div className="flex items-center justify-between mb-4">
               <Calendar className="w-8 h-8 text-primary" />
-              <span className="text-3xl font-bold gradient-text">12</span>
+              <span className="text-3xl font-bold gradient-text">{stats.scheduled}</span>
             </div>
             <p className="text-sm text-muted-foreground">Posts programmés</p>
           </Card>
@@ -137,7 +243,7 @@ export default function Dashboard() {
           <Card className="glass-card p-6 animate-fade-in" style={{ animationDelay: "0.1s" }}>
             <div className="flex items-center justify-between mb-4">
               <CheckCircle className="w-8 h-8 text-secondary" />
-              <span className="text-3xl font-bold gradient-text">8</span>
+              <span className="text-3xl font-bold gradient-text">{stats.validated}</span>
             </div>
             <p className="text-sm text-muted-foreground">Posts validés</p>
           </Card>
@@ -145,7 +251,7 @@ export default function Dashboard() {
           <Card className="glass-card p-6 animate-fade-in" style={{ animationDelay: "0.2s" }}>
             <div className="flex items-center justify-between mb-4">
               <Clock className="w-8 h-8 text-accent" />
-              <span className="text-3xl font-bold gradient-text">4</span>
+              <span className="text-3xl font-bold gradient-text">{stats.pending}</span>
             </div>
             <p className="text-sm text-muted-foreground">En attente</p>
           </Card>
@@ -163,61 +269,78 @@ export default function Dashboard() {
         <div className="grid lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2">
             <h2 className="text-2xl font-bold mb-6">Publications à venir</h2>
-            <div className="space-y-4">
-              {posts.map((post, index) => (
-                <Card key={post.id} className="glass-card p-6 hover:scale-[1.02] transition-all animate-fade-in" style={{ animationDelay: `${index * 0.1}s` }}>
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-gradient-to-r from-primary to-secondary rounded-lg flex items-center justify-center">
-                        <span className="text-xs font-bold text-white">{post.platform.substring(0, 2)}</span>
+            {posts.length === 0 ? (
+              <Card className="glass-card p-8 text-center">
+                <p className="text-muted-foreground mb-4">Aucun post pour le moment</p>
+                <Button onClick={handleGenerate} className="bg-gradient-to-r from-primary to-secondary">
+                  <Sparkles className="w-4 h-4 mr-2" />
+                  Générer votre premier post
+                </Button>
+              </Card>
+            ) : (
+              <div className="space-y-4">
+                {posts.map((post, index) => (
+                  <Card key={post.id} className="glass-card p-6 hover:scale-[1.02] transition-all animate-fade-in" style={{ animationDelay: `${index * 0.1}s` }}>
+                    <div className="flex items-start justify-between mb-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-gradient-to-r from-primary to-secondary rounded-lg flex items-center justify-center">
+                          <span className="text-xs font-bold text-white">{(post.platform || 'IG').substring(0, 2)}</span>
+                        </div>
+                        <div>
+                          <p className="font-medium">{post.title}</p>
+                          <p className="text-xs text-muted-foreground">{post.platform || 'Instagram'}</p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="font-medium">{post.title}</p>
-                        <p className="text-xs text-muted-foreground">{post.platform}</p>
+                      <span className={`px-3 py-1 rounded-full text-xs ${
+                        post.status === "validated" 
+                          ? "bg-secondary/20 text-secondary" 
+                          : "bg-accent/20 text-accent"
+                      }`}>
+                        {post.status === "validated" ? "Validé" : "En attente"}
+                      </span>
+                    </div>
+                    {(post.date || post.time) && (
+                      <div className="flex items-center gap-4 text-sm text-muted-foreground mb-3">
+                        {post.date && (
+                          <div className="flex items-center gap-1">
+                            <Calendar className="w-4 h-4" />
+                            {post.date}
+                          </div>
+                        )}
+                        {post.time && (
+                          <div className="flex items-center gap-1">
+                            <Clock className="w-4 h-4" />
+                            {post.time}
+                          </div>
+                        )}
                       </div>
-                    </div>
-                    <span className={`px-3 py-1 rounded-full text-xs ${
-                      post.status === "validated" 
-                        ? "bg-secondary/20 text-secondary" 
-                        : "bg-accent/20 text-accent"
-                    }`}>
-                      {post.status === "validated" ? "Validé" : "En attente"}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                    <div className="flex items-center gap-1">
-                      <Calendar className="w-4 h-4" />
-                      {post.date}
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Clock className="w-4 h-4" />
-                      {post.time}
-                    </div>
-                  </div>
-                  <div className="flex gap-2 mt-4">
-                    <Button 
-                      size="sm" 
-                      variant="outline" 
-                      className="glass-card flex-1"
-                      onClick={() => handleEdit(post)}
-                    >
-                      <Pencil className="w-4 h-4 mr-1" />
-                      Modifier
-                    </Button>
-                    {post.status === "pending" && (
+                    )}
+                    <p className="text-sm text-muted-foreground mb-4 line-clamp-2">{post.content}</p>
+                    <div className="flex gap-2">
                       <Button 
                         size="sm" 
-                        className="bg-gradient-to-r from-primary to-secondary flex-1"
-                        onClick={() => handleValidate(post.id)}
+                        variant="outline" 
+                        className="glass-card flex-1"
+                        onClick={() => handleEdit(post)}
                       >
-                        <CheckCircle className="w-4 h-4 mr-1" />
-                        Valider
+                        <Edit2 className="w-4 h-4 mr-1" />
+                        Modifier
                       </Button>
-                    )}
-                  </div>
-                </Card>
-              ))}
-            </div>
+                      {post.status === "pending" && (
+                        <Button 
+                          size="sm" 
+                          className="bg-gradient-to-r from-primary to-secondary flex-1"
+                          onClick={() => handleValidate(post.id)}
+                        >
+                          <CheckCircle className="w-4 h-4 mr-1" />
+                          Valider
+                        </Button>
+                      )}
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            )}
           </div>
 
           <div>
@@ -306,7 +429,7 @@ export default function Dashboard() {
                   <Input
                     id="date"
                     type="date"
-                    value={editingPost.date}
+                    value={editingPost.date || ''}
                     onChange={(e) => setEditingPost({ ...editingPost, date: e.target.value })}
                     className="glass-card"
                   />
@@ -316,7 +439,7 @@ export default function Dashboard() {
                   <Input
                     id="time"
                     type="time"
-                    value={editingPost.time}
+                    value={editingPost.time || ''}
                     onChange={(e) => setEditingPost({ ...editingPost, time: e.target.value })}
                     className="glass-card"
                   />

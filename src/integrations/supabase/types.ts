@@ -14,7 +14,84 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      posts: {
+        Row: {
+          content: string
+          created_at: string | null
+          id: string
+          image_url: string | null
+          platforms: string[]
+          published_at: string | null
+          scheduled_for: string | null
+          status: string
+          title: string
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          content: string
+          created_at?: string | null
+          id?: string
+          image_url?: string | null
+          platforms?: string[]
+          published_at?: string | null
+          scheduled_for?: string | null
+          status?: string
+          title: string
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          content?: string
+          created_at?: string | null
+          id?: string
+          image_url?: string | null
+          platforms?: string[]
+          published_at?: string | null
+          scheduled_for?: string | null
+          status?: string
+          title?: string
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          content_types: string[]
+          created_at: string | null
+          email: string | null
+          id: string
+          logo_url: string | null
+          post_frequency: number
+          sector: string
+          tone: string
+          updated_at: string | null
+        }
+        Insert: {
+          content_types: string[]
+          created_at?: string | null
+          email?: string | null
+          id: string
+          logo_url?: string | null
+          post_frequency?: number
+          sector: string
+          tone: string
+          updated_at?: string | null
+        }
+        Update: {
+          content_types?: string[]
+          created_at?: string | null
+          email?: string | null
+          id?: string
+          logo_url?: string | null
+          post_frequency?: number
+          sector?: string
+          tone?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
