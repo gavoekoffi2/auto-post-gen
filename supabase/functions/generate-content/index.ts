@@ -19,14 +19,16 @@ serve(async (req) => {
       throw new Error('LOVABLE_API_KEY not configured');
     }
 
-    // Build system prompt based on user preferences
-    const systemPrompt = `Tu es un expert en création de contenu pour les réseaux sociaux. 
+    // Build system prompt based on user preferences (with defaults if profile not set)
+    const systemPrompt = userPreferences 
+      ? `Tu es un expert en création de contenu pour les réseaux sociaux. 
 Secteur: ${userPreferences.sector}
 Type de contenu: ${userPreferences.contentTypes?.join(', ') || 'mixte'}
 Tonalité: ${userPreferences.tone}
 Description de l'entreprise: ${userPreferences.description || ''}
 
-Génère un post engageant et créatif qui respecte ces préférences. Le post doit être prêt à publier, accrocheur et adapté aux réseaux sociaux.`;
+Génère un post engageant et créatif qui respecte ces préférences. Le post doit être prêt à publier, accrocheur et adapté aux réseaux sociaux.`
+      : `Tu es un expert en création de contenu pour les réseaux sociaux. Génère un post engageant et créatif, accrocheur et adapté aux réseaux sociaux.`;
 
     const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
