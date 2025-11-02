@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
@@ -20,6 +21,7 @@ type Post = {
   scheduled_for?: string;
   title: string;
   content: string;
+  image_url?: string;
   status: "pending" | "validated";
 };
 
@@ -116,6 +118,7 @@ export default function Dashboard() {
           .update({
             title: editingPost.title,
             content: editingPost.content,
+            platforms: editingPost.platforms || ['Instagram'],
             scheduled_for: editingPost.date && editingPost.time 
               ? `${editingPost.date}T${editingPost.time}:00` 
               : null,
@@ -138,7 +141,7 @@ export default function Dashboard() {
 
   const handleGenerate = async () => {
     try {
-      const loadingToast = toast.loading("Génération de contenu en cours...");
+      const loadingToast = toast.loading("Génération de contenu et d'image en cours...");
       
       const { data, error } = await supabase.functions.invoke('generate-content', {
         body: { 
@@ -159,6 +162,7 @@ export default function Dashboard() {
         user_id: session.user.id,
         title: "Nouveau contenu IA",
         content: data.content,
+        image_url: data.imageUrl,
         status: 'pending',
         platforms: ['Instagram'],
       };
@@ -181,7 +185,7 @@ export default function Dashboard() {
       };
 
       setPosts([transformedPost, ...posts]);
-      toast.success("Contenu généré avec succès !");
+      toast.success("Contenu et image générés avec succès !");
     } catch (error: any) {
       console.error('Generation error:', error);
       toast.error(error.message || 'Erreur lors de la génération');
@@ -314,9 +318,14 @@ export default function Dashboard() {
                           </div>
                         )}
                       </div>
-                    )}
-                    <p className="text-sm text-muted-foreground mb-4 line-clamp-2">{post.content}</p>
-                    <div className="flex gap-2">
+                     )}
+                     {post.image_url && (
+                       <div className="mb-4 rounded-lg overflow-hidden">
+                         <img src={post.image_url} alt="Post illustration" className="w-full h-48 object-cover" />
+                       </div>
+                     )}
+                     <p className="text-sm text-muted-foreground mb-4 line-clamp-2">{post.content}</p>
+                     <div className="flex gap-2">
                       <Button 
                         size="sm" 
                         variant="outline" 
@@ -422,6 +431,39 @@ export default function Dashboard() {
                   onChange={(e) => setEditingPost({ ...editingPost, content: e.target.value })}
                   className="glass-card min-h-[100px]"
                 />
+              </div>
+              {editingPost.image_url && (
+                <div>
+                  <Label>Image générée</Label>
+                  <img src={editingPost.image_url} alt="Post" className="w-full rounded-lg mt-2" />
+                </div>
+              )}
+              <div>
+                <Label className="mb-3 block">Plateformes de publication</Label>
+                <div className="space-y-3">
+                  {['Instagram', 'Facebook', 'Twitter', 'LinkedIn', 'TikTok'].map((platform) => (
+                    <div key={platform} className="flex items-center space-x-2">
+                      <Checkbox
+                        id={platform}
+                        checked={editingPost.platforms?.includes(platform) || false}
+                        onCheckedChange={(checked) => {
+                          const currentPlatforms = editingPost.platforms || [];
+                          const newPlatforms = checked
+                            ? [...currentPlatforms, platform]
+                            : currentPlatforms.filter(p => p !== platform);
+                          setEditingPost({ 
+                            ...editingPost, 
+                            platforms: newPlatforms,
+                            platform: newPlatforms[0] || 'Instagram'
+                          });
+                        }}
+                      />
+                      <label htmlFor={platform} className="text-sm cursor-pointer">
+                        {platform}
+                      </label>
+                    </div>
+                  ))}
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>

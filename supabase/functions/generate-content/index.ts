@@ -30,7 +30,8 @@ Description de l'entreprise: ${userPreferences.description || ''}
 Génère un post engageant et créatif qui respecte ces préférences. Le post doit être prêt à publier, accrocheur et adapté aux réseaux sociaux.`
       : `Tu es un expert en création de contenu pour les réseaux sociaux. Génère un post engageant et créatif, accrocheur et adapté aux réseaux sociaux.`;
 
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    // Step 1: Generate text content
+    const textResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${LOVABLE_API_KEY}`,
@@ -45,29 +46,58 @@ Génère un post engageant et créatif qui respecte ces préférences. Le post d
       }),
     });
 
-    if (!response.ok) {
-      if (response.status === 429) {
+    if (!textResponse.ok) {
+      if (textResponse.status === 429) {
         return new Response(
           JSON.stringify({ error: 'Limite de taux atteinte, réessayez plus tard.' }),
           { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
-      if (response.status === 402) {
+      if (textResponse.status === 402) {
         return new Response(
           JSON.stringify({ error: 'Crédit insuffisant, veuillez recharger votre compte.' }),
           { status: 402, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
-      const errorText = await response.text();
-      console.error('AI Gateway error:', response.status, errorText);
+      const errorText = await textResponse.text();
+      console.error('AI Gateway error:', textResponse.status, errorText);
       throw new Error('AI Gateway error');
     }
 
-    const data = await response.json();
-    const generatedContent = data.choices[0].message.content;
+    const textData = await textResponse.json();
+    const generatedContent = textData.choices[0].message.content;
+
+    // Step 2: Generate image based on the content
+    const imagePrompt = `Crée une image illustrative professionnelle pour ce post de réseaux sociaux: "${generatedContent.substring(0, 200)}..."`;
+    
+    const imageResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'google/gemini-2.5-flash-image-preview',
+        messages: [
+          {
+            role: 'user',
+            content: imagePrompt
+          }
+        ],
+        modalities: ["image", "text"]
+      }),
+    });
+
+    let imageUrl = null;
+    if (imageResponse.ok) {
+      const imageData = await imageResponse.json();
+      imageUrl = imageData.choices?.[0]?.message?.images?.[0]?.image_url?.url || null;
+    } else {
+      console.error('Image generation failed:', await imageResponse.text());
+    }
 
     return new Response(
-      JSON.stringify({ content: generatedContent }),
+      JSON.stringify({ content: generatedContent, imageUrl }),
       { 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 200 
