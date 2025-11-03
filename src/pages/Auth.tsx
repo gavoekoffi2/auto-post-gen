@@ -45,12 +45,28 @@ export default function Auth() {
     setLoading(true);
 
     try {
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data: authData, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
 
       if (error) throw error;
+
+      // Check if user has completed onboarding
+      if (authData.user) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('sector, description')
+          .eq('id', authData.user.id)
+          .maybeSingle();
+
+        // If profile doesn't exist or is incomplete, redirect to onboarding
+        if (!profile || !profile.sector || !profile.description) {
+          toast.success("Connexion réussie ! Veuillez compléter votre profil.");
+          navigate("/onboarding");
+          return;
+        }
+      }
 
       toast.success("Connexion réussie !");
       navigate("/dashboard");

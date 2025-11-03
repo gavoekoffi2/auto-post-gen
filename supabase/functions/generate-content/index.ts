@@ -22,12 +22,18 @@ serve(async (req) => {
     // Build system prompt based on user preferences (with defaults if profile not set)
     const systemPrompt = userPreferences 
       ? `Tu es un expert en création de contenu pour les réseaux sociaux. 
+
+PROFIL DU CLIENT:
 Secteur: ${userPreferences.sector}
 Type de contenu: ${userPreferences.contentTypes?.join(', ') || 'mixte'}
 Tonalité: ${userPreferences.tone}
 Description de l'entreprise: ${userPreferences.description || ''}
+${userPreferences.styleExample ? `Style de contenu préféré: ${userPreferences.styleExample}` : ''}
 
-Génère un post engageant et créatif qui respecte ces préférences. Le post doit être prêt à publier, accrocheur et adapté aux réseaux sociaux.`
+INSTRUCTIONS:
+Génère un post engageant et créatif qui respecte EXACTEMENT ces préférences. 
+${userPreferences.styleExample ? 'Inspire-toi fortement de l\'exemple de style fourni pour créer un contenu similaire.' : ''}
+Le post doit être prêt à publier, accrocheur et parfaitement adapté au secteur et au style demandé.`
       : `Tu es un expert en création de contenu pour les réseaux sociaux. Génère un post engageant et créatif, accrocheur et adapté aux réseaux sociaux.`;
 
     // Step 1: Generate text content

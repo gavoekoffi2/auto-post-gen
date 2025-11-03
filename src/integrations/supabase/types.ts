@@ -60,33 +60,39 @@ export type Database = {
         Row: {
           content_types: string[]
           created_at: string | null
+          description: string | null
           email: string | null
           id: string
           logo_url: string | null
           post_frequency: number
           sector: string
+          style_example: string | null
           tone: string
           updated_at: string | null
         }
         Insert: {
           content_types: string[]
           created_at?: string | null
+          description?: string | null
           email?: string | null
           id: string
           logo_url?: string | null
           post_frequency?: number
           sector: string
+          style_example?: string | null
           tone: string
           updated_at?: string | null
         }
         Update: {
           content_types?: string[]
           created_at?: string | null
+          description?: string | null
           email?: string | null
           id?: string
           logo_url?: string | null
           post_frequency?: number
           sector?: string
+          style_example?: string | null
           tone?: string
           updated_at?: string | null
         }

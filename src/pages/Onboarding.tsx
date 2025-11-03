@@ -20,6 +20,7 @@ export default function Onboarding() {
     tone: "",
     frequency: "2",
     description: "",
+    styleExample: "",
   });
 
   useEffect(() => {
@@ -34,7 +35,7 @@ export default function Onboarding() {
   }, [navigate]);
 
   const handleNext = async () => {
-    if (step < 3) {
+    if (step < 4) {
       setStep(step + 1);
     } else {
       // Save profile to database
@@ -50,6 +51,8 @@ export default function Onboarding() {
           content_types: [formData.contentType],
           tone: formData.tone,
           post_frequency: parseInt(formData.frequency),
+          description: formData.description,
+          style_example: formData.styleExample,
         });
 
         if (error) throw error;
@@ -76,6 +79,8 @@ export default function Onboarding() {
         return formData.tone && formData.frequency;
       case 3:
         return formData.description.length > 10;
+      case 4:
+        return true; // Style example is optional
       default:
         return false;
     }
@@ -96,7 +101,7 @@ export default function Onboarding() {
         {/* Progress bar */}
         <div className="mb-8">
           <div className="flex justify-between mb-2">
-            {[1, 2, 3].map((i) => (
+            {[1, 2, 3, 4].map((i) => (
               <div
                 key={i}
                 className={`h-2 flex-1 mx-1 rounded-full transition-all ${
@@ -106,7 +111,7 @@ export default function Onboarding() {
             ))}
           </div>
           <p className="text-center text-sm text-muted-foreground">
-            Étape {step} sur 3
+            Étape {step} sur 4
           </p>
         </div>
 
@@ -199,7 +204,7 @@ export default function Onboarding() {
           {step === 3 && (
             <div className="space-y-6">
               <div>
-                <h2 className="text-2xl font-bold mb-2">Dernière étape !</h2>
+                <h2 className="text-2xl font-bold mb-2">Votre entreprise</h2>
                 <p className="text-muted-foreground">
                   Décrivez votre entreprise ou activité
                 </p>
@@ -221,6 +226,31 @@ export default function Onboarding() {
             </div>
           )}
 
+          {step === 4 && (
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-2xl font-bold mb-2">Dernière étape !</h2>
+                <p className="text-muted-foreground">
+                  Donnez-nous un exemple de style de contenu que vous aimez (optionnel)
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="styleExample">Exemple de style de contenu</Label>
+                <Textarea
+                  id="styleExample"
+                  placeholder="Ex: J'aime les posts courts et percutants avec des emojis, qui posent des questions à mon audience..."
+                  className="glass-card min-h-[150px]"
+                  value={formData.styleExample}
+                  onChange={(e) => setFormData({ ...formData, styleExample: e.target.value })}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Ceci nous aidera à créer du contenu encore plus personnalisé pour vous
+                </p>
+              </div>
+            </div>
+          )}
+
           <div className="flex justify-between mt-8">
             <Button
               variant="outline"
@@ -237,7 +267,7 @@ export default function Onboarding() {
               disabled={!canProceed() || loading}
               className="bg-gradient-to-r from-primary to-secondary hover:opacity-90"
             >
-              {loading ? "Sauvegarde..." : step === 3 ? "Terminer" : "Suivant"}
+              {loading ? "Sauvegarde..." : step === 4 ? "Terminer" : "Suivant"}
               <ArrowRight className="w-4 h-4 ml-2" />
             </Button>
           </div>
