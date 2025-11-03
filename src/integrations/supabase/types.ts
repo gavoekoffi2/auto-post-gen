@@ -64,6 +64,7 @@ export type Database = {
           email: string | null
           id: string
           logo_url: string | null
+          platforms: string[]
           post_frequency: number
           sector: string
           style_example: string | null
@@ -77,6 +78,7 @@ export type Database = {
           email?: string | null
           id: string
           logo_url?: string | null
+          platforms?: string[]
           post_frequency?: number
           sector: string
           style_example?: string | null
@@ -90,6 +92,7 @@ export type Database = {
           email?: string | null
           id?: string
           logo_url?: string | null
+          platforms?: string[]
           post_frequency?: number
           sector?: string
           style_example?: string | null

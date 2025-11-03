@@ -152,20 +152,36 @@ export default function Dashboard() {
 
       toast.dismiss(loadingToast);
 
-      if (error) throw error;
+      if (error) {
+        console.error('Edge function error:', error);
+        throw error;
+      }
+
+      if (!data) {
+        throw new Error('Aucune donnée reçue de la génération');
+      }
+
+      console.log('Generated content:', { content: data.content?.substring(0, 100), hasImage: !!data.imageUrl });
 
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error("Non authentifié");
+
+      // Use user's preferred platforms or default to Instagram
+      const defaultPlatforms = userProfile?.platforms && userProfile.platforms.length > 0 
+        ? userProfile.platforms 
+        : ['Instagram'];
 
       // Save to database
       const newPost = {
         user_id: session.user.id,
         title: "Nouveau contenu IA",
-        content: data.content,
-        image_url: data.imageUrl,
+        content: data.content || "Contenu généré",
+        image_url: data.imageUrl || null,
         status: 'pending',
-        platforms: ['Instagram'],
+        platforms: defaultPlatforms,
       };
+
+      console.log('Saving post to DB:', newPost);
 
       const { data: savedPost, error: saveError } = await supabase
         .from('posts')
@@ -173,7 +189,12 @@ export default function Dashboard() {
         .select()
         .single();
 
-      if (saveError) throw saveError;
+      if (saveError) {
+        console.error('Save error:', saveError);
+        throw saveError;
+      }
+
+      console.log('Post saved successfully:', savedPost.id);
 
       // Transform to match component format
       const transformedPost = {

@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ArrowRight, ArrowLeft, Sparkles } from "lucide-react";
 import { useNavigate } from "react-router-dom";
@@ -21,6 +22,7 @@ export default function Onboarding() {
     frequency: "2",
     description: "",
     styleExample: "",
+    platforms: [] as string[],
   });
 
   useEffect(() => {
@@ -35,7 +37,7 @@ export default function Onboarding() {
   }, [navigate]);
 
   const handleNext = async () => {
-    if (step < 4) {
+    if (step < 5) {
       setStep(step + 1);
     } else {
       // Save profile to database
@@ -53,6 +55,7 @@ export default function Onboarding() {
           post_frequency: parseInt(formData.frequency),
           description: formData.description,
           style_example: formData.styleExample,
+          platforms: formData.platforms.length > 0 ? formData.platforms : ['Instagram'],
         });
 
         if (error) throw error;
@@ -81,6 +84,8 @@ export default function Onboarding() {
         return formData.description.length > 10;
       case 4:
         return true; // Style example is optional
+      case 5:
+        return formData.platforms.length > 0; // At least one social network selected
       default:
         return false;
     }
@@ -101,7 +106,7 @@ export default function Onboarding() {
         {/* Progress bar */}
         <div className="mb-8">
           <div className="flex justify-between mb-2">
-            {[1, 2, 3, 4].map((i) => (
+            {[1, 2, 3, 4, 5].map((i) => (
               <div
                 key={i}
                 className={`h-2 flex-1 mx-1 rounded-full transition-all ${
@@ -111,7 +116,7 @@ export default function Onboarding() {
             ))}
           </div>
           <p className="text-center text-sm text-muted-foreground">
-            Étape {step} sur 4
+            Étape {step} sur 5
           </p>
         </div>
 
@@ -229,7 +234,7 @@ export default function Onboarding() {
           {step === 4 && (
             <div className="space-y-6">
               <div>
-                <h2 className="text-2xl font-bold mb-2">Dernière étape !</h2>
+                <h2 className="text-2xl font-bold mb-2">Style de contenu</h2>
                 <p className="text-muted-foreground">
                   Donnez-nous un exemple de style de contenu que vous aimez (optionnel)
                 </p>
@@ -251,6 +256,43 @@ export default function Onboarding() {
             </div>
           )}
 
+          {step === 5 && (
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-2xl font-bold mb-2">Dernière étape !</h2>
+                <p className="text-muted-foreground">
+                  Sur quels réseaux sociaux êtes-vous présent(e) ?
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="mb-3 block">Sélectionnez vos réseaux sociaux</Label>
+                <div className="space-y-3">
+                  {['Instagram', 'Facebook', 'Twitter', 'LinkedIn', 'TikTok'].map((platform) => (
+                    <div key={platform} className="flex items-center space-x-2">
+                      <Checkbox
+                        id={`onboarding-${platform}`}
+                        checked={formData.platforms.includes(platform)}
+                        onCheckedChange={(checked) => {
+                          const newPlatforms = checked
+                            ? [...formData.platforms, platform]
+                            : formData.platforms.filter(p => p !== platform);
+                          setFormData({ ...formData, platforms: newPlatforms });
+                        }}
+                      />
+                      <label htmlFor={`onboarding-${platform}`} className="text-sm cursor-pointer">
+                        {platform}
+                      </label>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground mt-3">
+                  Sélectionnez au moins un réseau social
+                </p>
+              </div>
+            </div>
+          )}
+
           <div className="flex justify-between mt-8">
             <Button
               variant="outline"
@@ -267,7 +309,7 @@ export default function Onboarding() {
               disabled={!canProceed() || loading}
               className="bg-gradient-to-r from-primary to-secondary hover:opacity-90"
             >
-              {loading ? "Sauvegarde..." : step === 4 ? "Terminer" : "Suivant"}
+              {loading ? "Sauvegarde..." : step === 5 ? "Terminer" : "Suivant"}
               <ArrowRight className="w-4 h-4 ml-2" />
             </Button>
           </div>
