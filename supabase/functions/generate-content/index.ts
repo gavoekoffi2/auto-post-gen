@@ -87,7 +87,9 @@ Le post doit être prêt à publier, accrocheur et parfaitement adapté au secte
         messages: [
           {
             role: 'user',
-            content: imagePrompt
+            content: [
+              { type: 'text', text: imagePrompt }
+            ]
           }
         ],
         modalities: ["image", "text"]
@@ -97,7 +99,41 @@ Le post doit être prêt à publier, accrocheur et parfaitement adapté au secte
     let imageUrl = null;
     if (imageResponse.ok) {
       const imageData = await imageResponse.json();
-      imageUrl = imageData.choices?.[0]?.message?.images?.[0]?.image_url?.url || null;
+      imageUrl = imageData?.choices?.[0]?.message?.images?.[0]?.image_url?.url
+        || imageData?.choices?.[0]?.message?.image_url?.url
+        || null;
+
+      // Fallback attempt with the non-preview image model if nothing returned
+      if (!imageUrl) {
+        const fallbackResp = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'google/gemini-2.5-flash-image',
+            messages: [
+              {
+                role: 'user',
+                content: [
+                  { type: 'text', text: imagePrompt }
+                ]
+              }
+            ],
+            modalities: ["image"]
+          }),
+        });
+
+        if (fallbackResp.ok) {
+          const fb = await fallbackResp.json();
+          imageUrl = fb?.choices?.[0]?.message?.images?.[0]?.image_url?.url
+            || fb?.choices?.[0]?.message?.image_url?.url
+            || null;
+        } else {
+          console.error('Fallback image generation failed:', await fallbackResp.text());
+        }
+      }
     } else {
       console.error('Image generation failed:', await imageResponse.text());
     }
