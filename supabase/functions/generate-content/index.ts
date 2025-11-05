@@ -30,11 +30,23 @@ Tonalité: ${userPreferences.tone}
 Description de l'entreprise: ${userPreferences.description || ''}
 ${userPreferences.styleExample ? `Style de contenu préféré: ${userPreferences.styleExample}` : ''}
 
+INSTRUCTIONS CRITIQUES:
+- Génère un post UNIQUE et ORIGINAL à chaque fois (ne répète JAMAIS le même contenu)
+- Le contenu doit être en FRANÇAIS UNIQUEMENT, 100% français
+- Utilise des émojis pertinents pour rendre le post plus engageant et professionnel
+- Adapte le contenu PRÉCISÉMENT au secteur: ${userPreferences.sector}
+- Respecte la tonalité demandée: ${userPreferences.tone}
+- Crée un post prêt à publier, accrocheur et parfaitement adapté
+${userPreferences.styleExample ? '- Inspire-toi fortement de l\'exemple de style fourni pour créer un contenu similaire' : ''}
+- Varie les sujets et angles d'approche pour chaque génération
+- Le post doit refléter l'identité de l'entreprise: ${userPreferences.description || 'professionnel et engageant'}`
+      : `Tu es un expert en création de contenu pour les réseaux sociaux. 
+
 INSTRUCTIONS:
-Génère un post engageant et créatif qui respecte EXACTEMENT ces préférences. 
-${userPreferences.styleExample ? 'Inspire-toi fortement de l\'exemple de style fourni pour créer un contenu similaire.' : ''}
-Le post doit être prêt à publier, accrocheur et parfaitement adapté au secteur et au style demandé.`
-      : `Tu es un expert en création de contenu pour les réseaux sociaux. Génère un post engageant et créatif, accrocheur et adapté aux réseaux sociaux.`;
+- Génère un post UNIQUE et ORIGINAL en français uniquement
+- Utilise des émojis pertinents
+- Crée un contenu professionnel, engageant et accrocheur
+- Varie les sujets à chaque génération`;
 
     // Step 1: Generate text content
     const textResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
@@ -74,7 +86,14 @@ Le post doit être prêt à publier, accrocheur et parfaitement adapté au secte
     const generatedContent = textData.choices[0].message.content;
 
     // Step 2: Generate image based on the content
-    const imagePrompt = `Crée une image illustrative professionnelle pour ce post de réseaux sociaux: "${generatedContent.substring(0, 200)}..."`;
+    const imagePrompt = `Crée une image illustrative professionnelle et visuelle pour ce post de réseaux sociaux: "${generatedContent.substring(0, 200)}..."
+    
+INSTRUCTIONS CRITIQUES:
+- Image 100% visuelle SANS TEXTE (pas de mots, pas de lettres, pas de chiffres)
+- Style professionnel et moderne
+- Couleurs vives et attrayantes
+- Composition équilibrée et esthétique
+-适合 réseaux sociaux (Instagram, Facebook, LinkedIn)`;
     
     const imageResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
