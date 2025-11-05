@@ -39,7 +39,8 @@ INSTRUCTIONS CRITIQUES:
 - Crée un post prêt à publier, accrocheur et parfaitement adapté
 ${userPreferences.styleExample ? '- Inspire-toi fortement de l\'exemple de style fourni pour créer un contenu similaire' : ''}
 - Varie les sujets et angles d'approche pour chaque génération
-- Le post doit refléter l'identité de l'entreprise: ${userPreferences.description || 'professionnel et engageant'}`
+- Le post doit refléter l'identité de l'entreprise: ${userPreferences.description || 'professionnel et engageant'}
+- Si tu mentionnes le nom de l'entreprise, utilise "${userPreferences.description}" directement, JAMAIS entre crochets`
       : `Tu es un expert en création de contenu pour les réseaux sociaux. 
 
 INSTRUCTIONS:

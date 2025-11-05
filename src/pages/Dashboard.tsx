@@ -30,6 +30,8 @@ export default function Dashboard() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [editingPost, setEditingPost] = useState<Post | null>(null);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [previewPost, setPreviewPost] = useState<Post | null>(null);
+  const [isPreviewDialogOpen, setIsPreviewDialogOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [userProfile, setUserProfile] = useState<any>(null);
 
@@ -213,8 +215,13 @@ export default function Dashboard() {
     }
   };
 
+  const handlePreview = (post: Post) => {
+    setPreviewPost(post);
+    setIsPreviewDialogOpen(true);
+  };
+
   const handleCalendar = () => {
-    toast.info("Calendrier - Fonctionnalité à venir");
+    navigate('/calendar');
   };
 
   const handleStats = () => {
@@ -351,6 +358,14 @@ export default function Dashboard() {
                         size="sm" 
                         variant="outline" 
                         className="glass-card flex-1"
+                        onClick={() => handlePreview(post)}
+                      >
+                        Aperçu
+                      </Button>
+                      <Button 
+                        size="sm" 
+                        variant="outline" 
+                        className="glass-card flex-1"
                         onClick={() => handleEdit(post)}
                       >
                         <Edit2 className="w-4 h-4 mr-1" />
@@ -423,6 +438,55 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* Preview Dialog */}
+      <Dialog open={isPreviewDialogOpen} onOpenChange={setIsPreviewDialogOpen}>
+        <DialogContent className="glass-card max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Aperçu du post</DialogTitle>
+            <DialogDescription>
+              Voici à quoi ressemblera votre publication
+            </DialogDescription>
+          </DialogHeader>
+          {previewPost && (
+            <div className="space-y-4">
+              <div className="bg-card rounded-lg p-4 border border-border">
+                <div className="prose prose-invert max-w-none">
+                  <p className="whitespace-pre-wrap text-foreground">{previewPost.content}</p>
+                </div>
+                {previewPost.image_url && (
+                  <div className="mt-4 rounded-lg overflow-hidden">
+                    <img 
+                      src={previewPost.image_url} 
+                      alt="Post illustration" 
+                      className="w-full h-auto object-cover"
+                    />
+                  </div>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <Button 
+                  variant="outline" 
+                  className="glass-card flex-1"
+                  onClick={() => setIsPreviewDialogOpen(false)}
+                >
+                  Fermer
+                </Button>
+                <Button 
+                  className="bg-gradient-to-r from-primary to-secondary flex-1"
+                  onClick={() => {
+                    setIsPreviewDialogOpen(false);
+                    handleEdit(previewPost);
+                  }}
+                >
+                  <Edit2 className="w-4 h-4 mr-2" />
+                  Modifier
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Edit Dialog */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
