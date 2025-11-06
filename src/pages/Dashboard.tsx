@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Calendar, TrendingUp, CheckCircle, Clock, Edit2, Sparkles, LogOut } from "lucide-react";
+import { Calendar, TrendingUp, CheckCircle, Clock, Edit2, Sparkles, Settings } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,6 +10,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
+import SettingsDialog from "@/components/SettingsDialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 type Post = {
   id: string;
@@ -32,6 +34,7 @@ export default function Dashboard() {
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [previewPost, setPreviewPost] = useState<Post | null>(null);
   const [isPreviewDialogOpen, setIsPreviewDialogOpen] = useState(false);
+  const [isSettingsDialogOpen, setIsSettingsDialogOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [userProfile, setUserProfile] = useState<any>(null);
 
@@ -228,6 +231,10 @@ export default function Dashboard() {
     toast.info("Statistiques - Fonctionnalité à venir");
   };
 
+  const handleSettings = () => {
+    setIsSettingsDialogOpen(true);
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -254,9 +261,15 @@ export default function Dashboard() {
               </div>
               <span className="font-bold text-xl">ContentAI</span>
             </div>
-            <Button onClick={handleSignOut} variant="outline" className="glass-card">
-              Déconnexion
-            </Button>
+            <div className="flex gap-2">
+              <Button onClick={handleSettings} variant="outline" className="glass-card">
+                <Settings className="w-4 h-4 mr-2" />
+                Paramètres
+              </Button>
+              <Button onClick={handleSignOut} variant="outline" className="glass-card">
+                Déconnexion
+              </Button>
+            </div>
           </div>
         </div>
       </header>
@@ -441,7 +454,7 @@ export default function Dashboard() {
 
       {/* Preview Dialog */}
       <Dialog open={isPreviewDialogOpen} onOpenChange={setIsPreviewDialogOpen}>
-        <DialogContent className="glass-card max-w-2xl">
+        <DialogContent className="glass-card max-w-3xl max-h-[90vh]">
           <DialogHeader>
             <DialogTitle>Aperçu du post</DialogTitle>
             <DialogDescription>
@@ -449,41 +462,73 @@ export default function Dashboard() {
             </DialogDescription>
           </DialogHeader>
           {previewPost && (
-            <div className="space-y-4">
-              <div className="bg-card rounded-lg p-4 border border-border">
-                <div className="prose prose-invert max-w-none">
-                  <p className="whitespace-pre-wrap text-foreground">{previewPost.content}</p>
-                </div>
-                {previewPost.image_url && (
-                  <div className="mt-4 rounded-lg overflow-hidden">
-                    <img 
-                      src={previewPost.image_url} 
-                      alt="Post illustration" 
-                      className="w-full h-auto object-cover"
-                    />
+            <ScrollArea className="max-h-[70vh] pr-4">
+              <div className="space-y-6">
+                {/* Simulate social media post */}
+                <div className="bg-card rounded-xl border border-border overflow-hidden">
+                  {/* Post header */}
+                  <div className="p-4 border-b border-border">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-gradient-to-r from-primary to-secondary rounded-full flex items-center justify-center">
+                        <span className="text-sm font-bold text-white">
+                          {userProfile?.description?.substring(0, 2).toUpperCase() || "AI"}
+                        </span>
+                      </div>
+                      <div>
+                        <p className="font-semibold text-sm">{userProfile?.description?.split('.')[0] || "Mon Entreprise"}</p>
+                        <p className="text-xs text-muted-foreground">Il y a quelques instants</p>
+                      </div>
+                    </div>
                   </div>
-                )}
+                  
+                  {/* Post content - text first */}
+                  <div className="p-4">
+                    <div className="prose prose-sm max-w-none">
+                      <p className="whitespace-pre-wrap text-foreground leading-relaxed">{previewPost.content}</p>
+                    </div>
+                  </div>
+
+                  {/* Post image */}
+                  {previewPost.image_url && (
+                    <div className="w-full">
+                      <img 
+                        src={previewPost.image_url} 
+                        alt="Post illustration"
+                        className="w-full h-auto object-cover"
+                      />
+                    </div>
+                  )}
+
+                  {/* Post footer - interaction buttons simulation */}
+                  <div className="p-4 border-t border-border">
+                    <p className="text-xs text-muted-foreground">
+                      Plateformes: {previewPost.platforms?.join(', ') || 'Instagram'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Action buttons */}
+                <div className="flex gap-2 pt-4">
+                  <Button 
+                    variant="outline" 
+                    className="glass-card flex-1"
+                    onClick={() => setIsPreviewDialogOpen(false)}
+                  >
+                    Fermer
+                  </Button>
+                  <Button 
+                    className="bg-gradient-to-r from-primary to-secondary flex-1"
+                    onClick={() => {
+                      setIsPreviewDialogOpen(false);
+                      handleEdit(previewPost);
+                    }}
+                  >
+                    <Edit2 className="w-4 h-4 mr-2" />
+                    Modifier
+                  </Button>
+                </div>
               </div>
-              <div className="flex gap-2">
-                <Button 
-                  variant="outline" 
-                  className="glass-card flex-1"
-                  onClick={() => setIsPreviewDialogOpen(false)}
-                >
-                  Fermer
-                </Button>
-                <Button 
-                  className="bg-gradient-to-r from-primary to-secondary flex-1"
-                  onClick={() => {
-                    setIsPreviewDialogOpen(false);
-                    handleEdit(previewPost);
-                  }}
-                >
-                  <Edit2 className="w-4 h-4 mr-2" />
-                  Modifier
-                </Button>
-              </div>
-            </div>
+            </ScrollArea>
           )}
         </DialogContent>
       </Dialog>
@@ -591,6 +636,14 @@ export default function Dashboard() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Settings Dialog */}
+      <SettingsDialog 
+        isOpen={isSettingsDialogOpen}
+        onOpenChange={setIsSettingsDialogOpen}
+        userProfile={userProfile}
+        onProfileUpdate={checkAuthAndLoadData}
+      />
     </div>
   );
 }
