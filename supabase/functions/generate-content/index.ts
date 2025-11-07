@@ -86,76 +86,85 @@ INSTRUCTIONS:
     const textData = await textResponse.json();
     const generatedContent = textData.choices[0].message.content;
 
-    // Step 2: Generate image based on the content
-    const imagePrompt = `Crée une image illustrative professionnelle et visuelle pour ce post de réseaux sociaux: "${generatedContent.substring(0, 200)}..."
-    
+    let imageUrl = null;
+
+    // Check if user wants to use custom images
+    if (userPreferences?.use_custom_images && userPreferences?.custom_image_urls?.length > 0) {
+      // Pick a random image from the user's custom images
+      const randomIndex = Math.floor(Math.random() * userPreferences.custom_image_urls.length);
+      imageUrl = userPreferences.custom_image_urls[randomIndex];
+      console.log('Using custom image from library:', imageUrl);
+    } else {
+      // Generate image with AI if no custom images
+      const imagePrompt = `Crée une image illustrative professionnelle et visuelle pour ce post de réseaux sociaux: "${generatedContent.substring(0, 200)}..."
+      
 INSTRUCTIONS CRITIQUES:
 - Image 100% visuelle SANS TEXTE (pas de mots, pas de lettres, pas de chiffres)
 - Style professionnel et moderne
 - Couleurs vives et attrayantes
 - Composition équilibrée et esthétique
--适合 réseaux sociaux (Instagram, Facebook, LinkedIn)`;
-    
-    const imageResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash-image-preview',
-        messages: [
-          {
-            role: 'user',
-            content: [
-              { type: 'text', text: imagePrompt }
-            ]
+- Adaptée pour réseaux sociaux (Instagram, Facebook, LinkedIn)`;
+      
+      const imageResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'google/gemini-2.5-flash-image-preview',
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: imagePrompt }
+              ]
+            }
+          ],
+          modalities: ["image", "text"]
+        }),
+      });
+
+      if (imageResponse.ok) {
+        const imageData = await imageResponse.json();
+        imageUrl = imageData?.choices?.[0]?.message?.images?.[0]?.image_url?.url
+          || imageData?.choices?.[0]?.message?.image_url?.url
+          || null;
+
+        // Fallback attempt with the non-preview image model if nothing returned
+        if (!imageUrl) {
+          const fallbackResp = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              model: 'google/gemini-2.5-flash-image',
+              messages: [
+                {
+                  role: 'user',
+                  content: [
+                    { type: 'text', text: imagePrompt }
+                  ]
+                }
+              ],
+              modalities: ["image"]
+            }),
+          });
+
+          if (fallbackResp.ok) {
+            const fb = await fallbackResp.json();
+            imageUrl = fb?.choices?.[0]?.message?.images?.[0]?.image_url?.url
+              || fb?.choices?.[0]?.message?.image_url?.url
+              || null;
+          } else {
+            console.error('Fallback image generation failed:', await fallbackResp.text());
           }
-        ],
-        modalities: ["image", "text"]
-      }),
-    });
-
-    let imageUrl = null;
-    if (imageResponse.ok) {
-      const imageData = await imageResponse.json();
-      imageUrl = imageData?.choices?.[0]?.message?.images?.[0]?.image_url?.url
-        || imageData?.choices?.[0]?.message?.image_url?.url
-        || null;
-
-      // Fallback attempt with the non-preview image model if nothing returned
-      if (!imageUrl) {
-        const fallbackResp = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'google/gemini-2.5-flash-image',
-            messages: [
-              {
-                role: 'user',
-                content: [
-                  { type: 'text', text: imagePrompt }
-                ]
-              }
-            ],
-            modalities: ["image"]
-          }),
-        });
-
-        if (fallbackResp.ok) {
-          const fb = await fallbackResp.json();
-          imageUrl = fb?.choices?.[0]?.message?.images?.[0]?.image_url?.url
-            || fb?.choices?.[0]?.message?.image_url?.url
-            || null;
-        } else {
-          console.error('Fallback image generation failed:', await fallbackResp.text());
         }
+      } else {
+        console.error('Image generation failed:', await imageResponse.text());
       }
-    } else {
-      console.error('Image generation failed:', await imageResponse.text());
     }
 
     return new Response(

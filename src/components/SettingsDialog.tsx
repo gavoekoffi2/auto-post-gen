@@ -31,6 +31,8 @@ export default function SettingsDialog({ isOpen, onOpenChange, userProfile, onPr
     useStyleExample: false,
     useCustomVisuals: false,
     logoUrl: "",
+    useCustomImages: false,
+    customImageUrls: [] as string[],
   });
 
   useEffect(() => {
@@ -46,6 +48,8 @@ export default function SettingsDialog({ isOpen, onOpenChange, userProfile, onPr
         useStyleExample: !!userProfile.style_example,
         useCustomVisuals: !!userProfile.logo_url,
         logoUrl: userProfile.logo_url || "",
+        useCustomImages: !!userProfile.use_custom_images,
+        customImageUrls: userProfile.custom_image_urls || [],
       });
     }
   }, [userProfile]);
@@ -67,6 +71,8 @@ export default function SettingsDialog({ isOpen, onOpenChange, userProfile, onPr
         style_example: formData.useStyleExample ? formData.styleExample : null,
         platforms: formData.platforms.length > 0 ? formData.platforms : ['Instagram'],
         logo_url: formData.useCustomVisuals ? formData.logoUrl : null,
+        use_custom_images: formData.useCustomImages,
+        custom_image_urls: formData.useCustomImages ? formData.customImageUrls : [],
       });
 
       if (error) throw error;
@@ -90,7 +96,7 @@ export default function SettingsDialog({ isOpen, onOpenChange, userProfile, onPr
       if (!session?.user) throw new Error("Non authentifié");
 
       const fileExt = file.name.split('.').pop();
-      const fileName = `${session.user.id}-${Date.now()}.${fileExt}`;
+      const fileName = `${session.user.id}-logo-${Date.now()}.${fileExt}`;
       const filePath = `logos/${fileName}`;
 
       const { error: uploadError } = await supabase.storage
@@ -108,6 +114,48 @@ export default function SettingsDialog({ isOpen, onOpenChange, userProfile, onPr
     } catch (error: any) {
       toast.error("Erreur lors de l'upload du logo");
     }
+  };
+
+  const handleCustomImagesUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) throw new Error("Non authentifié");
+
+      const uploadPromises = Array.from(files).map(async (file) => {
+        const fileExt = file.name.split('.').pop();
+        const fileName = `${session.user.id}-${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
+        const filePath = `custom-images/${fileName}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from('user-assets')
+          .upload(filePath, file);
+
+        if (uploadError) throw uploadError;
+
+        const { data: { publicUrl } } = supabase.storage
+          .from('user-assets')
+          .getPublicUrl(filePath);
+
+        return publicUrl;
+      });
+
+      const uploadedUrls = await Promise.all(uploadPromises);
+      setFormData({ 
+        ...formData, 
+        customImageUrls: [...formData.customImageUrls, ...uploadedUrls] 
+      });
+      toast.success(`${uploadedUrls.length} image(s) uploadée(s) !`);
+    } catch (error: any) {
+      toast.error("Erreur lors de l'upload des images");
+    }
+  };
+
+  const removeCustomImage = (index: number) => {
+    const newUrls = formData.customImageUrls.filter((_, i) => i !== index);
+    setFormData({ ...formData, customImageUrls: newUrls });
   };
 
   return (
@@ -309,6 +357,71 @@ export default function SettingsDialog({ isOpen, onOpenChange, userProfile, onPr
                 <p className="text-xs text-muted-foreground">
                   L'IA pourra utiliser ce visuel dans vos posts
                 </p>
+              </div>
+            )}
+          </div>
+
+          {/* Bibliothèque d'images personnalisées */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold text-lg">Bibliothèque d'images (optionnel)</h3>
+              <div className="flex items-center space-x-2">
+                <Switch
+                  id="use-custom-images"
+                  checked={formData.useCustomImages}
+                  onCheckedChange={(checked) => setFormData({ ...formData, useCustomImages: checked })}
+                />
+                <Label htmlFor="use-custom-images" className="cursor-pointer">Activer</Label>
+              </div>
+            </div>
+            
+            {formData.useCustomImages && (
+              <div className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  Uploadez vos images personnalisées. L'IA choisira aléatoirement parmi ces images lors de la création de posts.
+                </p>
+                
+                {formData.customImageUrls.length > 0 && (
+                  <div className="grid grid-cols-3 gap-3">
+                    {formData.customImageUrls.map((url, index) => (
+                      <div key={index} className="relative group">
+                        <img 
+                          src={url} 
+                          alt={`Image ${index + 1}`} 
+                          className="w-full h-24 object-cover rounded-lg" 
+                        />
+                        <Button
+                          size="icon"
+                          variant="destructive"
+                          className="absolute -top-2 -right-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                          onClick={() => removeCustomImage(index)}
+                        >
+                          <X className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="border-2 border-dashed border-border rounded-lg p-6 text-center">
+                  <input
+                    type="file"
+                    id="custom-images-upload"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={handleCustomImagesUpload}
+                  />
+                  <label htmlFor="custom-images-upload" className="cursor-pointer">
+                    <Upload className="w-8 h-8 mx-auto mb-2 text-muted-foreground" />
+                    <p className="text-sm text-muted-foreground">
+                      Cliquez pour uploader des images
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Vous pouvez sélectionner plusieurs images à la fois
+                    </p>
+                  </label>
+                </div>
               </div>
             )}
           </div>

@@ -60,6 +60,7 @@ export type Database = {
         Row: {
           content_types: string[]
           created_at: string | null
+          custom_image_urls: string[] | null
           description: string | null
           email: string | null
           id: string
@@ -70,10 +71,12 @@ export type Database = {
           style_example: string | null
           tone: string
           updated_at: string | null
+          use_custom_images: boolean | null
         }
         Insert: {
           content_types: string[]
           created_at?: string | null
+          custom_image_urls?: string[] | null
           description?: string | null
           email?: string | null
           id: string
@@ -84,10 +87,12 @@ export type Database = {
           style_example?: string | null
           tone: string
           updated_at?: string | null
+          use_custom_images?: boolean | null
         }
         Update: {
           content_types?: string[]
           created_at?: string | null
+          custom_image_urls?: string[] | null
           description?: string | null
           email?: string | null
           id?: string
@@ -98,6 +103,7 @@ export type Database = {
           style_example?: string | null
           tone?: string
           updated_at?: string | null
+          use_custom_images?: boolean | null
         }
         Relationships: []
       }
