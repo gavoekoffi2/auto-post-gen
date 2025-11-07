@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Calendar, TrendingUp, CheckCircle, Clock, Edit2, Sparkles, Settings } from "lucide-react";
+import { Calendar, TrendingUp, CheckCircle, Clock, Edit2, Sparkles, Settings, Share2, Calendar as CalendarIcon } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,6 +12,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
 import SettingsDialog from "@/components/SettingsDialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { SocialMediaConnect } from "@/components/SocialMediaConnect";
 
 type Post = {
   id: string;
@@ -35,6 +36,7 @@ export default function Dashboard() {
   const [previewPost, setPreviewPost] = useState<Post | null>(null);
   const [isPreviewDialogOpen, setIsPreviewDialogOpen] = useState(false);
   const [isSettingsDialogOpen, setIsSettingsDialogOpen] = useState(false);
+  const [isSocialMediaDialogOpen, setIsSocialMediaDialogOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [userProfile, setUserProfile] = useState<any>(null);
 
@@ -235,6 +237,10 @@ export default function Dashboard() {
     setIsSettingsDialogOpen(true);
   };
 
+  const handleSocialMedia = () => {
+    setIsSocialMediaDialogOpen(true);
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -262,11 +268,15 @@ export default function Dashboard() {
               <span className="font-bold text-xl">ContentAI</span>
             </div>
             <div className="flex gap-2">
-              <Button onClick={handleSettings} variant="outline" className="glass-card">
+              <Button onClick={handleCalendar} variant="outline" size="sm" className="glass-card">
+                <CalendarIcon className="w-4 h-4 mr-2" />
+                Calendrier
+              </Button>
+              <Button onClick={handleSettings} variant="outline" size="sm" className="glass-card">
                 <Settings className="w-4 h-4 mr-2" />
                 Paramètres
               </Button>
-              <Button onClick={handleSignOut} variant="outline" className="glass-card">
+              <Button onClick={handleSignOut} variant="outline" size="sm" className="glass-card">
                 Déconnexion
               </Button>
             </div>
@@ -434,17 +444,17 @@ export default function Dashboard() {
               </Card>
 
               <Card className="glass-card p-6 hover:scale-[1.02] transition-all cursor-pointer">
-                <h3 className="font-semibold mb-2">Statistiques</h3>
+                <h3 className="font-semibold mb-2">Réseaux sociaux</h3>
                 <p className="text-sm text-muted-foreground mb-4">
-                  Analyser vos performances
+                  Connecter vos comptes
                 </p>
                 <Button 
                   variant="outline" 
                   className="w-full glass-card"
-                  onClick={handleStats}
+                  onClick={handleSocialMedia}
                 >
-                  <TrendingUp className="w-4 h-4 mr-2" />
-                  Voir
+                  <Share2 className="w-4 h-4 mr-2" />
+                  Gérer
                 </Button>
               </Card>
             </div>
@@ -638,11 +648,18 @@ export default function Dashboard() {
       </Dialog>
 
       {/* Settings Dialog */}
-      <SettingsDialog 
+      <SettingsDialog
         isOpen={isSettingsDialogOpen}
         onOpenChange={setIsSettingsDialogOpen}
         userProfile={userProfile}
         onProfileUpdate={checkAuthAndLoadData}
+      />
+
+      <SocialMediaConnect
+        isOpen={isSocialMediaDialogOpen}
+        onOpenChange={setIsSocialMediaDialogOpen}
+        userProfile={userProfile}
+        onUpdate={checkAuthAndLoadData}
       />
     </div>
   );
