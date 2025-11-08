@@ -58,50 +58,68 @@ export type Database = {
       }
       profiles: {
         Row: {
+          connected_platforms: string[] | null
           content_types: string[]
           created_at: string | null
           custom_image_urls: string[] | null
           description: string | null
           email: string | null
+          facebook_username: string | null
           id: string
+          instagram_username: string | null
+          linkedin_username: string | null
           logo_url: string | null
           platforms: string[]
           post_frequency: number
           sector: string
           style_example: string | null
+          tiktok_username: string | null
           tone: string
+          twitter_username: string | null
           updated_at: string | null
           use_custom_images: boolean | null
         }
         Insert: {
+          connected_platforms?: string[] | null
           content_types: string[]
           created_at?: string | null
           custom_image_urls?: string[] | null
           description?: string | null
           email?: string | null
+          facebook_username?: string | null
           id: string
+          instagram_username?: string | null
+          linkedin_username?: string | null
           logo_url?: string | null
           platforms?: string[]
           post_frequency?: number
           sector: string
           style_example?: string | null
+          tiktok_username?: string | null
           tone: string
+          twitter_username?: string | null
           updated_at?: string | null
           use_custom_images?: boolean | null
         }
         Update: {
+          connected_platforms?: string[] | null
           content_types?: string[]
           created_at?: string | null
           custom_image_urls?: string[] | null
           description?: string | null
           email?: string | null
+          facebook_username?: string | null
           id?: string
+          instagram_username?: string | null
+          linkedin_username?: string | null
           logo_url?: string | null
           platforms?: string[]
           post_frequency?: number
           sector?: string
           style_example?: string | null
+          tiktok_username?: string | null
           tone?: string
+          twitter_username?: string | null
           updated_at?: string | null
           use_custom_images?: boolean | null
         }

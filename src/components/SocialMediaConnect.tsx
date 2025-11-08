@@ -3,7 +3,6 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Card } from "@/components/ui/card";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -16,41 +15,47 @@ type SocialMediaConnectProps = {
   onUpdate: () => void;
 };
 
+type PlatformId = 'instagram' | 'facebook' | 'twitter' | 'linkedin' | 'tiktok';
+
 type PlatformConnection = {
-  platform: string;
   connected: boolean;
   username?: string;
-  accessToken?: string;
 };
 
 const PLATFORMS = [
-  { id: 'Instagram', label: 'Instagram', icon: '📷' },
-  { id: 'Facebook', label: 'Facebook', icon: '👤' },
-  { id: 'Twitter', label: 'Twitter (X)', icon: '🐦' },
-  { id: 'LinkedIn', label: 'LinkedIn', icon: '💼' },
-  { id: 'TikTok', label: 'TikTok', icon: '🎵' },
+  { id: 'instagram', label: 'Instagram', icon: '📷' },
+  { id: 'facebook', label: 'Facebook', icon: '👤' },
+  { id: 'twitter', label: 'Twitter (X)', icon: '🐦' },
+  { id: 'linkedin', label: 'LinkedIn', icon: '💼' },
+  { id: 'tiktok', label: 'TikTok', icon: '🎵' },
 ];
 
 export function SocialMediaConnect({ isOpen, onOpenChange, userProfile, onUpdate }: SocialMediaConnectProps) {
   const [loading, setLoading] = useState(false);
-  const [connections, setConnections] = useState<PlatformConnection[]>([]);
+  const [connections, setConnections] = useState<Record<string, PlatformConnection>>({});
   const [selectedPlatform, setSelectedPlatform] = useState<string | null>(null);
   const [username, setUsername] = useState("");
 
   useEffect(() => {
-    if (userProfile?.platforms) {
-      const platformConnections: PlatformConnection[] = PLATFORMS.map(p => ({
-        platform: p.id,
-        connected: userProfile.platforms.includes(p.id),
-        username: "",
-      }));
-      setConnections(platformConnections);
+    if (userProfile) {
+      const initialConnections: Record<string, PlatformConnection> = {};
+      PLATFORMS.forEach(platform => {
+        const platformId = platform.id as PlatformId;
+        const usernameKey = `${platformId}_username` as keyof typeof userProfile;
+        const hasUsername = !!userProfile[usernameKey];
+        
+        initialConnections[platform.id] = {
+          connected: hasUsername || userProfile.connected_platforms?.includes(platform.label) || false,
+          username: userProfile[usernameKey] || undefined
+        };
+      });
+      setConnections(initialConnections);
     }
   }, [userProfile]);
 
-  const handleConnect = async () => {
-    if (!selectedPlatform || !username) {
-      toast.error("Veuillez entrer votre nom d'utilisateur");
+  const handleConnect = async (platformId: string) => {
+    if (!username.trim()) {
+      toast.error("Veuillez entrer un nom d'utilisateur");
       return;
     }
 
@@ -59,61 +64,75 @@ export function SocialMediaConnect({ isOpen, onOpenChange, userProfile, onUpdate
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.user) throw new Error("Non authentifié");
 
-      // Update the platforms array to include this platform
-      const updatedPlatforms = [...(userProfile?.platforms || [])];
-      if (!updatedPlatforms.includes(selectedPlatform)) {
-        updatedPlatforms.push(selectedPlatform);
+      const platform = PLATFORMS.find(p => p.id === platformId);
+      if (!platform) return;
+
+      const usernameKey = `${platformId}_username`;
+      const currentConnectedPlatforms = userProfile?.connected_platforms || [];
+      const updatedConnectedPlatforms = [...currentConnectedPlatforms];
+      
+      if (!updatedConnectedPlatforms.includes(platform.label)) {
+        updatedConnectedPlatforms.push(platform.label);
       }
 
       const { error } = await supabase
         .from('profiles')
-        .update({ platforms: updatedPlatforms })
+        .update({ 
+          [usernameKey]: username,
+          connected_platforms: updatedConnectedPlatforms
+        })
         .eq('id', session.user.id);
 
       if (error) throw error;
 
-      toast.success(`${selectedPlatform} connecté avec succès !`);
-      setConnections(connections.map(c => 
-        c.platform === selectedPlatform 
-          ? { ...c, connected: true, username } 
-          : c
-      ));
+      setConnections({
+        ...connections,
+        [platformId]: { connected: true, username: username }
+      });
       setSelectedPlatform(null);
       setUsername("");
+      toast.success(`${platform.label} connecté avec succès !`);
       onUpdate();
     } catch (error: any) {
-      console.error('Error connecting platform:', error);
       toast.error("Erreur lors de la connexion");
+      console.error(error);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleDisconnect = async (platform: string) => {
+  const handleDisconnect = async (platformId: string) => {
     setLoading(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.user) throw new Error("Non authentifié");
 
-      const updatedPlatforms = (userProfile?.platforms || []).filter((p: string) => p !== platform);
+      const platform = PLATFORMS.find(p => p.id === platformId);
+      if (!platform) return;
+
+      const usernameKey = `${platformId}_username`;
+      const currentConnectedPlatforms = userProfile?.connected_platforms || [];
+      const updatedConnectedPlatforms = currentConnectedPlatforms.filter((p: string) => p !== platform.label);
 
       const { error } = await supabase
         .from('profiles')
-        .update({ platforms: updatedPlatforms })
+        .update({ 
+          [usernameKey]: null,
+          connected_platforms: updatedConnectedPlatforms
+        })
         .eq('id', session.user.id);
 
       if (error) throw error;
 
-      toast.success(`${platform} déconnecté`);
-      setConnections(connections.map(c => 
-        c.platform === platform 
-          ? { ...c, connected: false, username: "" } 
-          : c
-      ));
+      setConnections({
+        ...connections,
+        [platformId]: { connected: false, username: undefined }
+      });
+      toast.success(`${platform.label} déconnecté avec succès`);
       onUpdate();
     } catch (error: any) {
-      console.error('Error disconnecting platform:', error);
       toast.error("Erreur lors de la déconnexion");
+      console.error(error);
     } finally {
       setLoading(false);
     }
@@ -131,8 +150,7 @@ export function SocialMediaConnect({ isOpen, onOpenChange, userProfile, onUpdate
 
         <div className="space-y-4 mt-4">
           {PLATFORMS.map((platform) => {
-            const connection = connections.find(c => c.platform === platform.id);
-            const isConnected = connection?.connected || false;
+            const connection = connections[platform.id] || { connected: false };
 
             return (
               <Card key={platform.id} className="glass-card p-4">
@@ -141,14 +159,14 @@ export function SocialMediaConnect({ isOpen, onOpenChange, userProfile, onUpdate
                     <span className="text-2xl">{platform.icon}</span>
                     <div>
                       <p className="font-medium">{platform.label}</p>
-                      {isConnected && connection?.username && (
+                      {connection.connected && connection.username && (
                         <p className="text-sm text-muted-foreground">@{connection.username}</p>
                       )}
                     </div>
                   </div>
 
                   <div className="flex items-center gap-2">
-                    {isConnected ? (
+                    {connection.connected ? (
                       <>
                         <div className="flex items-center gap-1 text-green-500">
                           <Check className="w-4 h-4" />
@@ -177,18 +195,23 @@ export function SocialMediaConnect({ isOpen, onOpenChange, userProfile, onUpdate
                   </div>
                 </div>
 
-                {selectedPlatform === platform.id && !isConnected && (
+                {selectedPlatform === platform.id && !connection.connected && (
                   <div className="mt-4 pt-4 border-t border-border/50 space-y-3">
                     <div>
-                      <Label htmlFor={`username-${platform.id}`}>
+                      <Label htmlFor={`username-${platform.id}`} className="text-sm text-muted-foreground">
                         Nom d'utilisateur {platform.label}
                       </Label>
                       <Input
                         id={`username-${platform.id}`}
-                        placeholder={`Votre nom d'utilisateur ${platform.label}`}
+                        placeholder={`@votre_username_${platform.id}`}
                         value={username}
                         onChange={(e) => setUsername(e.target.value)}
                         className="glass-card mt-1"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && username.trim()) {
+                            handleConnect(platform.id);
+                          }
+                        }}
                       />
                     </div>
                     <div className="flex gap-2">
@@ -205,8 +228,8 @@ export function SocialMediaConnect({ isOpen, onOpenChange, userProfile, onUpdate
                       </Button>
                       <Button
                         size="sm"
-                        onClick={handleConnect}
-                        disabled={loading || !username}
+                        onClick={() => handleConnect(platform.id)}
+                        disabled={loading || !username.trim()}
                         className="bg-gradient-to-r from-primary to-secondary flex-1"
                       >
                         {loading ? "Connexion..." : "Confirmer"}
