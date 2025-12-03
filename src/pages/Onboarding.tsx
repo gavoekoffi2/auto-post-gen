@@ -23,7 +23,18 @@ export default function Onboarding() {
     description: "",
     styleExample: "",
     platforms: [] as string[],
+    preferredDays: [] as string[],
   });
+
+  const DAYS = [
+    { id: "monday", label: "Lundi" },
+    { id: "tuesday", label: "Mardi" },
+    { id: "wednesday", label: "Mercredi" },
+    { id: "thursday", label: "Jeudi" },
+    { id: "friday", label: "Vendredi" },
+    { id: "saturday", label: "Samedi" },
+    { id: "sunday", label: "Dimanche" },
+  ];
 
   useEffect(() => {
     // Check if user is authenticated
@@ -37,7 +48,7 @@ export default function Onboarding() {
   }, [navigate]);
 
   const handleNext = async () => {
-    if (step < 5) {
+    if (step < 6) {
       setStep(step + 1);
     } else {
       // Save profile to database
@@ -56,6 +67,8 @@ export default function Onboarding() {
           description: formData.description,
           style_example: formData.styleExample,
           platforms: formData.platforms.length > 0 ? formData.platforms : ['Instagram'],
+          preferred_days: formData.preferredDays,
+          auto_publish: false,
         });
 
         if (error) throw error;
@@ -85,7 +98,9 @@ export default function Onboarding() {
       case 4:
         return true; // Style example is optional
       case 5:
-        return formData.platforms.length > 0; // At least one social network selected
+        return formData.platforms.length > 0;
+      case 6:
+        return formData.preferredDays.length > 0;
       default:
         return false;
     }
@@ -106,7 +121,7 @@ export default function Onboarding() {
         {/* Progress bar */}
         <div className="mb-8">
           <div className="flex justify-between mb-2">
-            {[1, 2, 3, 4, 5].map((i) => (
+            {[1, 2, 3, 4, 5, 6].map((i) => (
               <div
                 key={i}
                 className={`h-2 flex-1 mx-1 rounded-full transition-all ${
@@ -116,7 +131,7 @@ export default function Onboarding() {
             ))}
           </div>
           <p className="text-center text-sm text-muted-foreground">
-            Étape {step} sur 5
+            Étape {step} sur 6
           </p>
         </div>
 
@@ -259,7 +274,7 @@ export default function Onboarding() {
           {step === 5 && (
             <div className="space-y-6">
               <div>
-                <h2 className="text-2xl font-bold mb-2">Dernière étape !</h2>
+                <h2 className="text-2xl font-bold mb-2">Réseaux sociaux</h2>
                 <p className="text-muted-foreground">
                   Sur quels réseaux sociaux êtes-vous présent(e) ?
                 </p>
@@ -293,6 +308,43 @@ export default function Onboarding() {
             </div>
           )}
 
+          {step === 6 && (
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-2xl font-bold mb-2">Dernière étape !</h2>
+                <p className="text-muted-foreground">
+                  Quels jours souhaitez-vous publier ?
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="mb-3 block">Jours de publication préférés</Label>
+                <div className="grid grid-cols-2 gap-3">
+                  {DAYS.map((day) => (
+                    <div key={day.id} className="flex items-center space-x-2">
+                      <Checkbox
+                        id={`day-${day.id}`}
+                        checked={formData.preferredDays.includes(day.id)}
+                        onCheckedChange={(checked) => {
+                          const newDays = checked
+                            ? [...formData.preferredDays, day.id]
+                            : formData.preferredDays.filter(d => d !== day.id);
+                          setFormData({ ...formData, preferredDays: newDays });
+                        }}
+                      />
+                      <label htmlFor={`day-${day.id}`} className="text-sm cursor-pointer">
+                        {day.label}
+                      </label>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground mt-3">
+                  Sélectionnez au moins un jour. Le système programmera automatiquement vos publications ces jours-là.
+                </p>
+              </div>
+            </div>
+          )}
+
           <div className="flex justify-between mt-8">
             <Button
               variant="outline"
@@ -309,7 +361,7 @@ export default function Onboarding() {
               disabled={!canProceed() || loading}
               className="bg-gradient-to-r from-primary to-secondary hover:opacity-90"
             >
-              {loading ? "Sauvegarde..." : step === 5 ? "Terminer" : "Suivant"}
+              {loading ? "Sauvegarde..." : step === 6 ? "Terminer" : "Suivant"}
               <ArrowRight className="w-4 h-4 ml-2" />
             </Button>
           </div>

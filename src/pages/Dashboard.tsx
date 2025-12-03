@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Calendar, TrendingUp, CheckCircle, Clock, Edit2, Sparkles, Settings, Share2, Calendar as CalendarIcon } from "lucide-react";
+import { Calendar, TrendingUp, CheckCircle, Clock, Edit2, Sparkles, Settings, Share2, Calendar as CalendarIcon, Trash2, User, BarChart3 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -230,7 +230,27 @@ export default function Dashboard() {
   };
 
   const handleStats = () => {
-    toast.info("Statistiques - Fonctionnalité à venir");
+    navigate('/statistics');
+  };
+
+  const handleProfile = () => {
+    navigate('/profile');
+  };
+
+  const handleDelete = async (postId: string) => {
+    try {
+      const { error } = await supabase
+        .from('posts')
+        .delete()
+        .eq('id', postId);
+
+      if (error) throw error;
+
+      setPosts(posts.filter(post => post.id !== postId));
+      toast.success("Post supprimé !");
+    } catch (error: any) {
+      toast.error('Erreur lors de la suppression');
+    }
   };
 
   const handleSettings = () => {
@@ -267,10 +287,18 @@ export default function Dashboard() {
               </div>
               <span className="font-bold text-xl">ContentAI</span>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
+              <Button onClick={handleStats} variant="outline" size="sm" className="glass-card">
+                <BarChart3 className="w-4 h-4 mr-2" />
+                Stats
+              </Button>
               <Button onClick={handleCalendar} variant="outline" size="sm" className="glass-card">
                 <CalendarIcon className="w-4 h-4 mr-2" />
                 Calendrier
+              </Button>
+              <Button onClick={handleProfile} variant="outline" size="sm" className="glass-card">
+                <User className="w-4 h-4 mr-2" />
+                Profil
               </Button>
               <Button onClick={handleSettings} variant="outline" size="sm" className="glass-card">
                 <Settings className="w-4 h-4 mr-2" />
@@ -376,7 +404,7 @@ export default function Dashboard() {
                        </div>
                      )}
                      <p className="text-sm text-muted-foreground mb-4 line-clamp-2">{post.content}</p>
-                     <div className="flex gap-2">
+                     <div className="flex gap-2 flex-wrap">
                       <Button 
                         size="sm" 
                         variant="outline" 
@@ -404,6 +432,14 @@ export default function Dashboard() {
                           Valider
                         </Button>
                       )}
+                      <Button 
+                        size="sm" 
+                        variant="outline" 
+                        className="glass-card text-destructive hover:bg-destructive/10"
+                        onClick={() => handleDelete(post.id)}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
                     </div>
                   </Card>
                 ))}
