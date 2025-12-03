@@ -27,6 +27,9 @@ export type Database = {
           title: string
           updated_at: string | null
           user_id: string
+          validation_status: string | null
+          validation_token: string | null
+          week_number: number | null
         }
         Insert: {
           content: string
@@ -40,6 +43,9 @@ export type Database = {
           title: string
           updated_at?: string | null
           user_id: string
+          validation_status?: string | null
+          validation_token?: string | null
+          week_number?: number | null
         }
         Update: {
           content?: string
@@ -53,11 +59,15 @@ export type Database = {
           title?: string
           updated_at?: string | null
           user_id?: string
+          validation_status?: string | null
+          validation_token?: string | null
+          week_number?: number | null
         }
         Relationships: []
       }
       profiles: {
         Row: {
+          auto_publish: boolean | null
           connected_platforms: string[] | null
           content_types: string[]
           created_at: string | null
@@ -71,6 +81,7 @@ export type Database = {
           logo_url: string | null
           platforms: string[]
           post_frequency: number
+          preferred_days: string[] | null
           sector: string
           style_example: string | null
           tiktok_username: string | null
@@ -80,6 +91,7 @@ export type Database = {
           use_custom_images: boolean | null
         }
         Insert: {
+          auto_publish?: boolean | null
           connected_platforms?: string[] | null
           content_types: string[]
           created_at?: string | null
@@ -93,6 +105,7 @@ export type Database = {
           logo_url?: string | null
           platforms?: string[]
           post_frequency?: number
+          preferred_days?: string[] | null
           sector: string
           style_example?: string | null
           tiktok_username?: string | null
@@ -102,6 +115,7 @@ export type Database = {
           use_custom_images?: boolean | null
         }
         Update: {
+          auto_publish?: boolean | null
           connected_platforms?: string[] | null
           content_types?: string[]
           created_at?: string | null
@@ -115,6 +129,7 @@ export type Database = {
           logo_url?: string | null
           platforms?: string[]
           post_frequency?: number
+          preferred_days?: string[] | null
           sector?: string
           style_example?: string | null
           tiktok_username?: string | null

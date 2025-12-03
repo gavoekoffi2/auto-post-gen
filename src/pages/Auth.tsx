@@ -178,6 +178,12 @@ export default function Auth() {
               </form>
             </TabsContent>
           </Tabs>
+
+          <div className="mt-4 text-center">
+            <Link to="/forgot-password" className="text-sm text-muted-foreground hover:text-primary transition-colors">
+              Mot de passe oublié ?
+            </Link>
+          </div>
         </Card>
 
         <p className="text-center mt-8 text-sm text-muted-foreground">
