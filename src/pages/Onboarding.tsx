@@ -24,6 +24,7 @@ export default function Onboarding() {
     styleExample: "",
     platforms: [] as string[],
     preferredDays: [] as string[],
+    imagePeopleType: "african",
   });
 
   const DAYS = [
@@ -48,7 +49,7 @@ export default function Onboarding() {
   }, [navigate]);
 
   const handleNext = async () => {
-    if (step < 6) {
+    if (step < 7) {
       setStep(step + 1);
     } else {
       // Save profile to database
@@ -69,6 +70,7 @@ export default function Onboarding() {
           platforms: formData.platforms.length > 0 ? formData.platforms : ['Instagram'],
           preferred_days: formData.preferredDays,
           auto_publish: false,
+          image_people_type: formData.imagePeopleType,
         });
 
         if (error) throw error;
@@ -101,6 +103,8 @@ export default function Onboarding() {
         return formData.platforms.length > 0;
       case 6:
         return formData.preferredDays.length > 0;
+      case 7:
+        return formData.imagePeopleType !== "";
       default:
         return false;
     }
@@ -121,7 +125,7 @@ export default function Onboarding() {
         {/* Progress bar */}
         <div className="mb-8">
           <div className="flex justify-between mb-2">
-            {[1, 2, 3, 4, 5, 6].map((i) => (
+            {[1, 2, 3, 4, 5, 6, 7].map((i) => (
               <div
                 key={i}
                 className={`h-2 flex-1 mx-1 rounded-full transition-all ${
@@ -131,7 +135,7 @@ export default function Onboarding() {
             ))}
           </div>
           <p className="text-center text-sm text-muted-foreground">
-            Étape {step} sur 6
+            Étape {step} sur 7
           </p>
         </div>
 
@@ -311,7 +315,7 @@ export default function Onboarding() {
           {step === 6 && (
             <div className="space-y-6">
               <div>
-                <h2 className="text-2xl font-bold mb-2">Dernière étape !</h2>
+                <h2 className="text-2xl font-bold mb-2">Jours de publication</h2>
                 <p className="text-muted-foreground">
                   Quels jours souhaitez-vous publier ?
                 </p>
@@ -339,7 +343,53 @@ export default function Onboarding() {
                   ))}
                 </div>
                 <p className="text-xs text-muted-foreground mt-3">
-                  Sélectionnez au moins un jour. Le système programmera automatiquement vos publications ces jours-là.
+                  Sélectionnez au moins un jour.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {step === 7 && (
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-2xl font-bold mb-2">Dernière étape !</h2>
+                <p className="text-muted-foreground">
+                  Quel type de personnes souhaitez-vous voir dans vos images ?
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <Label className="mb-3 block">Représentation dans les images</Label>
+                <div className="grid grid-cols-1 gap-4">
+                  <div
+                    onClick={() => setFormData({ ...formData, imagePeopleType: "african" })}
+                    className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${
+                      formData.imagePeopleType === "african"
+                        ? "border-primary bg-primary/10"
+                        : "border-border hover:border-primary/50"
+                    }`}
+                  >
+                    <h3 className="font-semibold">🌍 Personnes africaines</h3>
+                    <p className="text-sm text-muted-foreground">
+                      Les images générées incluront principalement des personnes africaines/noires
+                    </p>
+                  </div>
+                  <div
+                    onClick={() => setFormData({ ...formData, imagePeopleType: "caucasian" })}
+                    className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${
+                      formData.imagePeopleType === "caucasian"
+                        ? "border-primary bg-primary/10"
+                        : "border-border hover:border-primary/50"
+                    }`}
+                  >
+                    <h3 className="font-semibold">🌎 Personnes caucasiennes</h3>
+                    <p className="text-sm text-muted-foreground">
+                      Les images générées incluront principalement des personnes caucasiennes/blanches
+                    </p>
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground mt-3">
+                  Vous pourrez modifier ce choix dans vos paramètres à tout moment.
                 </p>
               </div>
             </div>
@@ -361,7 +411,7 @@ export default function Onboarding() {
               disabled={!canProceed() || loading}
               className="bg-gradient-to-r from-primary to-secondary hover:opacity-90"
             >
-              {loading ? "Sauvegarde..." : step === 6 ? "Terminer" : "Suivant"}
+              {loading ? "Sauvegarde..." : step === 7 ? "Terminer" : "Suivant"}
               <ArrowRight className="w-4 h-4 ml-2" />
             </Button>
           </div>

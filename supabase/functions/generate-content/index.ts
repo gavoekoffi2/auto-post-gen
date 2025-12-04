@@ -25,6 +25,12 @@ serve(async (req) => {
     
     const companyName = userPreferences?.description || 'notre entreprise';
 
+    // Determine people type for images
+    const peopleType = userPreferences?.image_people_type || 'african';
+    const peopleDescription = peopleType === 'african' 
+      ? 'des personnes africaines/noires ultra-réalistes'
+      : 'des personnes caucasiennes/blanches ultra-réalistes';
+
     // Build system prompt based on user preferences (with defaults if profile not set)
     const systemPrompt = userPreferences 
       ? `Tu es un expert en création de contenu pour les réseaux sociaux, spécialisé dans le secteur: ${userPreferences.sector}.
@@ -42,43 +48,36 @@ ${postType === 'value' ? `
 INSTRUCTIONS POUR CONTENU DE VALEUR:
 - Partage une ASTUCE CONCRÈTE ou un CONSEIL PRATIQUE dans le domaine: ${userPreferences.sector}
 - Positionne ${companyName} comme EXPERT du secteur
-- Apporte une VRAIE VALEUR au lecteur (quelque chose qu'il peut appliquer immédiatement)
-- Types de contenu de valeur à créer:
-  * Conseils pratiques du métier
-  * Erreurs courantes à éviter
-  * Tendances du secteur
-  * Astuces de professionnel
-  * Réponses aux questions fréquentes des clients
-  * Partage d'expertise métier
-- Mentionne ${companyName} subtilement en fin de post (signature ou invitation à suivre)
-- NE FAIS PAS de promotion directe des services
+- Apporte une VRAIE VALEUR au lecteur
+- Types de contenu: conseils pratiques, erreurs à éviter, tendances, astuces pro
+- Mentionne ${companyName} subtilement en fin de post
+- NE FAIS PAS de promotion directe
 ` : `
 INSTRUCTIONS POUR POST PROMOTIONNEL:
 - Présente les services/produits de ${companyName} de manière engageante
 - Mets en avant les bénéfices pour le client
 - Inclus un appel à l'action clair
-- Reste authentique et non agressif commercialement
 `}
 
 RÈGLES CRITIQUES:
-- Génère un post UNIQUE et ORIGINAL (ne répète JAMAIS le même contenu)
+- Génère un post UNIQUE et ORIGINAL
 - Contenu 100% en FRANÇAIS
-- Utilise des émojis pertinents et professionnels (3-5 max)
+- Utilise 2-4 émojis pertinents
 - Respecte la tonalité: ${userPreferences.tone}
-- ÉCRIS DIRECTEMENT "${companyName}" dans le post, JAMAIS "[nom de l'entreprise]" ou entre crochets
-- Structure le post avec des paragraphes courts et aérés
-- Longueur idéale: 150-300 mots
-- Termine par une question ou un appel à l'action engageant
+- ÉCRIS DIRECTEMENT "${companyName}" dans le post, JAMAIS entre crochets
+- Structure COURTE: paragraphes de 1-2 lignes max
+- Longueur idéale: 60-100 mots (COURT ET IMPACTANT)
+- Termine par une question engageante
 ${userPreferences.styleExample ? `- Inspire-toi du style fourni: ${userPreferences.styleExample}` : ''}`
       : `Tu es un expert en création de contenu pour les réseaux sociaux. 
 
 INSTRUCTIONS:
-- Génère un post UNIQUE et ORIGINAL en français uniquement
-- Crée du contenu de VALEUR (conseils, astuces, expertise)
-- Utilise 3-5 émojis pertinents
-- Structure avec des paragraphes courts
-- Termine par une question engageante
-- Longueur: 150-300 mots`;
+- Génère un post UNIQUE et ORIGINAL en français
+- Crée du contenu de VALEUR (conseils, astuces)
+- Utilise 2-4 émojis
+- Structure COURTE et percutante
+- Longueur: 60-100 mots max
+- Termine par une question engageante`;
 
     // Step 1: Generate text content
     const textResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
@@ -127,14 +126,17 @@ INSTRUCTIONS:
       console.log('Using custom image from library:', imageUrl);
     } else {
       // Generate image with AI if no custom images
-      const imagePrompt = `Crée une image illustrative professionnelle et visuelle pour ce post de réseaux sociaux: "${generatedContent.substring(0, 200)}..."
+      const imagePrompt = `Crée une image ultra-réaliste et professionnelle pour ce post: "${generatedContent.substring(0, 150)}..."
       
 INSTRUCTIONS CRITIQUES:
-- Image 100% visuelle SANS TEXTE (pas de mots, pas de lettres, pas de chiffres)
-- Style professionnel et moderne
-- Couleurs vives et attrayantes
-- Composition équilibrée et esthétique
-- Adaptée pour réseaux sociaux (Instagram, Facebook, LinkedIn)`;
+- Inclure ${peopleDescription} dans l'image (personnages réalistes, expressions naturelles)
+- Les personnes doivent être en situation professionnelle liée au contexte du post
+- Image 100% visuelle SANS TEXTE (aucun mot, lettre ou chiffre)
+- Style photo-réaliste, moderne et professionnel
+- Éclairage naturel de haute qualité
+- Couleurs vibrantes et attrayantes
+- Format adapté pour réseaux sociaux (carré ou portrait)
+- Qualité photographique professionnelle`;
       
       const imageResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
         method: 'POST',
