@@ -35,6 +35,7 @@ export default function Profile() {
     platforms: [] as string[],
     preferred_days: [] as string[],
     auto_publish: false,
+    image_people_type: "african",
   });
 
   useEffect(() => {
@@ -68,6 +69,7 @@ export default function Profile() {
           platforms: data.platforms || [],
           preferred_days: data.preferred_days || [],
           auto_publish: data.auto_publish || false,
+          image_people_type: (data as any).image_people_type || "african",
         });
       }
     } catch (error: any) {
@@ -95,7 +97,8 @@ export default function Profile() {
           platforms: profile.platforms,
           preferred_days: profile.preferred_days,
           auto_publish: profile.auto_publish,
-        })
+          image_people_type: profile.image_people_type,
+        } as any)
         .eq('id', session.user.id);
 
       if (error) throw error;
@@ -233,6 +236,30 @@ export default function Profile() {
                 </label>
               </div>
             ))}
+          </div>
+        </Card>
+
+        {/* Images */}
+        <Card className="glass-card p-6">
+          <h2 className="text-lg font-semibold mb-4">Préférences d'images</h2>
+          
+          <div className="space-y-2">
+            <Label>Type de personnes dans les images</Label>
+            <Select 
+              value={profile.image_people_type} 
+              onValueChange={(v) => setProfile({ ...profile, image_people_type: v })}
+            >
+              <SelectTrigger className="glass-card w-full md:w-64">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="african">🌍 Personnes africaines</SelectItem>
+                <SelectItem value="caucasian">🌎 Personnes caucasiennes</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Les images générées incluront principalement ce type de personnes
+            </p>
           </div>
         </Card>
 

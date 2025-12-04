@@ -76,6 +76,7 @@ export type Database = {
           email: string | null
           facebook_username: string | null
           id: string
+          image_people_type: string | null
           instagram_username: string | null
           linkedin_username: string | null
           logo_url: string | null
@@ -100,6 +101,7 @@ export type Database = {
           email?: string | null
           facebook_username?: string | null
           id: string
+          image_people_type?: string | null
           instagram_username?: string | null
           linkedin_username?: string | null
           logo_url?: string | null
@@ -124,6 +126,7 @@ export type Database = {
           email?: string | null
           facebook_username?: string | null
           id?: string
+          image_people_type?: string | null
           instagram_username?: string | null
           linkedin_username?: string | null
           logo_url?: string | null
