@@ -19,35 +19,66 @@ serve(async (req) => {
       throw new Error('LOVABLE_API_KEY not configured');
     }
 
+    // Randomly decide post type: 75% value content, 25% promotional
+    const postTypes = ['value', 'value', 'value', 'promo'];
+    const postType = postTypes[Math.floor(Math.random() * postTypes.length)];
+    
+    const companyName = userPreferences?.description || 'notre entreprise';
+
     // Build system prompt based on user preferences (with defaults if profile not set)
     const systemPrompt = userPreferences 
-      ? `Tu es un expert en création de contenu pour les réseaux sociaux. 
+      ? `Tu es un expert en création de contenu pour les réseaux sociaux, spécialisé dans le secteur: ${userPreferences.sector}.
 
 PROFIL DU CLIENT:
-Secteur: ${userPreferences.sector}
+Nom de l'entreprise: ${companyName}
+Secteur d'activité: ${userPreferences.sector}
 Type de contenu: ${userPreferences.contentTypes?.join(', ') || 'mixte'}
-Tonalité: ${userPreferences.tone}
-Description de l'entreprise: ${userPreferences.description || ''}
+Tonalité souhaitée: ${userPreferences.tone}
 ${userPreferences.styleExample ? `Style de contenu préféré: ${userPreferences.styleExample}` : ''}
 
-INSTRUCTIONS CRITIQUES:
-- Génère un post UNIQUE et ORIGINAL à chaque fois (ne répète JAMAIS le même contenu)
-- Le contenu doit être en FRANÇAIS UNIQUEMENT, 100% français
-- Utilise des émojis pertinents pour rendre le post plus engageant et professionnel
-- Adapte le contenu PRÉCISÉMENT au secteur: ${userPreferences.sector}
-- Respecte la tonalité demandée: ${userPreferences.tone}
-- Crée un post prêt à publier, accrocheur et parfaitement adapté
-${userPreferences.styleExample ? '- Inspire-toi fortement de l\'exemple de style fourni pour créer un contenu similaire' : ''}
-- Varie les sujets et angles d'approche pour chaque génération
-- Le post doit refléter l'identité de l'entreprise: ${userPreferences.description || 'professionnel et engageant'}
-- Si tu mentionnes le nom de l'entreprise, utilise "${userPreferences.description}" directement, JAMAIS entre crochets`
+TYPE DE POST À GÉNÉRER: ${postType === 'value' ? 'CONTENU DE VALEUR (conseil, astuce, expertise)' : 'POST PROMOTIONNEL (présentation services/produits)'}
+
+${postType === 'value' ? `
+INSTRUCTIONS POUR CONTENU DE VALEUR:
+- Partage une ASTUCE CONCRÈTE ou un CONSEIL PRATIQUE dans le domaine: ${userPreferences.sector}
+- Positionne ${companyName} comme EXPERT du secteur
+- Apporte une VRAIE VALEUR au lecteur (quelque chose qu'il peut appliquer immédiatement)
+- Types de contenu de valeur à créer:
+  * Conseils pratiques du métier
+  * Erreurs courantes à éviter
+  * Tendances du secteur
+  * Astuces de professionnel
+  * Réponses aux questions fréquentes des clients
+  * Partage d'expertise métier
+- Mentionne ${companyName} subtilement en fin de post (signature ou invitation à suivre)
+- NE FAIS PAS de promotion directe des services
+` : `
+INSTRUCTIONS POUR POST PROMOTIONNEL:
+- Présente les services/produits de ${companyName} de manière engageante
+- Mets en avant les bénéfices pour le client
+- Inclus un appel à l'action clair
+- Reste authentique et non agressif commercialement
+`}
+
+RÈGLES CRITIQUES:
+- Génère un post UNIQUE et ORIGINAL (ne répète JAMAIS le même contenu)
+- Contenu 100% en FRANÇAIS
+- Utilise des émojis pertinents et professionnels (3-5 max)
+- Respecte la tonalité: ${userPreferences.tone}
+- ÉCRIS DIRECTEMENT "${companyName}" dans le post, JAMAIS "[nom de l'entreprise]" ou entre crochets
+- Structure le post avec des paragraphes courts et aérés
+- Longueur idéale: 150-300 mots
+- Termine par une question ou un appel à l'action engageant
+${userPreferences.styleExample ? `- Inspire-toi du style fourni: ${userPreferences.styleExample}` : ''}`
       : `Tu es un expert en création de contenu pour les réseaux sociaux. 
 
 INSTRUCTIONS:
 - Génère un post UNIQUE et ORIGINAL en français uniquement
-- Utilise des émojis pertinents
-- Crée un contenu professionnel, engageant et accrocheur
-- Varie les sujets à chaque génération`;
+- Crée du contenu de VALEUR (conseils, astuces, expertise)
+- Utilise 3-5 émojis pertinents
+- Structure avec des paragraphes courts
+- Termine par une question engageante
+- Longueur: 150-300 mots`;
 
     // Step 1: Generate text content
     const textResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
