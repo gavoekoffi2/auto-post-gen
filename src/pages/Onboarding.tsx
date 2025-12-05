@@ -16,6 +16,7 @@ export default function Onboarding() {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
+    companyName: "",
     sector: "",
     contentType: "",
     tone: "",
@@ -61,6 +62,7 @@ export default function Onboarding() {
         const { error } = await supabase.from('profiles').upsert({
           id: session.user.id,
           email: session.user.email,
+          company_name: formData.companyName,
           sector: formData.sector,
           content_types: [formData.contentType],
           tone: formData.tone,
@@ -71,7 +73,7 @@ export default function Onboarding() {
           preferred_days: formData.preferredDays,
           auto_publish: false,
           image_people_type: formData.imagePeopleType,
-        });
+        } as any);
 
         if (error) throw error;
 
@@ -92,7 +94,7 @@ export default function Onboarding() {
   const canProceed = () => {
     switch (step) {
       case 1:
-        return formData.sector && formData.contentType;
+        return formData.companyName.length >= 2 && formData.sector && formData.contentType;
       case 2:
         return formData.tone && formData.frequency;
       case 3:
@@ -147,6 +149,17 @@ export default function Onboarding() {
                 <p className="text-muted-foreground">
                   Ces informations nous aideront à générer du contenu pertinent
                 </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="companyName">Nom de votre entreprise</Label>
+                <Input
+                  id="companyName"
+                  placeholder="Ex: Ma Super Entreprise"
+                  className="glass-card"
+                  value={formData.companyName}
+                  onChange={(e) => setFormData({ ...formData, companyName: e.target.value })}
+                />
               </div>
 
               <div className="space-y-2">
