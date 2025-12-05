@@ -23,7 +23,7 @@ serve(async (req) => {
     const postTypes = ['value', 'value', 'value', 'promo'];
     const postType = postTypes[Math.floor(Math.random() * postTypes.length)];
     
-    const companyName = userPreferences?.description || 'notre entreprise';
+    const companyName = userPreferences?.company_name || userPreferences?.description?.split(' ').slice(0, 3).join(' ') || 'notre entreprise';
 
     // Determine people type for images
     const peopleType = userPreferences?.image_people_type || 'african';

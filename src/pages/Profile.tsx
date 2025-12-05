@@ -6,10 +6,11 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Save, User } from "lucide-react";
+import { ArrowLeft, Save, User, Building2, Image } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { LogoUpload } from "@/components/LogoUpload";
 
 const DAYS = [
   { id: "monday", label: "Lundi" },
@@ -26,6 +27,8 @@ export default function Profile() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [profile, setProfile] = useState({
+    company_name: "",
+    logo_url: "",
     sector: "",
     content_types: [] as string[],
     tone: "",
@@ -60,6 +63,8 @@ export default function Profile() {
 
       if (data) {
         setProfile({
+          company_name: (data as any).company_name || "",
+          logo_url: data.logo_url || "",
           sector: data.sector || "",
           content_types: data.content_types || [],
           tone: data.tone || "",
@@ -88,6 +93,8 @@ export default function Profile() {
       const { error } = await supabase
         .from('profiles')
         .update({
+          company_name: profile.company_name,
+          logo_url: profile.logo_url,
           sector: profile.sector,
           content_types: profile.content_types,
           tone: profile.tone,
@@ -160,42 +167,63 @@ export default function Profile() {
         {/* Business Info */}
         <Card className="glass-card p-6">
           <div className="flex items-center gap-2 mb-4">
-            <User className="w-5 h-5 text-primary" />
-            <h2 className="text-lg font-semibold">Informations entreprise</h2>
+            <Building2 className="w-5 h-5 text-primary" />
+            <h2 className="text-lg font-semibold">Identité de l'entreprise</h2>
           </div>
 
-          <div className="grid md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>Secteur d'activité</Label>
-              <Select value={profile.sector} onValueChange={(v) => setProfile({ ...profile, sector: v })}>
-                <SelectTrigger className="glass-card">
-                  <SelectValue placeholder="Choisir" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="tech">Technologie</SelectItem>
-                  <SelectItem value="fashion">Mode & Lifestyle</SelectItem>
-                  <SelectItem value="food">Restauration</SelectItem>
-                  <SelectItem value="health">Santé & Bien-être</SelectItem>
-                  <SelectItem value="education">Éducation</SelectItem>
-                  <SelectItem value="other">Autre</SelectItem>
-                </SelectContent>
-              </Select>
+          <div className="grid md:grid-cols-2 gap-6">
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>Nom de l'entreprise</Label>
+                <Input
+                  placeholder="Ma Super Entreprise"
+                  className="glass-card"
+                  value={profile.company_name}
+                  onChange={(e) => setProfile({ ...profile, company_name: e.target.value })}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Secteur d'activité</Label>
+                <Select value={profile.sector} onValueChange={(v) => setProfile({ ...profile, sector: v })}>
+                  <SelectTrigger className="glass-card">
+                    <SelectValue placeholder="Choisir" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="tech">Technologie</SelectItem>
+                    <SelectItem value="fashion">Mode & Lifestyle</SelectItem>
+                    <SelectItem value="food">Restauration</SelectItem>
+                    <SelectItem value="health">Santé & Bien-être</SelectItem>
+                    <SelectItem value="education">Éducation</SelectItem>
+                    <SelectItem value="other">Autre</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Tonalité</Label>
+                <Select value={profile.tone} onValueChange={(v) => setProfile({ ...profile, tone: v })}>
+                  <SelectTrigger className="glass-card">
+                    <SelectValue placeholder="Choisir" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="professional">Professionnel</SelectItem>
+                    <SelectItem value="casual">Décontracté</SelectItem>
+                    <SelectItem value="fun">Fun & Enjoué</SelectItem>
+                    <SelectItem value="serious">Sérieux</SelectItem>
+                    <SelectItem value="inspiring">Inspirant</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             <div className="space-y-2">
-              <Label>Tonalité</Label>
-              <Select value={profile.tone} onValueChange={(v) => setProfile({ ...profile, tone: v })}>
-                <SelectTrigger className="glass-card">
-                  <SelectValue placeholder="Choisir" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="professional">Professionnel</SelectItem>
-                  <SelectItem value="casual">Décontracté</SelectItem>
-                  <SelectItem value="fun">Fun & Enjoué</SelectItem>
-                  <SelectItem value="serious">Sérieux</SelectItem>
-                  <SelectItem value="inspiring">Inspirant</SelectItem>
-                </SelectContent>
-              </Select>
+              <Label>Logo de l'entreprise</Label>
+              <LogoUpload
+                currentLogoUrl={profile.logo_url}
+                onUpload={(url) => setProfile({ ...profile, logo_url: url })}
+                onRemove={() => setProfile({ ...profile, logo_url: "" })}
+              />
             </div>
           </div>
 

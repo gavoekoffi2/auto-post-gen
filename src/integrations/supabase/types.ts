@@ -68,6 +68,7 @@ export type Database = {
       profiles: {
         Row: {
           auto_publish: boolean | null
+          company_name: string | null
           connected_platforms: string[] | null
           content_types: string[]
           created_at: string | null
@@ -93,6 +94,7 @@ export type Database = {
         }
         Insert: {
           auto_publish?: boolean | null
+          company_name?: string | null
           connected_platforms?: string[] | null
           content_types: string[]
           created_at?: string | null
@@ -118,6 +120,7 @@ export type Database = {
         }
         Update: {
           auto_publish?: boolean | null
+          company_name?: string | null
           connected_platforms?: string[] | null
           content_types?: string[]
           created_at?: string | null
