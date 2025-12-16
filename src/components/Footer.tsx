@@ -24,10 +24,13 @@ export const Footer = () => {
             <h3 className="font-semibold mb-4">Produit</h3>
             <ul className="space-y-2 text-sm text-muted-foreground">
               <li>
-                <a href="#features" className="hover:text-primary transition-colors">Fonctionnalités</a>
+                <a href="/#features" className="hover:text-primary transition-colors">Fonctionnalités</a>
               </li>
               <li>
-                <a href="#pricing" className="hover:text-primary transition-colors">Tarifs</a>
+                <a href="/#pricing" className="hover:text-primary transition-colors">Tarifs</a>
+              </li>
+              <li>
+                <Link to="/faq" className="hover:text-primary transition-colors">FAQ</Link>
               </li>
               <li>
                 <Link to="/auth" className="hover:text-primary transition-colors">Commencer</Link>
@@ -67,13 +70,28 @@ export const Footer = () => {
             © {new Date().getFullYear()} ContentAI. Tous droits réservés.
           </p>
           <div className="flex gap-4">
-            <a href="https://twitter.com" target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-primary transition-colors">
+            <a 
+              href="https://twitter.com/contentai" 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              className="text-muted-foreground hover:text-primary transition-colors"
+            >
               Twitter
             </a>
-            <a href="https://linkedin.com" target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-primary transition-colors">
+            <a 
+              href="https://linkedin.com/company/contentai" 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              className="text-muted-foreground hover:text-primary transition-colors"
+            >
               LinkedIn
             </a>
-            <a href="https://instagram.com" target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-primary transition-colors">
+            <a 
+              href="https://instagram.com/contentai" 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              className="text-muted-foreground hover:text-primary transition-colors"
+            >
               Instagram
             </a>
           </div>

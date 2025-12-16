@@ -12,6 +12,8 @@ import Calendar from "./pages/Calendar";
 import Statistics from "./pages/Statistics";
 import Profile from "./pages/Profile";
 import Contact from "./pages/Contact";
+import FAQ from "./pages/FAQ";
+import About from "./pages/About";
 import ForgotPassword from "./pages/ForgotPassword";
 import Privacy from "./pages/Privacy";
 import Terms from "./pages/Terms";
@@ -33,6 +35,8 @@ const App = () => (
           <Route path="/privacy" element={<Privacy />} />
           <Route path="/terms" element={<Terms />} />
           <Route path="/contact" element={<Contact />} />
+          <Route path="/faq" element={<FAQ />} />
+          <Route path="/about" element={<About />} />
           
           {/* Protected routes - requires auth only */}
           <Route path="/onboarding" element={
