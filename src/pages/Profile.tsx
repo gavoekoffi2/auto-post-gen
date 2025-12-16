@@ -6,11 +6,14 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Save, User, Building2, Image } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ArrowLeft, Save, Building2, Settings, ImageIcon } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { LogoUpload } from "@/components/LogoUpload";
+import { CustomImageLibrary } from "@/components/CustomImageLibrary";
+import { AccountSettings } from "@/components/AccountSettings";
 
 const DAYS = [
   { id: "monday", label: "Lundi" },
@@ -26,6 +29,7 @@ export default function Profile() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [userEmail, setUserEmail] = useState("");
   const [profile, setProfile] = useState({
     company_name: "",
     logo_url: "",
@@ -39,6 +43,8 @@ export default function Profile() {
     preferred_days: [] as string[],
     auto_publish: false,
     image_people_type: "african",
+    use_custom_images: false,
+    custom_image_urls: [] as string[],
   });
 
   useEffect(() => {
@@ -52,6 +58,8 @@ export default function Profile() {
         navigate('/auth');
         return;
       }
+
+      setUserEmail(session.user.email || "");
 
       const { data, error } = await supabase
         .from('profiles')
@@ -75,6 +83,8 @@ export default function Profile() {
           preferred_days: data.preferred_days || [],
           auto_publish: data.auto_publish || false,
           image_people_type: (data as any).image_people_type || "african",
+          use_custom_images: data.use_custom_images || false,
+          custom_image_urls: data.custom_image_urls || [],
         });
       }
     } catch (error: any) {
@@ -105,6 +115,8 @@ export default function Profile() {
           preferred_days: profile.preferred_days,
           auto_publish: profile.auto_publish,
           image_people_type: profile.image_people_type,
+          use_custom_images: profile.use_custom_images,
+          custom_image_urls: profile.custom_image_urls,
         } as any)
         .eq('id', session.user.id);
 
@@ -163,191 +175,222 @@ export default function Profile() {
         </div>
       </header>
 
-      <div className="container mx-auto max-w-4xl px-4 py-8 space-y-6">
-        {/* Business Info */}
-        <Card className="glass-card p-6">
-          <div className="flex items-center gap-2 mb-4">
-            <Building2 className="w-5 h-5 text-primary" />
-            <h2 className="text-lg font-semibold">Identité de l'entreprise</h2>
-          </div>
+      <div className="container mx-auto max-w-4xl px-4 py-8">
+        <Tabs defaultValue="business" className="space-y-6">
+          <TabsList className="glass-card">
+            <TabsTrigger value="business">
+              <Building2 className="w-4 h-4 mr-2" />
+              Entreprise
+            </TabsTrigger>
+            <TabsTrigger value="images">
+              <ImageIcon className="w-4 h-4 mr-2" />
+              Images
+            </TabsTrigger>
+            <TabsTrigger value="account">
+              <Settings className="w-4 h-4 mr-2" />
+              Compte
+            </TabsTrigger>
+          </TabsList>
 
-          <div className="grid md:grid-cols-2 gap-6">
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label>Nom de l'entreprise</Label>
-                <Input
-                  placeholder="Ma Super Entreprise"
-                  className="glass-card"
-                  value={profile.company_name}
-                  onChange={(e) => setProfile({ ...profile, company_name: e.target.value })}
-                />
+          {/* Business Tab */}
+          <TabsContent value="business" className="space-y-6">
+            <Card className="glass-card p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <Building2 className="w-5 h-5 text-primary" />
+                <h2 className="text-lg font-semibold">Identité de l'entreprise</h2>
               </div>
 
-              <div className="space-y-2">
-                <Label>Secteur d'activité</Label>
-                <Select value={profile.sector} onValueChange={(v) => setProfile({ ...profile, sector: v })}>
-                  <SelectTrigger className="glass-card">
-                    <SelectValue placeholder="Choisir" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="tech">Technologie</SelectItem>
-                    <SelectItem value="fashion">Mode & Lifestyle</SelectItem>
-                    <SelectItem value="food">Restauration</SelectItem>
-                    <SelectItem value="health">Santé & Bien-être</SelectItem>
-                    <SelectItem value="education">Éducation</SelectItem>
-                    <SelectItem value="other">Autre</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label>Tonalité</Label>
-                <Select value={profile.tone} onValueChange={(v) => setProfile({ ...profile, tone: v })}>
-                  <SelectTrigger className="glass-card">
-                    <SelectValue placeholder="Choisir" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="professional">Professionnel</SelectItem>
-                    <SelectItem value="casual">Décontracté</SelectItem>
-                    <SelectItem value="fun">Fun & Enjoué</SelectItem>
-                    <SelectItem value="serious">Sérieux</SelectItem>
-                    <SelectItem value="inspiring">Inspirant</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Logo de l'entreprise</Label>
-              <LogoUpload
-                currentLogoUrl={profile.logo_url}
-                onUpload={(url) => setProfile({ ...profile, logo_url: url })}
-                onRemove={() => setProfile({ ...profile, logo_url: "" })}
-              />
-            </div>
-          </div>
-
-          <div className="mt-4 space-y-2">
-            <Label>Description de votre entreprise</Label>
-            <Textarea
-              placeholder="Décrivez votre activité..."
-              className="glass-card min-h-[100px]"
-              value={profile.description}
-              onChange={(e) => setProfile({ ...profile, description: e.target.value })}
-            />
-          </div>
-
-          <div className="mt-4 space-y-2">
-            <Label>Style de contenu préféré (optionnel)</Label>
-            <Textarea
-              placeholder="Exemple de style que vous aimez..."
-              className="glass-card"
-              value={profile.style_example}
-              onChange={(e) => setProfile({ ...profile, style_example: e.target.value })}
-            />
-          </div>
-        </Card>
-
-        {/* Platforms */}
-        <Card className="glass-card p-6">
-          <h2 className="text-lg font-semibold mb-4">Réseaux sociaux</h2>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            {['Instagram', 'Facebook', 'Twitter', 'LinkedIn', 'TikTok'].map((platform) => (
-              <div key={platform} className="flex items-center space-x-2">
-                <Checkbox
-                  id={`platform-${platform}`}
-                  checked={profile.platforms.includes(platform)}
-                  onCheckedChange={() => togglePlatform(platform)}
-                />
-                <label htmlFor={`platform-${platform}`} className="text-sm cursor-pointer">
-                  {platform}
-                </label>
-              </div>
-            ))}
-          </div>
-        </Card>
-
-        {/* Images */}
-        <Card className="glass-card p-6">
-          <h2 className="text-lg font-semibold mb-4">Préférences d'images</h2>
-          
-          <div className="space-y-2">
-            <Label>Type de personnes dans les images</Label>
-            <Select 
-              value={profile.image_people_type} 
-              onValueChange={(v) => setProfile({ ...profile, image_people_type: v })}
-            >
-              <SelectTrigger className="glass-card w-full md:w-64">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="african">🌍 Personnes africaines</SelectItem>
-                <SelectItem value="caucasian">🌎 Personnes caucasiennes</SelectItem>
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              Les images générées incluront principalement ce type de personnes
-            </p>
-          </div>
-        </Card>
-
-        {/* Automation */}
-        <Card className="glass-card p-6">
-          <h2 className="text-lg font-semibold mb-4">Automatisation</h2>
-          
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>Fréquence de publication (posts/semaine)</Label>
-              <Select 
-                value={profile.post_frequency.toString()} 
-                onValueChange={(v) => setProfile({ ...profile, post_frequency: parseInt(v) })}
-              >
-                <SelectTrigger className="glass-card w-full md:w-48">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="1">1 post/semaine</SelectItem>
-                  <SelectItem value="2">2 posts/semaine</SelectItem>
-                  <SelectItem value="3">3 posts/semaine</SelectItem>
-                  <SelectItem value="5">5 posts/semaine</SelectItem>
-                  <SelectItem value="7">7 posts/semaine</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Jours de publication préférés</Label>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                {DAYS.map((day) => (
-                  <div key={day.id} className="flex items-center space-x-2">
-                    <Checkbox
-                      id={`day-${day.id}`}
-                      checked={profile.preferred_days.includes(day.id)}
-                      onCheckedChange={() => toggleDay(day.id)}
+              <div className="grid md:grid-cols-2 gap-6">
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Nom de l'entreprise</Label>
+                    <Input
+                      placeholder="Ma Super Entreprise"
+                      className="glass-card"
+                      value={profile.company_name}
+                      onChange={(e) => setProfile({ ...profile, company_name: e.target.value })}
                     />
-                    <label htmlFor={`day-${day.id}`} className="text-sm cursor-pointer">
-                      {day.label}
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Secteur d'activité</Label>
+                    <Select value={profile.sector} onValueChange={(v) => setProfile({ ...profile, sector: v })}>
+                      <SelectTrigger className="glass-card">
+                        <SelectValue placeholder="Choisir" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="tech">Technologie</SelectItem>
+                        <SelectItem value="fashion">Mode & Lifestyle</SelectItem>
+                        <SelectItem value="food">Restauration</SelectItem>
+                        <SelectItem value="health">Santé & Bien-être</SelectItem>
+                        <SelectItem value="education">Éducation</SelectItem>
+                        <SelectItem value="other">Autre</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Tonalité</Label>
+                    <Select value={profile.tone} onValueChange={(v) => setProfile({ ...profile, tone: v })}>
+                      <SelectTrigger className="glass-card">
+                        <SelectValue placeholder="Choisir" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="professional">Professionnel</SelectItem>
+                        <SelectItem value="casual">Décontracté</SelectItem>
+                        <SelectItem value="fun">Fun & Enjoué</SelectItem>
+                        <SelectItem value="serious">Sérieux</SelectItem>
+                        <SelectItem value="inspiring">Inspirant</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Logo de l'entreprise</Label>
+                  <LogoUpload
+                    currentLogoUrl={profile.logo_url}
+                    onUpload={(url) => setProfile({ ...profile, logo_url: url })}
+                    onRemove={() => setProfile({ ...profile, logo_url: "" })}
+                  />
+                </div>
+              </div>
+
+              <div className="mt-4 space-y-2">
+                <Label>Description de votre entreprise</Label>
+                <Textarea
+                  placeholder="Décrivez votre activité..."
+                  className="glass-card min-h-[100px]"
+                  value={profile.description}
+                  onChange={(e) => setProfile({ ...profile, description: e.target.value })}
+                />
+              </div>
+
+              <div className="mt-4 space-y-2">
+                <Label>Style de contenu préféré (optionnel)</Label>
+                <Textarea
+                  placeholder="Exemple de style que vous aimez..."
+                  className="glass-card"
+                  value={profile.style_example}
+                  onChange={(e) => setProfile({ ...profile, style_example: e.target.value })}
+                />
+              </div>
+            </Card>
+
+            <Card className="glass-card p-6">
+              <h2 className="text-lg font-semibold mb-4">Réseaux sociaux</h2>
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                {['Instagram', 'Facebook', 'Twitter', 'LinkedIn', 'TikTok'].map((platform) => (
+                  <div key={platform} className="flex items-center space-x-2">
+                    <Checkbox
+                      id={`platform-${platform}`}
+                      checked={profile.platforms.includes(platform)}
+                      onCheckedChange={() => togglePlatform(platform)}
+                    />
+                    <label htmlFor={`platform-${platform}`} className="text-sm cursor-pointer">
+                      {platform}
                     </label>
                   </div>
                 ))}
               </div>
-            </div>
+            </Card>
 
-            <div className="flex items-center space-x-2 pt-4 border-t border-border/50">
-              <Checkbox
-                id="auto-publish"
-                checked={profile.auto_publish}
-                onCheckedChange={(checked) => setProfile({ ...profile, auto_publish: !!checked })}
-              />
-              <label htmlFor="auto-publish" className="text-sm cursor-pointer">
-                Activer la publication automatique
-              </label>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Si activé, les posts validés seront automatiquement publiés aux jours sélectionnés
-            </p>
-          </div>
-        </Card>
+            <Card className="glass-card p-6">
+              <h2 className="text-lg font-semibold mb-4">Automatisation</h2>
+              
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Fréquence de publication (posts/semaine)</Label>
+                  <Select 
+                    value={profile.post_frequency.toString()} 
+                    onValueChange={(v) => setProfile({ ...profile, post_frequency: parseInt(v) })}
+                  >
+                    <SelectTrigger className="glass-card w-full md:w-48">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="1">1 post/semaine</SelectItem>
+                      <SelectItem value="2">2 posts/semaine</SelectItem>
+                      <SelectItem value="3">3 posts/semaine</SelectItem>
+                      <SelectItem value="5">5 posts/semaine</SelectItem>
+                      <SelectItem value="7">7 posts/semaine</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Jours de publication préférés</Label>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    {DAYS.map((day) => (
+                      <div key={day.id} className="flex items-center space-x-2">
+                        <Checkbox
+                          id={`day-${day.id}`}
+                          checked={profile.preferred_days.includes(day.id)}
+                          onCheckedChange={() => toggleDay(day.id)}
+                        />
+                        <label htmlFor={`day-${day.id}`} className="text-sm cursor-pointer">
+                          {day.label}
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-center space-x-2 pt-4 border-t border-border/50">
+                  <Checkbox
+                    id="auto-publish"
+                    checked={profile.auto_publish}
+                    onCheckedChange={(checked) => setProfile({ ...profile, auto_publish: !!checked })}
+                  />
+                  <label htmlFor="auto-publish" className="text-sm cursor-pointer">
+                    Activer la publication automatique
+                  </label>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Si activé, les posts validés seront automatiquement publiés aux jours sélectionnés
+                </p>
+              </div>
+            </Card>
+          </TabsContent>
+
+          {/* Images Tab */}
+          <TabsContent value="images" className="space-y-6">
+            <Card className="glass-card p-6">
+              <h2 className="text-lg font-semibold mb-4">Préférences d'images IA</h2>
+              
+              <div className="space-y-2">
+                <Label>Type de personnes dans les images générées</Label>
+                <Select 
+                  value={profile.image_people_type} 
+                  onValueChange={(v) => setProfile({ ...profile, image_people_type: v })}
+                >
+                  <SelectTrigger className="glass-card w-full md:w-64">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="african">🌍 Personnes africaines</SelectItem>
+                    <SelectItem value="caucasian">🌎 Personnes caucasiennes</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Les images générées par IA incluront principalement ce type de personnes
+                </p>
+              </div>
+            </Card>
+
+            <CustomImageLibrary
+              images={profile.custom_image_urls}
+              useCustomImages={profile.use_custom_images}
+              onImagesChange={(urls) => setProfile({ ...profile, custom_image_urls: urls })}
+              onUseCustomImagesChange={(value) => setProfile({ ...profile, use_custom_images: value })}
+            />
+          </TabsContent>
+
+          {/* Account Tab */}
+          <TabsContent value="account">
+            <AccountSettings userEmail={userEmail} />
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   );
