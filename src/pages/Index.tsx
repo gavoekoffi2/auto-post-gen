@@ -1,20 +1,22 @@
 import { Navbar } from "@/components/Navbar";
-import { Hero } from "@/components/Hero";
-import { Features } from "@/components/Features";
-import { Pricing } from "@/components/Pricing";
+import { HeroNew } from "@/components/landing/HeroNew";
+import { FeaturesNew } from "@/components/landing/FeaturesNew";
+import { HowItWorks } from "@/components/landing/HowItWorks";
+import { TestimonialsNew } from "@/components/landing/TestimonialsNew";
+import { PricingNew } from "@/components/landing/PricingNew";
+import { CTASection } from "@/components/landing/CTASection";
 import { Footer } from "@/components/Footer";
 
 const Index = () => {
   return (
     <div className="min-h-screen">
       <Navbar />
-      <Hero />
-      <div id="features">
-        <Features />
-      </div>
-      <div id="pricing">
-        <Pricing />
-      </div>
+      <HeroNew />
+      <FeaturesNew />
+      <HowItWorks />
+      <TestimonialsNew />
+      <PricingNew />
+      <CTASection />
       <Footer />
     </div>
   );
