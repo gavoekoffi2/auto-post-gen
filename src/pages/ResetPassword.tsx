@@ -78,8 +78,8 @@ export default function ResetPassword() {
         <Card className="glass-card p-8">
           {success ? (
             <div className="text-center space-y-4">
-              <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto">
-                <CheckCircle className="w-8 h-8 text-green-500" />
+              <div className="w-16 h-16 bg-secondary/20 rounded-full flex items-center justify-center mx-auto">
+                <CheckCircle className="w-8 h-8 text-secondary" />
               </div>
               <h2 className="text-xl font-bold">Mot de passe mis à jour !</h2>
               <p className="text-muted-foreground">
