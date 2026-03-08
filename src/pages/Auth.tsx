@@ -61,7 +61,7 @@ export default function Auth() {
           .maybeSingle();
 
         // If profile doesn't exist or is incomplete, redirect to onboarding
-        if (!profile || !profile.sector || !profile.description) {
+        if (!profile || !profile.sector) {
           toast.success("Connexion réussie ! Veuillez compléter votre profil.");
           navigate("/onboarding");
           return;
