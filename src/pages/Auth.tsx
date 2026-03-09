@@ -87,7 +87,7 @@ export default function Auth() {
           <div className="w-12 h-12 bg-gradient-to-r from-primary to-secondary rounded-xl flex items-center justify-center">
             <Sparkles className="w-7 h-7 text-white" />
           </div>
-          <span className="font-bold text-2xl">ContentAI</span>
+          <span className="font-bold text-2xl">Pro Social AI</span>
         </Link>
 
         <Card className="glass-card p-8">

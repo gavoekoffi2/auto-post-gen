@@ -13,7 +13,7 @@ export default function About() {
           {/* Hero */}
           <div className="text-center mb-16">
             <h1 className="text-4xl md:text-5xl font-bold mb-6">
-              À propos de <span className="gradient-text">ContentAI</span>
+              À propos de <span className="gradient-text">Pro Social AI</span>
             </h1>
             <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
               Nous automatisons la création de contenu pour permettre aux entrepreneurs 
@@ -31,7 +31,7 @@ export default function About() {
             </div>
             <p className="text-muted-foreground text-lg leading-relaxed">
               Créer du contenu de qualité pour les réseaux sociaux prend du temps - 
-              un temps précieux que les entrepreneurs n'ont pas. ContentAI a été conçu 
+              un temps précieux que les entrepreneurs n'ont pas. Pro Social AI a été conçu 
               pour résoudre ce problème en automatisant entièrement le processus de 
               création, validation et publication de contenu.
             </p>
@@ -74,7 +74,7 @@ export default function About() {
 
           {/* Stats */}
           <div className="glass-card p-8 md:p-12 rounded-2xl text-center">
-            <h2 className="text-2xl font-bold mb-8">ContentAI en chiffres</h2>
+            <h2 className="text-2xl font-bold mb-8">Pro Social AI en chiffres</h2>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
               <div>
                 <p className="text-4xl font-bold gradient-text">500+</p>

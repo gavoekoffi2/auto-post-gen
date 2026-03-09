@@ -21,7 +21,7 @@ export default function Terms() {
           <section>
             <h2 className="text-2xl font-semibold text-foreground mb-4">1. Acceptation des conditions</h2>
             <p>
-              En accédant et en utilisant ContentAI, vous acceptez d'être lié par ces conditions d'utilisation. 
+              En accédant et en utilisant Pro Social AI, vous acceptez d'être lié par ces conditions d'utilisation. 
               Si vous n'acceptez pas ces conditions, veuillez ne pas utiliser notre service.
             </p>
           </section>
@@ -29,7 +29,7 @@ export default function Terms() {
           <section>
             <h2 className="text-2xl font-semibold text-foreground mb-4">2. Description du service</h2>
             <p>
-              ContentAI est une plateforme de génération automatique de contenu pour les réseaux sociaux 
+              Pro Social AI est une plateforme de génération automatique de contenu pour les réseaux sociaux 
               utilisant l'intelligence artificielle. Nous fournissons des outils pour créer, planifier 
               et publier du contenu sur différentes plateformes sociales.
             </p>
@@ -50,7 +50,7 @@ export default function Terms() {
             <p>
               Le contenu généré par notre IA est créé sur la base de vos paramètres et préférences. 
               Vous êtes responsable de la révision et de la validation du contenu avant publication. 
-              ContentAI ne peut être tenu responsable du contenu publié sur vos réseaux sociaux.
+              Pro Social AI ne peut être tenu responsable du contenu publié sur vos réseaux sociaux.
             </p>
           </section>
 
@@ -65,7 +65,7 @@ export default function Terms() {
           <section>
             <h2 className="text-2xl font-semibold text-foreground mb-4">6. Limitations de responsabilité</h2>
             <p>
-              ContentAI est fourni "tel quel". Nous ne garantissons pas que le service sera 
+              Pro Social AI est fourni "tel quel". Nous ne garantissons pas que le service sera 
               ininterrompu ou exempt d'erreurs. Nous ne sommes pas responsables des dommages 
               indirects résultant de l'utilisation de notre service.
             </p>
@@ -83,7 +83,7 @@ export default function Terms() {
             <h2 className="text-2xl font-semibold text-foreground mb-4">8. Contact</h2>
             <p>
               Pour toute question concernant ces conditions d'utilisation, contactez-nous à : 
-              contact@contentai.com
+              contact@prosocialai.com
             </p>
           </section>
         </div>

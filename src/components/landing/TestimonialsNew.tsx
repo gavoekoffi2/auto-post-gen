@@ -5,7 +5,7 @@ const testimonials = [
     name: "Marie Dubois",
     role: "Fondatrice, BeautyTech",
     avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&h=100&fit=crop&crop=face",
-    content: "AutoPublish a transformé ma façon de gérer mes réseaux. Je gagne plus de 15h par semaine que je peux consacrer à mon business. L'IA génère du contenu qui reflète parfaitement ma marque.",
+    content: "Pro Social AI a transformé ma façon de gérer mes réseaux. Je gagne plus de 15h par semaine que je peux consacrer à mon business. L'IA génère du contenu qui reflète parfaitement ma marque.",
     rating: 5
   },
   {
@@ -19,14 +19,14 @@ const testimonials = [
     name: "Sophie Chen",
     role: "Influenceuse lifestyle",
     avatar: "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=100&h=100&fit=crop&crop=face",
-    content: "Je collabore avec plusieurs marques et AutoPublish me permet de gérer tous mes comptes sans effort. Le gain de temps est incroyable !",
+    content: "Je collabore avec plusieurs marques et Pro Social AI me permet de gérer tous mes comptes sans effort. Le gain de temps est incroyable !",
     rating: 5
   },
   {
     name: "Alexandre Petit",
     role: "CEO, AgenceDigitale",
     avatar: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100&h=100&fit=crop&crop=face",
-    content: "On utilise AutoPublish pour tous nos clients. La qualité du contenu généré et l'automatisation nous ont permis de scaler notre activité x3.",
+    content: "On utilise Pro Social AI pour tous nos clients. La qualité du contenu généré et l'automatisation nous ont permis de scaler notre activité x3.",
     rating: 5
   }
 ];
