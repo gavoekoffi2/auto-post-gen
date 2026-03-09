@@ -89,7 +89,7 @@ serve(async (req) => {
           `).join('')}
           <hr/>
           <p>Merci de votre confiance!</p>
-          <p>L'équipe ContentAI</p>
+          <p>L'équipe Pro Social AI</p>
         `;
 
         console.log(`Email content prepared for user ${userId} (${profile.email})`);

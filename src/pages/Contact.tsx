@@ -57,7 +57,7 @@ export default function Contact() {
             <div>
               <h2 className="text-3xl font-bold mb-4">Contactez-nous</h2>
               <p className="text-muted-foreground">
-                Vous avez des questions sur ContentAI ? Notre équipe est là pour vous aider.
+                Vous avez des questions sur Pro Social AI ? Notre équipe est là pour vous aider.
               </p>
             </div>
 
@@ -68,7 +68,7 @@ export default function Contact() {
                 </div>
                 <div>
                   <h3 className="font-semibold">Email</h3>
-                  <p className="text-sm text-muted-foreground">contact@contentai.com</p>
+                  <p className="text-sm text-muted-foreground">contact@prosocialai.com</p>
                 </div>
               </div>
             </Card>

@@ -12,7 +12,7 @@ export const Footer = () => {
               <div className="w-10 h-10 bg-gradient-to-r from-primary to-secondary rounded-xl flex items-center justify-center">
                 <Sparkles className="w-6 h-6 text-white" />
               </div>
-              <span className="font-bold text-xl">ContentAI</span>
+              <span className="font-bold text-xl">Pro Social AI</span>
             </div>
             <p className="text-sm text-muted-foreground">
               Automatisez votre création de contenu sur les réseaux sociaux avec l'intelligence artificielle.
@@ -67,11 +67,11 @@ export const Footer = () => {
 
         <div className="border-t border-border/50 mt-8 pt-8 flex flex-col md:flex-row justify-between items-center gap-4">
           <p className="text-sm text-muted-foreground">
-            © {new Date().getFullYear()} ContentAI. Tous droits réservés.
+            © {new Date().getFullYear()} Pro Social AI. Tous droits réservés.
           </p>
           <div className="flex gap-4">
             <a 
-              href="https://twitter.com/contentai" 
+              href="https://twitter.com/prosocialai" 
               target="_blank" 
               rel="noopener noreferrer" 
               className="text-muted-foreground hover:text-primary transition-colors"
@@ -79,7 +79,7 @@ export const Footer = () => {
               Twitter
             </a>
             <a 
-              href="https://linkedin.com/company/contentai" 
+              href="https://linkedin.com/company/prosocialai" 
               target="_blank" 
               rel="noopener noreferrer" 
               className="text-muted-foreground hover:text-primary transition-colors"
@@ -87,7 +87,7 @@ export const Footer = () => {
               LinkedIn
             </a>
             <a 
-              href="https://instagram.com/contentai" 
+              href="https://instagram.com/prosocialai" 
               target="_blank" 
               rel="noopener noreferrer" 
               className="text-muted-foreground hover:text-primary transition-colors"

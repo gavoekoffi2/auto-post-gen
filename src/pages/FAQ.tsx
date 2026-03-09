@@ -16,7 +16,7 @@ const faqs = [
   {
     question: "Sur quels réseaux sociaux puis-je publier ?",
     answer:
-      "ContentAI supporte Instagram, Facebook, Twitter/X, LinkedIn et TikTok. Vous pouvez sélectionner les plateformes de votre choix dans votre profil.",
+      "Pro Social AI supporte Instagram, Facebook, Twitter/X, LinkedIn et TikTok. Vous pouvez sélectionner les plateformes de votre choix dans votre profil.",
   },
   {
     question: "Puis-je modifier le contenu généré ?",
@@ -62,7 +62,7 @@ export default function FAQ() {
               Questions <span className="gradient-text">fréquentes</span>
             </h1>
             <p className="text-muted-foreground">
-              Tout ce que vous devez savoir sur ContentAI
+              Tout ce que vous devez savoir sur Pro Social AI
             </p>
           </div>
 

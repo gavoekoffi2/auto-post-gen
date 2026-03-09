@@ -285,7 +285,7 @@ export default function Dashboard() {
               <div className="w-10 h-10 bg-gradient-to-r from-primary to-secondary rounded-xl flex items-center justify-center">
                 <Sparkles className="w-6 h-6 text-white" />
               </div>
-              <span className="font-bold text-xl">ContentAI</span>
+              <span className="font-bold text-xl">Pro Social AI</span>
             </div>
             <div className="flex gap-2 flex-wrap">
               <Button onClick={handleStats} variant="outline" size="sm" className="glass-card">

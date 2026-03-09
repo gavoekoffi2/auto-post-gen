@@ -14,7 +14,7 @@ export const Navbar = () => {
             <div className="w-10 h-10 bg-gradient-to-r from-primary to-secondary rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
               <Sparkles className="w-6 h-6 text-white" />
             </div>
-            <span className="font-bold text-xl">ContentAI</span>
+            <span className="font-bold text-xl">Pro Social AI</span>
           </Link>
           
           {/* Desktop Menu */}
