@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Calendar, TrendingUp, CheckCircle, Clock, Edit2, Sparkles, Settings, Share2, Calendar as CalendarIcon, Trash2, User, BarChart3 } from "lucide-react";
@@ -13,6 +13,9 @@ import { useNavigate } from "react-router-dom";
 import SettingsDialog from "@/components/SettingsDialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { SocialMediaConnect } from "@/components/SocialMediaConnect";
+import type { Database } from "@/integrations/supabase/types";
+
+type UserProfile = Database['public']['Tables']['profiles']['Row'];
 
 type Post = {
   id: string;
@@ -38,7 +41,9 @@ export default function Dashboard() {
   const [isSettingsDialogOpen, setIsSettingsDialogOpen] = useState(false);
   const [isSocialMediaDialogOpen, setIsSocialMediaDialogOpen] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [userProfile, setUserProfile] = useState<any>(null);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const lastGenerateRef = useRef<number>(0);
 
   useEffect(() => {
     checkAuthAndLoadData();
@@ -147,6 +152,15 @@ export default function Dashboard() {
   };
 
   const handleGenerate = async () => {
+    // Rate limiting: prevent more than 1 generation per 15 seconds
+    const now = Date.now();
+    if (isGenerating) return;
+    if (now - lastGenerateRef.current < 15_000) {
+      toast.warning("Veuillez patienter quelques secondes avant de générer un nouveau post.");
+      return;
+    }
+    lastGenerateRef.current = now;
+    setIsGenerating(true);
     try {
       const loadingToast = toast.loading("Génération de contenu et d'image en cours...");
       
@@ -217,6 +231,8 @@ export default function Dashboard() {
     } catch (error: any) {
       console.error('Generation error:', error);
       toast.error(error.message || 'Erreur lors de la génération');
+    } finally {
+      setIsGenerating(false);
     }
   };
 
@@ -355,9 +371,9 @@ export default function Dashboard() {
             {posts.length === 0 ? (
               <Card className="glass-card p-8 text-center">
                 <p className="text-muted-foreground mb-4">Aucun post pour le moment</p>
-                <Button onClick={handleGenerate} className="bg-gradient-to-r from-primary to-secondary">
+                <Button onClick={handleGenerate} disabled={isGenerating} className="bg-gradient-to-r from-primary to-secondary">
                   <Sparkles className="w-4 h-4 mr-2" />
-                  Générer votre premier post
+                  {isGenerating ? "Génération..." : "Générer votre premier post"}
                 </Button>
               </Card>
             ) : (
@@ -455,12 +471,13 @@ export default function Dashboard() {
                 <p className="text-sm text-muted-foreground mb-4">
                   Créer de nouveaux posts avec l'IA
                 </p>
-                <Button 
+                <Button
                   className="w-full bg-gradient-to-r from-primary to-secondary"
                   onClick={handleGenerate}
+                  disabled={isGenerating}
                 >
                   <Sparkles className="w-4 h-4 mr-2" />
-                  Générer
+                  {isGenerating ? "Génération..." : "Générer"}
                 </Button>
               </Card>
 

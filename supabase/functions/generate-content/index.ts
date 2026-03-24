@@ -164,7 +164,7 @@ INSTRUCTIONS CRITIQUES:
           || imageData?.choices?.[0]?.message?.image_url?.url
           || null;
 
-        // Fallback attempt with the non-preview image model if nothing returned
+        // Fallback attempt with imagen-3 if gemini-3-pro returned nothing
         if (!imageUrl) {
           const fallbackResp = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
             method: 'POST',
@@ -173,7 +173,7 @@ INSTRUCTIONS CRITIQUES:
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-              model: 'google/gemini-2.5-flash',
+              model: 'google/imagen-3.0-generate-002',
               messages: [
                 {
                   role: 'user',
@@ -182,7 +182,7 @@ INSTRUCTIONS CRITIQUES:
                   ]
                 }
               ],
-              modalities: ["image"]
+              modalities: ["image", "text"]
             }),
           });
 

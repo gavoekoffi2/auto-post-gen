@@ -42,11 +42,14 @@ serve(async (req) => {
 
         // Check how many posts are needed this week
         const postsNeeded = profile.post_frequency || 2;
-        
-        // Get current week number
+
+        // Get current ISO week number (ISO 8601 standard)
         const now = new Date();
         const startOfYear = new Date(now.getFullYear(), 0, 1);
-        const weekNumber = Math.ceil((((now.getTime() - startOfYear.getTime()) / 86400000) + startOfYear.getDay() + 1) / 7);
+        const dayOfYear = Math.floor((now.getTime() - startOfYear.getTime()) / 86400000) + 1;
+        // ISO week: week containing the first Thursday of the year is week 1
+        const startDayOfWeek = startOfYear.getDay() || 7; // Mon=1..Sun=7
+        const weekNumber = Math.ceil((dayOfYear + startDayOfWeek - 2) / 7);
 
         // Check existing posts for this week
         const { data: existingPosts } = await supabase
@@ -100,14 +103,19 @@ Génère uniquement le texte du post, sans titre ni explication.`;
           const generatedContent = contentData.choices?.[0]?.message?.content || 'Contenu généré';
 
           // Calculate scheduled date based on preferred days
-          const preferredDays = profile.preferred_days || ['Lundi', 'Mercredi', 'Vendredi'];
+          // preferred_days can be stored as English IDs ("monday") or French labels ("Lundi")
+          const preferredDays = profile.preferred_days || ['monday'];
           const dayMapping: Record<string, number> = {
+            // French labels
             'Dimanche': 0, 'Lundi': 1, 'Mardi': 2, 'Mercredi': 3,
-            'Jeudi': 4, 'Vendredi': 5, 'Samedi': 6
+            'Jeudi': 4, 'Vendredi': 5, 'Samedi': 6,
+            // English IDs (stored by onboarding form)
+            'sunday': 0, 'monday': 1, 'tuesday': 2, 'wednesday': 3,
+            'thursday': 4, 'friday': 5, 'saturday': 6,
           };
 
           const targetDay = preferredDays[i % preferredDays.length];
-          const targetDayNumber = dayMapping[targetDay] || 1;
+          const targetDayNumber = dayMapping[targetDay] ?? 1;
           
           const scheduledDate = new Date(now);
           const currentDay = scheduledDate.getDay();
