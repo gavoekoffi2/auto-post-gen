@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Calendar, TrendingUp, CheckCircle, Clock, Edit2, Sparkles, Settings, Share2, Calendar as CalendarIcon, Trash2, User, BarChart3 } from "lucide-react";
+import { Calendar, TrendingUp, CheckCircle, Clock, Edit2, Sparkles, Settings, Share2, Calendar as CalendarIcon, Trash2, User, BarChart3, Send } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,7 +28,7 @@ type Post = {
   title: string;
   content: string;
   image_url?: string;
-  status: "pending" | "validated";
+  status: "pending" | "validated" | "published";
 };
 
 export default function Dashboard() {
@@ -81,9 +81,9 @@ export default function Dashboard() {
         platform: post.platforms?.[0] || 'Instagram',
         date: post.scheduled_for ? new Date(post.scheduled_for).toISOString().split('T')[0] : '',
         time: post.scheduled_for ? new Date(post.scheduled_for).toTimeString().substring(0, 5) : '',
-        status: (post.status === 'validated' ? 'validated' : 'pending') as 'pending' | 'validated',
+        status: (post.status === 'published' ? 'published' : post.status === 'validated' ? 'validated' : 'pending') as 'pending' | 'validated' | 'published',
       }));
-      
+
       setPosts(transformedPosts);
     } catch (error: any) {
       console.error('Error loading data:', error);
@@ -223,7 +223,7 @@ export default function Dashboard() {
         platform: savedPost.platforms?.[0] || 'Instagram',
         date: savedPost.scheduled_for ? new Date(savedPost.scheduled_for).toISOString().split('T')[0] : '',
         time: savedPost.scheduled_for ? new Date(savedPost.scheduled_for).toTimeString().substring(0, 5) : '',
-        status: (savedPost.status === 'validated' ? 'validated' : 'pending') as 'pending' | 'validated',
+        status: (savedPost.status === 'published' ? 'published' : savedPost.status === 'validated' ? 'validated' : 'pending') as 'pending' | 'validated' | 'published',
       };
 
       setPosts([transformedPost, ...posts]);
@@ -269,6 +269,35 @@ export default function Dashboard() {
     }
   };
 
+  const handlePublish = async (postId: string) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error("Non authentifié");
+
+      const loadingToast = toast.loading("Publication en cours sur vos réseaux sociaux...");
+
+      const { data, error } = await supabase.functions.invoke('social-publish', {
+        body: { postId },
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+
+      toast.dismiss(loadingToast);
+
+      if (error || !data?.success) {
+        throw new Error(data?.error || error?.message || 'Erreur lors de la publication');
+      }
+
+      setPosts(posts.map(post =>
+        post.id === postId ? { ...post, status: "published" as const } : post
+      ));
+      toast.success(data.message || "Post publié avec succès !");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Erreur lors de la publication';
+      toast.error(message);
+      console.error(err);
+    }
+  };
+
   const handleSettings = () => {
     setIsSettingsDialogOpen(true);
   };
@@ -289,6 +318,7 @@ export default function Dashboard() {
     scheduled: posts.length,
     validated: posts.filter(p => p.status === 'validated').length,
     pending: posts.filter(p => p.status === 'pending').length,
+    published: posts.filter(p => p.status === 'published').length,
   };
 
   return (
@@ -391,11 +421,13 @@ export default function Dashboard() {
                         </div>
                       </div>
                       <span className={`px-3 py-1 rounded-full text-xs ${
-                        post.status === "validated" 
-                          ? "bg-secondary/20 text-secondary" 
+                        post.status === "published"
+                          ? "bg-green-500/20 text-green-500"
+                          : post.status === "validated"
+                          ? "bg-secondary/20 text-secondary"
                           : "bg-accent/20 text-accent"
                       }`}>
-                        {post.status === "validated" ? "Validé" : "En attente"}
+                        {post.status === "published" ? "Publié" : post.status === "validated" ? "Validé" : "En attente"}
                       </span>
                     </div>
                     {(post.date || post.time) && (
@@ -439,14 +471,29 @@ export default function Dashboard() {
                         Modifier
                       </Button>
                       {post.status === "pending" && (
-                        <Button 
-                          size="sm" 
+                        <Button
+                          size="sm"
                           className="bg-gradient-to-r from-primary to-secondary flex-1"
                           onClick={() => handleValidate(post.id)}
                         >
                           <CheckCircle className="w-4 h-4 mr-1" />
                           Valider
                         </Button>
+                      )}
+                      {post.status === "validated" && (
+                        <Button
+                          size="sm"
+                          className="bg-gradient-to-r from-green-500 to-emerald-600 flex-1"
+                          onClick={() => handlePublish(post.id)}
+                        >
+                          <Send className="w-4 h-4 mr-1" />
+                          Publier
+                        </Button>
+                      )}
+                      {post.status === "published" && (
+                        <span className="flex items-center gap-1 text-xs text-green-500 flex-1 justify-center">
+                          <CheckCircle className="w-3 h-3" /> Publié
+                        </span>
                       )}
                       <Button 
                         size="sm" 
