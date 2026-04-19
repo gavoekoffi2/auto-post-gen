@@ -245,9 +245,11 @@ export default function SettingsDialog({ isOpen, onOpenChange, userProfile, onPr
                   <SelectValue placeholder="Nombre de posts par semaine" />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="1">1 post/semaine</SelectItem>
                   <SelectItem value="2">2 posts/semaine</SelectItem>
+                  <SelectItem value="3">3 posts/semaine</SelectItem>
                   <SelectItem value="5">5 posts/semaine</SelectItem>
-                  <SelectItem value="10">10 posts/semaine</SelectItem>
+                  <SelectItem value="7">7 posts/semaine</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -256,8 +258,11 @@ export default function SettingsDialog({ isOpen, onOpenChange, userProfile, onPr
           {/* Plateformes */}
           <div className="space-y-4">
             <h3 className="font-semibold text-lg">Réseaux sociaux</h3>
-            <div className="space-y-3">
-              {['Instagram', 'Facebook', 'Twitter', 'LinkedIn', 'TikTok'].map((platform) => (
+            <p className="text-xs text-muted-foreground">
+              Cochez les plateformes où vous souhaitez publier (à connecter via Postiz).
+            </p>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              {['Instagram', 'Facebook', 'Twitter', 'LinkedIn', 'TikTok', 'YouTube', 'Pinterest', 'Threads', 'Bluesky'].map((platform) => (
                 <div key={platform} className="flex items-center space-x-2">
                   <Checkbox
                     id={`settings-${platform}`}
