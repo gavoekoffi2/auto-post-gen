@@ -62,24 +62,13 @@ export function AccountSettings({ userEmail }: AccountSettingsProps) {
   const handleDeleteAccount = async () => {
     setDeleting(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error("Non authentifié");
+      const { data, error } = await supabase.functions.invoke('delete-account', {
+        body: {},
+      });
+      if (error) throw error;
+      if ((data as any)?.error) throw new Error((data as any).error);
 
-      // Delete user's posts
-      await supabase
-        .from("posts")
-        .delete()
-        .eq("user_id", session.user.id);
-
-      // Delete user's profile
-      await supabase
-        .from("profiles")
-        .delete()
-        .eq("id", session.user.id);
-
-      // Sign out (actual user deletion would require admin API)
       await supabase.auth.signOut();
-      
       toast.success("Compte supprimé. Au revoir !");
       navigate("/");
     } catch (error: any) {

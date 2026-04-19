@@ -23,3 +23,7 @@ verify_jwt = true
 # Scheduler entrypoint — public endpoint protected by CRON_SECRET.
 [functions.publish-scheduled-posts]
 verify_jwt = false
+
+# Account deletion — requires caller JWT to know whose account to delete.
+[functions.delete-account]
+verify_jwt = true

@@ -53,6 +53,7 @@ supabase functions deploy send-validation-email
 supabase functions deploy postiz-integrations
 supabase functions deploy postiz-publish
 supabase functions deploy publish-scheduled-posts
+supabase functions deploy delete-account
 ```
 
 ## Clés / secrets à fournir
