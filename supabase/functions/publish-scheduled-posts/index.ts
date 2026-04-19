@@ -41,6 +41,10 @@ serve(async (req) => {
     return jsonResponse({ error: error.message }, 500);
   }
 
+  const MAX_ATTEMPTS = 5;
+  const requeueStatus = (attempts: number) =>
+    attempts >= MAX_ATTEMPTS ? 'pending' : 'validated';
+
   const results: Array<Record<string, unknown>> = [];
 
   for (const post of duePosts || []) {
@@ -52,12 +56,13 @@ serve(async (req) => {
         .maybeSingle();
 
       if (!profile?.postiz_api_key) {
+        const attempts = (post.publish_attempts ?? 0) + 1;
         await supabase
           .from('posts')
           .update({
-            status: 'validated',
+            status: requeueStatus(attempts),
             publish_error: 'Aucune clé API Postiz configurée.',
-            publish_attempts: (post.publish_attempts ?? 0) + 1,
+            publish_attempts: attempts,
           })
           .eq('id', post.id);
         results.push({ id: post.id, skipped: 'no-key' });
@@ -106,12 +111,13 @@ serve(async (req) => {
       }
 
       if (subPosts.length === 0) {
+        const attempts = (post.publish_attempts ?? 0) + 1;
         await supabase
           .from('posts')
           .update({
-            status: 'validated',
+            status: requeueStatus(attempts),
             publish_error: `Aucune intégration Postiz pour: ${missing.join(', ')}`,
-            publish_attempts: (post.publish_attempts ?? 0) + 1,
+            publish_attempts: attempts,
           })
           .eq('id', post.id);
         results.push({ id: post.id, skipped: 'no-integration', missing });
@@ -151,12 +157,13 @@ serve(async (req) => {
             ? err.message
             : 'Unknown error';
       console.error('Publish failed for', post.id, message);
+      const attempts = (post.publish_attempts ?? 0) + 1;
       await supabase
         .from('posts')
         .update({
-          status: 'validated',
+          status: requeueStatus(attempts),
           publish_error: message,
-          publish_attempts: (post.publish_attempts ?? 0) + 1,
+          publish_attempts: attempts,
         })
         .eq('id', post.id);
       results.push({ id: post.id, error: message });
