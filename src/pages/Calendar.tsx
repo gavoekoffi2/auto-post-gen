@@ -75,6 +75,16 @@ export default function CalendarPage() {
       return;
     }
 
+    if (selectedPost.status === "published" || selectedPost.status === "publishing") {
+      toast.error("Ce post est déjà publié ou en cours de publication");
+      return;
+    }
+
+    if (selectedPost.status === "pending") {
+      toast.error("Validez d'abord ce post depuis le dashboard avant de le programmer");
+      return;
+    }
+
     try {
       const scheduledDateTime = new Date(selectedDate);
       const [hours, minutes] = scheduleTime.split(':');
@@ -82,7 +92,10 @@ export default function CalendarPage() {
 
       const { error } = await supabase
         .from('posts')
-        .update({ scheduled_for: scheduledDateTime.toISOString() })
+        .update({
+          scheduled_for: scheduledDateTime.toISOString(),
+          status: 'scheduled',
+        })
         .eq('id', selectedPost.id);
 
       if (error) throw error;
@@ -105,7 +118,9 @@ export default function CalendarPage() {
   };
 
   const postsForSelectedDate = selectedDate ? getPostsForDate(selectedDate) : [];
-  const unscheduledPosts = posts.filter(post => !post.scheduled_for);
+  const unscheduledPosts = posts.filter(
+    post => !post.scheduled_for && (post.status === "validated" || post.status === "scheduled"),
+  );
 
   if (loading) {
     return (
