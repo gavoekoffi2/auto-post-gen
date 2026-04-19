@@ -15,14 +15,16 @@ import { LogoUpload } from "@/components/LogoUpload";
 import { CustomImageLibrary } from "@/components/CustomImageLibrary";
 import { AccountSettings } from "@/components/AccountSettings";
 
+// Days are stored in French (ids match the labels) so the scheduler
+// in auto-generate-weekly can use them directly.
 const DAYS = [
-  { id: "monday", label: "Lundi" },
-  { id: "tuesday", label: "Mardi" },
-  { id: "wednesday", label: "Mercredi" },
-  { id: "thursday", label: "Jeudi" },
-  { id: "friday", label: "Vendredi" },
-  { id: "saturday", label: "Samedi" },
-  { id: "sunday", label: "Dimanche" },
+  { id: "Lundi", label: "Lundi" },
+  { id: "Mardi", label: "Mardi" },
+  { id: "Mercredi", label: "Mercredi" },
+  { id: "Jeudi", label: "Jeudi" },
+  { id: "Vendredi", label: "Vendredi" },
+  { id: "Samedi", label: "Samedi" },
+  { id: "Dimanche", label: "Dimanche" },
 ];
 
 export default function Profile() {

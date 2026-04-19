@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Calendar, TrendingUp, CheckCircle, Clock, Edit2, Sparkles, Settings, Share2, Calendar as CalendarIcon, Trash2, User, BarChart3 } from "lucide-react";
+import { Calendar, TrendingUp, CheckCircle, Clock, Edit2, Sparkles, Settings, Share2, Calendar as CalendarIcon, Trash2, User, BarChart3, Send, AlertTriangle } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,6 +14,8 @@ import SettingsDialog from "@/components/SettingsDialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { SocialMediaConnect } from "@/components/SocialMediaConnect";
 
+type PostStatus = "pending" | "validated" | "scheduled" | "published" | "publishing";
+
 type Post = {
   id: string;
   user_id?: string;
@@ -25,7 +27,9 @@ type Post = {
   title: string;
   content: string;
   image_url?: string;
-  status: "pending" | "validated";
+  status: PostStatus;
+  publish_error?: string | null;
+  published_at?: string | null;
 };
 
 export default function Dashboard() {
@@ -39,6 +43,7 @@ export default function Dashboard() {
   const [isSocialMediaDialogOpen, setIsSocialMediaDialogOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [userProfile, setUserProfile] = useState<any>(null);
+  const [publishingId, setPublishingId] = useState<string | null>(null);
 
   useEffect(() => {
     checkAuthAndLoadData();
@@ -71,12 +76,13 @@ export default function Dashboard() {
       if (error) throw error;
       
       // Transform database posts to match component format
-      const transformedPosts = (postsData || []).map(post => ({
+      const allowed = ['pending', 'validated', 'scheduled', 'published', 'publishing'] as const;
+      const transformedPosts: Post[] = (postsData || []).map((post: any) => ({
         ...post,
         platform: post.platforms?.[0] || 'Instagram',
         date: post.scheduled_for ? new Date(post.scheduled_for).toISOString().split('T')[0] : '',
         time: post.scheduled_for ? new Date(post.scheduled_for).toTimeString().substring(0, 5) : '',
-        status: (post.status === 'validated' ? 'validated' : 'pending') as 'pending' | 'validated',
+        status: ((allowed as readonly string[]).includes(post.status) ? post.status : 'pending') as PostStatus,
       }));
       
       setPosts(transformedPosts);
@@ -103,8 +109,8 @@ export default function Dashboard() {
 
       if (error) throw error;
 
-      setPosts(posts.map(post => 
-        post.id === postId ? { ...post, status: "validated" as const } : post
+      setPosts(posts.map(post =>
+        post.id === postId ? { ...post, status: "validated" as PostStatus } : post
       ));
       toast.success("Post validé !");
     } catch (error: any) {
@@ -204,12 +210,16 @@ export default function Dashboard() {
       console.log('Post saved successfully:', savedPost.id);
 
       // Transform to match component format
-      const transformedPost = {
+      const allowedStatuses = ['pending', 'validated', 'scheduled', 'published', 'publishing'] as const;
+      const savedStatus: PostStatus = (allowedStatuses as readonly string[]).includes(savedPost.status)
+        ? (savedPost.status as PostStatus)
+        : 'pending';
+      const transformedPost: Post = {
         ...savedPost,
         platform: savedPost.platforms?.[0] || 'Instagram',
         date: savedPost.scheduled_for ? new Date(savedPost.scheduled_for).toISOString().split('T')[0] : '',
         time: savedPost.scheduled_for ? new Date(savedPost.scheduled_for).toTimeString().substring(0, 5) : '',
-        status: (savedPost.status === 'validated' ? 'validated' : 'pending') as 'pending' | 'validated',
+        status: savedStatus,
       };
 
       setPosts([transformedPost, ...posts]);
@@ -255,6 +265,52 @@ export default function Dashboard() {
 
   const handleSettings = () => {
     setIsSettingsDialogOpen(true);
+  };
+
+  const handlePublish = async (postId: string, publishNow: boolean) => {
+    if (!userProfile?.postiz_api_key) {
+      toast.error("Configurez d'abord votre clé API Postiz (onglet Réseaux sociaux).");
+      setIsSocialMediaDialogOpen(true);
+      return;
+    }
+
+    setPublishingId(postId);
+    const loadingToast = toast.loading(
+      publishNow ? "Publication en cours…" : "Programmation en cours…",
+    );
+    try {
+      const { data, error } = await supabase.functions.invoke("postiz-publish", {
+        body: { postId, publishNow },
+      });
+      if (error) throw error;
+      if ((data as any)?.error) throw new Error((data as any).error);
+
+      const newStatus: PostStatus = publishNow ? "published" : "scheduled";
+      setPosts((current) =>
+        current.map((p) =>
+          p.id === postId ? { ...p, status: newStatus, publish_error: null } : p,
+        ),
+      );
+      toast.dismiss(loadingToast);
+      toast.success(
+        publishNow
+          ? `Publication envoyée sur ${(data as any)?.publishedOn ?? 0} compte(s)`
+          : "Post programmé avec succès",
+      );
+
+      const missing = (data as any)?.missing as string[] | undefined;
+      if (missing && missing.length > 0) {
+        toast.warning(
+          `Pas d'intégration Postiz pour: ${missing.join(", ")}`,
+        );
+      }
+    } catch (err: any) {
+      toast.dismiss(loadingToast);
+      console.error("Publish error:", err);
+      toast.error(err.message || "Erreur lors de la publication");
+    } finally {
+      setPublishingId(null);
+    }
   };
 
   const handleSocialMedia = () => {
@@ -375,11 +431,21 @@ export default function Dashboard() {
                         </div>
                       </div>
                       <span className={`px-3 py-1 rounded-full text-xs ${
-                        post.status === "validated" 
-                          ? "bg-secondary/20 text-secondary" 
+                        post.status === "published"
+                          ? "bg-green-500/20 text-green-600"
+                          : post.status === "scheduled"
+                          ? "bg-blue-500/20 text-blue-500"
+                          : post.status === "validated"
+                          ? "bg-secondary/20 text-secondary"
+                          : post.status === "publishing"
+                          ? "bg-purple-500/20 text-purple-500"
                           : "bg-accent/20 text-accent"
                       }`}>
-                        {post.status === "validated" ? "Validé" : "En attente"}
+                        {post.status === "published" ? "Publié"
+                          : post.status === "scheduled" ? "Programmé"
+                          : post.status === "publishing" ? "Publication…"
+                          : post.status === "validated" ? "Validé"
+                          : "En attente"}
                       </span>
                     </div>
                     {(post.date || post.time) && (
@@ -404,6 +470,12 @@ export default function Dashboard() {
                        </div>
                      )}
                      <p className="text-sm text-muted-foreground mb-4 line-clamp-2">{post.content}</p>
+                     {post.publish_error && (
+                       <div className="flex items-start gap-2 p-2 mb-3 rounded-md bg-destructive/10 text-destructive text-xs">
+                         <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                         <span>{post.publish_error}</span>
+                       </div>
+                     )}
                      <div className="flex gap-2 flex-wrap">
                       <Button 
                         size="sm" 
@@ -423,13 +495,36 @@ export default function Dashboard() {
                         Modifier
                       </Button>
                       {post.status === "pending" && (
-                        <Button 
-                          size="sm" 
+                        <Button
+                          size="sm"
                           className="bg-gradient-to-r from-primary to-secondary flex-1"
                           onClick={() => handleValidate(post.id)}
                         >
                           <CheckCircle className="w-4 h-4 mr-1" />
                           Valider
+                        </Button>
+                      )}
+                      {(post.status === "validated" || post.status === "scheduled") && (
+                        <Button
+                          size="sm"
+                          className="bg-gradient-to-r from-primary to-secondary flex-1"
+                          onClick={() => handlePublish(post.id, true)}
+                          disabled={publishingId === post.id}
+                        >
+                          <Send className="w-4 h-4 mr-1" />
+                          {publishingId === post.id ? "Envoi…" : "Publier"}
+                        </Button>
+                      )}
+                      {post.status === "validated" && post.scheduled_for && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="glass-card flex-1"
+                          onClick={() => handlePublish(post.id, false)}
+                          disabled={publishingId === post.id}
+                        >
+                          <Clock className="w-4 h-4 mr-1" />
+                          Programmer
                         </Button>
                       )}
                       <Button 

@@ -1,73 +1,139 @@
-# Welcome to your Lovable project
+# Pro Social AI
 
-## Project info
+Plateforme d'automatisation de contenu pour les réseaux sociaux.
+Elle combine **Supabase** (auth, DB, edge functions) + **Lovable AI Gateway**
+(génération de texte + image) + **[Postiz](https://github.com/gitroomhq/postiz-app)**
+(publication multi-plateformes).
 
-**URL**: https://lovable.dev/projects/395fcce0-0051-4e82-9559-5e397547cdf8
+## Fonctionnalités
 
-## How can I edit this code?
+- Onboarding personnalisé (secteur, ton, fréquence, jours, type d'image).
+- Génération automatique de posts (texte + image) avec Gemini via Lovable AI.
+- Bibliothèque d'images personnalisées (stockage Supabase).
+- Calendrier de programmation.
+- **Connexion aux réseaux sociaux via Postiz** (OAuth officiels — pas de mot
+  de passe stocké).
+- **Publication réelle** (immédiate ou programmée) sur Instagram, Facebook,
+  LinkedIn, X (Twitter), TikTok, YouTube, Pinterest, Threads, Bluesky, etc.
+- Cron Supabase pour publier les posts validés à leur date prévue.
+- Email de validation hebdo (via Resend, optionnel).
+- Page de contact enregistrée dans la DB (`contact_messages`).
 
-There are several ways of editing your application.
+## Stack
 
-**Use Lovable**
+- Vite + React 18 + TypeScript
+- shadcn/ui + Tailwind CSS
+- Supabase (auth, Postgres + RLS, storage, edge functions Deno)
+- Postiz API publique pour la publication sociale
+- Resend pour les emails (optionnel)
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/395fcce0-0051-4e82-9559-5e397547cdf8) and start prompting.
+## Démarrer en local
 
-Changes made via Lovable will be committed automatically to this repo.
-
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
+```bash
+bun install        # ou npm install
+bun run dev        # Vite sur le port 8080
 ```
 
-**Edit a file directly in GitHub**
+Variables d'environnement **frontend** (`.env`) :
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+```env
+VITE_SUPABASE_URL="https://<project>.supabase.co"
+VITE_SUPABASE_PUBLISHABLE_KEY="<anon-key>"
+VITE_SUPABASE_PROJECT_ID="<project-id>"
+```
 
-**Use GitHub Codespaces**
+## Déploiement Supabase
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+```bash
+supabase link --project-ref <project-ref>
+supabase db push                                # applique les migrations
+supabase functions deploy generate-content
+supabase functions deploy auto-generate-weekly
+supabase functions deploy send-validation-email
+supabase functions deploy postiz-integrations
+supabase functions deploy postiz-publish
+supabase functions deploy publish-scheduled-posts
+```
 
-## What technologies are used for this project?
+## Clés / secrets à fournir
 
-This project is built with:
+À configurer dans **Supabase → Project Settings → Edge Functions → Secrets** :
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+| Nom | Obligatoire | Où l'obtenir | Rôle |
+| --- | --- | --- | --- |
+| `LOVABLE_API_KEY` | **Oui** | [lovable.dev](https://lovable.dev) → Settings → API | Génération de texte + image (Gemini) |
+| `SUPABASE_URL` | auto | — | Défini par Supabase |
+| `SUPABASE_SERVICE_ROLE_KEY` | auto | — | Défini par Supabase |
+| `SUPABASE_ANON_KEY` | auto | — | Défini par Supabase |
+| `RESEND_API_KEY` | Optionnel | [resend.com](https://resend.com) → API Keys | Envoi d'emails de validation |
+| `RESEND_FROM_EMAIL` | Optionnel | — | Ex. `"Pro Social AI <noreply@votredomaine.com>"` |
+| `APP_URL` | Optionnel | — | URL publique de l'app (pour les liens dans les emails) |
+| `CRON_SECRET` | Recommandé | À générer vous-même | Protège `publish-scheduled-posts` en tant que header `x-cron-secret` |
 
-## How can I deploy this project?
+### Clé Postiz (côté utilisateur)
 
-Simply open [Lovable](https://lovable.dev/projects/395fcce0-0051-4e82-9559-5e397547cdf8) and click on Share -> Publish.
+La clé **Postiz API** n'est **pas globale** : chaque utilisateur la colle dans
+son profil. Elle est stockée chiffrée en DB (colonne `profiles.postiz_api_key`,
+protégée par RLS).
 
-## Can I connect a custom domain to my Lovable project?
+Procédure à suivre par l'utilisateur (déjà documentée dans l'UI) :
 
-Yes, you can!
+1. Créer un compte sur [platform.postiz.com](https://platform.postiz.com)
+   (ou auto-héberger Postiz).
+2. Connecter ses réseaux sociaux via Postiz (OAuth officiels).
+3. Aller dans **Settings → Developers → Public API** et générer la clé.
+4. La coller dans l'app, onglet « Réseaux sociaux » du dashboard.
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+## Automatisation (cron)
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+Depuis le SQL editor Supabase :
+
+```sql
+-- Génère les posts de la semaine chaque lundi à 8h.
+SELECT cron.schedule(
+  'weekly-generation',
+  '0 8 * * 1',
+  $$
+  SELECT net.http_post(
+    url := 'https://<project>.functions.supabase.co/auto-generate-weekly',
+    headers := jsonb_build_object(
+      'Authorization', 'Bearer ' || current_setting('app.settings.service_role_key')
+    )
+  );
+  $$
+);
+
+-- Publie les posts dus toutes les 5 min.
+SELECT cron.schedule(
+  'publish-scheduled',
+  '*/5 * * * *',
+  $$
+  SELECT net.http_post(
+    url := 'https://<project>.functions.supabase.co/publish-scheduled-posts',
+    headers := jsonb_build_object('x-cron-secret', '<CRON_SECRET>')
+  );
+  $$
+);
+```
+
+## Schéma clé
+
+- `profiles` : préférences + `postiz_api_key`, `postiz_base_url`,
+  `postiz_integrations` (cache).
+- `posts` : statut (`pending` → `validated` → `scheduled` → `publishing` →
+  `published`), `postiz_post_id`, `publish_error`.
+- `contact_messages` : formulaire de contact public.
+- Fonction RPC `claim_due_posts(p_limit)` : verrouille les posts dus pour le
+  cron.
+
+## Limites / notes
+
+- Postiz applique un **rate limit de 30 requêtes/heure** sur l'API publique.
+- Les publications vidéo TikTok/YouTube requièrent des paramètres
+  supplémentaires (ex. `privacy_level`) — voir
+  [Postiz public API](https://docs.postiz.com/public-api).
+
+## Licence
+
+Code propriétaire — Postiz est inclus par API (AGPL-3.0 côté Postiz, non
+redistribué dans ce repo).

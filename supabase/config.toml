@@ -1,10 +1,25 @@
 project_id = "prdpzatcevbqeqnaocdl"
 
+# Public generation endpoint — needs caller JWT to associate the user.
 [functions.generate-content]
-verify_jwt = false
+verify_jwt = true
 
+# Triggered by pg_cron with service role key only.
 [functions.auto-generate-weekly]
 verify_jwt = false
 
+# Triggered by pg_cron with service role key only.
 [functions.send-validation-email]
+verify_jwt = false
+
+# Postiz integrations lookup — requires caller JWT.
+[functions.postiz-integrations]
+verify_jwt = true
+
+# Postiz publish — requires caller JWT (checks ownership server-side too).
+[functions.postiz-publish]
+verify_jwt = true
+
+# Scheduler entrypoint — public endpoint protected by CRON_SECRET.
+[functions.publish-scheduled-posts]
 verify_jwt = false

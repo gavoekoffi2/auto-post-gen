@@ -7,6 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ArrowLeft, Mail, MessageSquare, Send } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
 
 export default function Contact() {
   const navigate = useNavigate();
@@ -27,13 +28,29 @@ export default function Contact() {
     }
 
     setLoading(true);
-    
-    // Simulate sending (would connect to email service in production)
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    toast.success("Message envoyé avec succès ! Nous vous répondrons rapidement.");
-    setFormData({ name: "", email: "", subject: "", message: "" });
-    setLoading(false);
+
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const { error } = await supabase
+        .from("contact_messages" as any)
+        .insert({
+          name: formData.name.trim(),
+          email: formData.email.trim(),
+          subject: formData.subject.trim() || null,
+          message: formData.message.trim(),
+          user_id: sessionData?.session?.user?.id ?? null,
+        } as any);
+
+      if (error) throw error;
+
+      toast.success("Message envoyé ! Nous vous répondrons rapidement.");
+      setFormData({ name: "", email: "", subject: "", message: "" });
+    } catch (err: any) {
+      console.error("Contact submit error:", err);
+      toast.error(err.message || "Impossible d'envoyer le message");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (

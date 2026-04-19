@@ -14,6 +14,39 @@ export type Database = {
   }
   public: {
     Tables: {
+      contact_messages: {
+        Row: {
+          created_at: string
+          email: string
+          handled: boolean
+          id: string
+          message: string
+          name: string
+          subject: string | null
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          email: string
+          handled?: boolean
+          id?: string
+          message: string
+          name: string
+          subject?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          email?: string
+          handled?: boolean
+          id?: string
+          message?: string
+          name?: string
+          subject?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       posts: {
         Row: {
           content: string
@@ -21,6 +54,10 @@ export type Database = {
           id: string
           image_url: string | null
           platforms: string[]
+          postiz_integration_ids: string[] | null
+          postiz_post_id: string | null
+          publish_attempts: number | null
+          publish_error: string | null
           published_at: string | null
           scheduled_for: string | null
           status: string
@@ -37,6 +74,10 @@ export type Database = {
           id?: string
           image_url?: string | null
           platforms?: string[]
+          postiz_integration_ids?: string[] | null
+          postiz_post_id?: string | null
+          publish_attempts?: number | null
+          publish_error?: string | null
           published_at?: string | null
           scheduled_for?: string | null
           status?: string
@@ -53,6 +94,10 @@ export type Database = {
           id?: string
           image_url?: string | null
           platforms?: string[]
+          postiz_integration_ids?: string[] | null
+          postiz_post_id?: string | null
+          publish_attempts?: number | null
+          publish_error?: string | null
           published_at?: string | null
           scheduled_for?: string | null
           status?: string
@@ -83,6 +128,10 @@ export type Database = {
           logo_url: string | null
           platforms: string[]
           post_frequency: number
+          postiz_api_key: string | null
+          postiz_base_url: string | null
+          postiz_integrations: Json | null
+          postiz_last_sync: string | null
           preferred_days: string[] | null
           sector: string
           style_example: string | null
@@ -109,6 +158,10 @@ export type Database = {
           logo_url?: string | null
           platforms?: string[]
           post_frequency?: number
+          postiz_api_key?: string | null
+          postiz_base_url?: string | null
+          postiz_integrations?: Json | null
+          postiz_last_sync?: string | null
           preferred_days?: string[] | null
           sector: string
           style_example?: string | null
@@ -135,6 +188,10 @@ export type Database = {
           logo_url?: string | null
           platforms?: string[]
           post_frequency?: number
+          postiz_api_key?: string | null
+          postiz_base_url?: string | null
+          postiz_integrations?: Json | null
+          postiz_last_sync?: string | null
           preferred_days?: string[] | null
           sector?: string
           style_example?: string | null
@@ -151,7 +208,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      claim_due_posts: {
+        Args: { p_limit?: number }
+        Returns: Database["public"]["Tables"]["posts"]["Row"][]
+      }
     }
     Enums: {
       [_ in never]: never

@@ -28,14 +28,15 @@ export default function Onboarding() {
     imagePeopleType: "african",
   });
 
+  // NOTE: id == label in French so it matches what the scheduler expects.
   const DAYS = [
-    { id: "monday", label: "Lundi" },
-    { id: "tuesday", label: "Mardi" },
-    { id: "wednesday", label: "Mercredi" },
-    { id: "thursday", label: "Jeudi" },
-    { id: "friday", label: "Vendredi" },
-    { id: "saturday", label: "Samedi" },
-    { id: "sunday", label: "Dimanche" },
+    { id: "Lundi", label: "Lundi" },
+    { id: "Mardi", label: "Mardi" },
+    { id: "Mercredi", label: "Mercredi" },
+    { id: "Jeudi", label: "Jeudi" },
+    { id: "Vendredi", label: "Vendredi" },
+    { id: "Samedi", label: "Samedi" },
+    { id: "Dimanche", label: "Dimanche" },
   ];
 
   useEffect(() => {
