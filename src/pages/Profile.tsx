@@ -279,23 +279,26 @@ export default function Profile() {
               </div>
             </Card>
 
-            <Card className="glass-card p-6">
-              <h2 className="text-lg font-semibold mb-4">Réseaux sociaux</h2>
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                {['Instagram', 'Facebook', 'Twitter', 'LinkedIn', 'TikTok'].map((platform) => (
-                  <div key={platform} className="flex items-center space-x-2">
-                    <Checkbox
-                      id={`platform-${platform}`}
-                      checked={profile.platforms.includes(platform)}
-                      onCheckedChange={() => togglePlatform(platform)}
-                    />
-                    <label htmlFor={`platform-${platform}`} className="text-sm cursor-pointer">
-                      {platform}
-                    </label>
-                  </div>
-                ))}
-              </div>
-            </Card>
+          <Card className="glass-card p-6">
+            <h2 className="text-lg font-semibold mb-4">Réseaux sociaux</h2>
+            <p className="text-xs text-muted-foreground mb-4">
+              Cochez les plateformes que vous avez connectées via Postiz. Les posts seront publiés sur celles-ci.
+            </p>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              {['Instagram', 'Facebook', 'Twitter', 'LinkedIn', 'TikTok', 'YouTube', 'Pinterest', 'Threads', 'Bluesky'].map((platform) => (
+                <div key={platform} className="flex items-center space-x-2">
+                  <Checkbox
+                    id={`platform-${platform}`}
+                    checked={profile.platforms.includes(platform)}
+                    onCheckedChange={() => togglePlatform(platform)}
+                  />
+                  <label htmlFor={`platform-${platform}`} className="text-sm cursor-pointer">
+                    {platform}
+                  </label>
+                </div>
+              ))}
+            </div>
+          </Card>
 
             <Card className="glass-card p-6">
               <h2 className="text-lg font-semibold mb-4">Automatisation</h2>
