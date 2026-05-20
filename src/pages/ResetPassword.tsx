@@ -56,8 +56,9 @@ export default function ResetPassword() {
       setSuccess(true);
       toast.success("Mot de passe mis à jour avec succès !");
       setTimeout(() => navigate("/auth"), 3000);
-    } catch (error: any) {
-      toast.error(error.message || "Erreur lors de la mise à jour du mot de passe");
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Erreur lors de la mise à jour du mot de passe";
+      toast.error(message);
     } finally {
       setLoading(false);
     }

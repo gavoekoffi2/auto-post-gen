@@ -65,8 +65,9 @@ export function CustomImageLibrary({
         onImagesChange([...images, ...newUrls]);
         toast.success(`${newUrls.length} image(s) ajoutée(s)`);
       }
-    } catch (error: any) {
-      toast.error(error.message || "Erreur lors de l'upload");
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Erreur lors de l'upload";
+      toast.error(message);
     } finally {
       setUploading(false);
     }
@@ -83,7 +84,7 @@ export function CustomImageLibrary({
       
       onImagesChange(images.filter((url) => url !== urlToRemove));
       toast.success("Image supprimée");
-    } catch (error: any) {
+    } catch (_error) {
       toast.error("Erreur lors de la suppression");
     }
   };

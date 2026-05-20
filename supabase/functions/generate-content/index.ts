@@ -1,96 +1,204 @@
+// deno-lint-ignore-file no-explicit-any
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "*")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+function buildCorsHeaders(origin: string | null) {
+  const allowed =
+    allowedOrigins.includes("*") || (origin && allowedOrigins.includes(origin));
+  return {
+    "Access-Control-Allow-Origin":
+      allowed && origin ? origin : allowedOrigins[0] === "*" ? "*" : allowedOrigins[0],
+    "Access-Control-Allow-Headers":
+      "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    Vary: "Origin",
+  };
+}
+
+// Per-user rate limit: how many AI generations are allowed per rolling window.
+const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+const RATE_LIMIT_MAX = 20; // 20 generations / hour / user
+const MAX_PAYLOAD_BYTES = 64 * 1024;
+
+interface UserPreferences {
+  sector?: string;
+  contentTypes?: string[];
+  content_types?: string[];
+  tone?: string;
+  styleExample?: string;
+  style_example?: string;
+  company_name?: string;
+  description?: string;
+  image_people_type?: string;
+  use_custom_images?: boolean;
+  custom_image_urls?: string[];
+}
 
 serve(async (req) => {
-  if (req.method === 'OPTIONS') {
+  const corsHeaders = buildCorsHeaders(req.headers.get("origin"));
+
+  if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
+  if (req.method !== "POST") {
+    return new Response(
+      JSON.stringify({ error: "Method not allowed" }),
+      { status: 405, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+
+  // Reject oversized payloads early.
+  const contentLength = parseInt(req.headers.get("content-length") || "0", 10);
+  if (contentLength > MAX_PAYLOAD_BYTES) {
+    return new Response(
+      JSON.stringify({ error: "Payload too large" }),
+      { status: 413, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+
+  // Authenticate the caller.
+  const authHeader = req.headers.get("Authorization") || "";
+  const jwt = authHeader.replace(/^Bearer\s+/i, "");
+  if (!jwt) {
+    return new Response(
+      JSON.stringify({ error: "Not authenticated" }),
+      { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!supabaseUrl || !supabaseServiceKey) {
+    return new Response(
+      JSON.stringify({ error: "Server misconfigured" }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+
+  const supabase = createClient(supabaseUrl, supabaseServiceKey);
+  const { data: userData, error: userError } = await supabase.auth.getUser(jwt);
+  if (userError || !userData?.user) {
+    return new Response(
+      JSON.stringify({ error: "Invalid token" }),
+      { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+  const userId = userData.user.id;
+
   try {
-    const { prompt, userPreferences } = await req.json();
-    
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      throw new Error('LOVABLE_API_KEY not configured');
+    const body = await req.json().catch(() => null);
+    if (!body || typeof body !== "object") {
+      return new Response(
+        JSON.stringify({ error: "Invalid JSON body" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
 
-    // Randomly decide post type: 75% value content, 25% promotional
-    const postTypes = ['value', 'value', 'value', 'promo'];
+    const prompt = typeof body.prompt === "string" ? body.prompt.slice(0, 2000) : "";
+    const userPreferences: UserPreferences = body.userPreferences || {};
+
+    // Enforce rate limit.
+    const since = new Date(Date.now() - RATE_LIMIT_WINDOW_MS).toISOString();
+    const { count: usageCount } = await supabase
+      .from("generation_usage")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .eq("function_name", "generate-content")
+      .gte("created_at", since);
+
+    if ((usageCount ?? 0) >= RATE_LIMIT_MAX) {
+      return new Response(
+        JSON.stringify({
+          error: `Limite de ${RATE_LIMIT_MAX} générations par heure atteinte. Réessayez plus tard.`,
+        }),
+        { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    if (!LOVABLE_API_KEY) {
+      return new Response(
+        JSON.stringify({ error: "AI service not configured" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    const postTypes = ["value", "value", "value", "promo"] as const;
     const postType = postTypes[Math.floor(Math.random() * postTypes.length)];
-    
-    const companyName = userPreferences?.company_name || userPreferences?.description?.split(' ').slice(0, 3).join(' ') || 'notre entreprise';
 
-    // Determine people type for images
-    const peopleType = userPreferences?.image_people_type || 'african';
-    const peopleDescription = peopleType === 'african' 
-      ? 'des personnes africaines/noires ultra-réalistes'
-      : 'des personnes caucasiennes/blanches ultra-réalistes';
+    const companyName =
+      userPreferences?.company_name?.trim() ||
+      userPreferences?.description?.split(" ").slice(0, 3).join(" ") ||
+      "notre entreprise";
 
-    // Build system prompt based on user preferences (with defaults if profile not set)
-    const systemPrompt = userPreferences 
-      ? `Tu es un expert en création de contenu pour les réseaux sociaux, spécialisé dans le secteur: ${userPreferences.sector}.
+    const peopleType = userPreferences?.image_people_type || "african";
+    const peopleDescription =
+      peopleType === "african"
+        ? "des personnes africaines/noires ultra-réalistes"
+        : "des personnes caucasiennes/blanches ultra-réalistes";
+
+    const sector = userPreferences?.sector || "Business";
+    const tone = userPreferences?.tone || "Professionnel";
+    const contentTypes =
+      userPreferences?.contentTypes ||
+      userPreferences?.content_types ||
+      ["mixed"];
+    const styleExample =
+      userPreferences?.styleExample || userPreferences?.style_example || "";
+
+    const systemPrompt = `Tu es un expert en création de contenu pour les réseaux sociaux, spécialisé dans le secteur: ${sector}.
 
 PROFIL DU CLIENT:
 Nom de l'entreprise: ${companyName}
-Secteur d'activité: ${userPreferences.sector}
-Type de contenu: ${userPreferences.contentTypes?.join(', ') || 'mixte'}
-Tonalité souhaitée: ${userPreferences.tone}
-${userPreferences.styleExample ? `Style de contenu préféré: ${userPreferences.styleExample}` : ''}
+Secteur d'activité: ${sector}
+Type de contenu: ${contentTypes.join(", ")}
+Tonalité souhaitée: ${tone}
+${styleExample ? `Style de contenu préféré: ${styleExample}` : ""}
 
-TYPE DE POST À GÉNÉRER: ${postType === 'value' ? 'CONTENU DE VALEUR (conseil, astuce, expertise)' : 'POST PROMOTIONNEL (présentation services/produits)'}
+TYPE DE POST À GÉNÉRER: ${postType === "value" ? "CONTENU DE VALEUR (conseil, astuce, expertise)" : "POST PROMOTIONNEL (présentation services/produits)"}
 
-${postType === 'value' ? `
-INSTRUCTIONS POUR CONTENU DE VALEUR:
-- Partage une ASTUCE CONCRÈTE ou un CONSEIL PRATIQUE dans le domaine: ${userPreferences.sector}
+${
+  postType === "value"
+    ? `INSTRUCTIONS POUR CONTENU DE VALEUR:
+- Partage une ASTUCE CONCRÈTE ou un CONSEIL PRATIQUE dans le domaine: ${sector}
 - Positionne ${companyName} comme EXPERT du secteur
 - Apporte une VRAIE VALEUR au lecteur
-- Types de contenu: conseils pratiques, erreurs à éviter, tendances, astuces pro
 - Mentionne ${companyName} subtilement en fin de post
-- NE FAIS PAS de promotion directe
-` : `
-INSTRUCTIONS POUR POST PROMOTIONNEL:
+- NE FAIS PAS de promotion directe`
+    : `INSTRUCTIONS POUR POST PROMOTIONNEL:
 - Présente les services/produits de ${companyName} de manière engageante
 - Mets en avant les bénéfices pour le client
-- Inclus un appel à l'action clair
-`}
+- Inclus un appel à l'action clair`
+}
 
 RÈGLES CRITIQUES:
 - Génère un post UNIQUE et ORIGINAL
 - Contenu 100% en FRANÇAIS
 - Utilise 2-4 émojis pertinents
-- Respecte la tonalité: ${userPreferences.tone}
+- Respecte la tonalité: ${tone}
 - ÉCRIS DIRECTEMENT "${companyName}" dans le post, JAMAIS entre crochets
 - Structure COURTE: paragraphes de 1-2 lignes max
-- Longueur idéale: 60-100 mots (COURT ET IMPACTANT)
+- Longueur idéale: 60-100 mots
 - Termine par une question engageante
-${userPreferences.styleExample ? `- Inspire-toi du style fourni: ${userPreferences.styleExample}` : ''}`
-      : `Tu es un expert en création de contenu pour les réseaux sociaux. 
+${styleExample ? `- Inspire-toi du style fourni` : ""}`;
 
-INSTRUCTIONS:
-- Génère un post UNIQUE et ORIGINAL en français
-- Crée du contenu de VALEUR (conseils, astuces)
-- Utilise 2-4 émojis
-- Structure COURTE et percutante
-- Longueur: 60-100 mots max
-- Termine par une question engageante`;
-
-    // Step 1: Generate text content
-    const textResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
+    const textResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
       headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
+        Authorization: `Bearer ${LOVABLE_API_KEY}`,
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
+        model: "google/gemini-2.5-flash",
         messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: prompt || 'Génère un post pertinent pour mon audience' }
+          { role: "system", content: systemPrompt },
+          { role: "user", content: prompt || "Génère un post pertinent pour mon audience" },
         ],
       }),
     });
@@ -98,36 +206,40 @@ INSTRUCTIONS:
     if (!textResponse.ok) {
       if (textResponse.status === 429) {
         return new Response(
-          JSON.stringify({ error: 'Limite de taux atteinte, réessayez plus tard.' }),
-          { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          JSON.stringify({ error: "Limite de taux atteinte, réessayez plus tard." }),
+          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
       if (textResponse.status === 402) {
         return new Response(
-          JSON.stringify({ error: 'Crédit insuffisant, veuillez recharger votre compte.' }),
-          { status: 402, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          JSON.stringify({ error: "Crédit insuffisant, veuillez recharger votre compte." }),
+          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
-      const errorText = await textResponse.text();
-      console.error('AI Gateway error:', textResponse.status, errorText);
-      throw new Error('AI Gateway error');
+      console.error("AI Gateway text status:", textResponse.status);
+      throw new Error("AI Gateway error");
     }
 
     const textData = await textResponse.json();
-    const generatedContent = textData.choices[0].message.content;
+    const generatedContent =
+      textData?.choices?.[0]?.message?.content?.trim() || "";
 
-    let imageUrl = null;
+    if (!generatedContent) {
+      throw new Error("AI returned empty content");
+    }
 
-    // Check if user wants to use custom images
-    if (userPreferences?.use_custom_images && userPreferences?.custom_image_urls?.length > 0) {
-      // Pick a random image from the user's custom images
-      const randomIndex = Math.floor(Math.random() * userPreferences.custom_image_urls.length);
-      imageUrl = userPreferences.custom_image_urls[randomIndex];
-      console.log('Using custom image from library:', imageUrl);
+    let imageUrl: string | null = null;
+
+    if (
+      userPreferences?.use_custom_images &&
+      Array.isArray(userPreferences?.custom_image_urls) &&
+      userPreferences.custom_image_urls.length > 0
+    ) {
+      const idx = Math.floor(Math.random() * userPreferences.custom_image_urls.length);
+      imageUrl = userPreferences.custom_image_urls[idx];
     } else {
-      // Generate image with AI if no custom images
       const imagePrompt = `Crée une image ultra-réaliste et professionnelle pour ce post: "${generatedContent.substring(0, 150)}..."
-      
+
 INSTRUCTIONS CRITIQUES:
 - Inclure ${peopleDescription} dans l'image (personnages réalistes, expressions naturelles)
 - Les personnes doivent être en situation professionnelle liée au contexte du post
@@ -135,87 +247,67 @@ INSTRUCTIONS CRITIQUES:
 - Style photo-réaliste, moderne et professionnel
 - Éclairage naturel de haute qualité
 - Couleurs vibrantes et attrayantes
-- Format adapté pour réseaux sociaux (carré ou portrait)
-- Qualité photographique professionnelle`;
-      
-      const imageResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'google/gemini-3-pro-image-preview',
-          messages: [
-            {
-              role: 'user',
-              content: [
-                { type: 'text', text: imagePrompt }
-              ]
-            }
-          ],
-          modalities: ["image", "text"]
-        }),
-      });
+- Format adapté pour réseaux sociaux (carré ou portrait)`;
 
-      if (imageResponse.ok) {
-        const imageData = await imageResponse.json();
-        imageUrl = imageData?.choices?.[0]?.message?.images?.[0]?.image_url?.url
-          || imageData?.choices?.[0]?.message?.image_url?.url
-          || null;
+      try {
+        const imageResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${LOVABLE_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "google/gemini-3-pro-image-preview",
+            messages: [
+              {
+                role: "user",
+                content: [{ type: "text", text: imagePrompt }],
+              },
+            ],
+            modalities: ["image", "text"],
+          }),
+        });
 
-        // Fallback attempt with the non-preview image model if nothing returned
-        if (!imageUrl) {
-          const fallbackResp = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              model: 'google/gemini-2.5-flash',
-              messages: [
-                {
-                  role: 'user',
-                  content: [
-                    { type: 'text', text: imagePrompt }
-                  ]
-                }
-              ],
-              modalities: ["image"]
-            }),
-          });
-
-          if (fallbackResp.ok) {
-            const fb = await fallbackResp.json();
-            imageUrl = fb?.choices?.[0]?.message?.images?.[0]?.image_url?.url
-              || fb?.choices?.[0]?.message?.image_url?.url
-              || null;
-          } else {
-            console.error('Fallback image generation failed:', await fallbackResp.text());
-          }
+        if (imageResponse.ok) {
+          const imageData = await imageResponse.json();
+          imageUrl =
+            imageData?.choices?.[0]?.message?.images?.[0]?.image_url?.url ||
+            imageData?.choices?.[0]?.message?.image_url?.url ||
+            null;
+        } else {
+          console.error("Primary image model failed:", imageResponse.status);
         }
-      } else {
-        console.error('Image generation failed:', await imageResponse.text());
+      } catch (imgError) {
+        console.error("Image generation threw:", imgError);
       }
     }
 
+    await supabase.from("generation_usage").insert({
+      user_id: userId,
+      function_name: "generate-content",
+      status: "success",
+    });
+
     return new Response(
       JSON.stringify({ content: generatedContent, imageUrl }),
-      { 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 200 
-      }
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
-
-  } catch (error: any) {
-    console.error('Error in generate-content:', error);
+  } catch (error) {
+    console.error("Error in generate-content:", error);
+    await supabase
+      .from("generation_usage")
+      .insert({
+        user_id: userId,
+        function_name: "generate-content",
+        status: "error",
+        error: error instanceof Error ? error.message : String(error),
+      })
+      .catch(() => {});
     return new Response(
-      JSON.stringify({ error: error.message || 'Unknown error' }),
-      { 
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      }
+      JSON.stringify({
+        error: error instanceof Error ? error.message : "Unknown error",
+      }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }
 });

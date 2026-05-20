@@ -1,138 +1,185 @@
-import { useState, useEffect } from "react";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { useEffect, useMemo, useState } from "react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { Check, X } from "lucide-react";
+import { Check, ExternalLink, X } from "lucide-react";
 
 type SocialMediaConnectProps = {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
-  userProfile: any;
+  userProfile: {
+    id?: string;
+    connected_platforms?: string[] | null;
+    [key: string]: unknown;
+  } | null;
   onUpdate: () => void;
 };
 
-type PlatformId = 'instagram' | 'facebook' | 'twitter' | 'linkedin' | 'tiktok';
+type PlatformId = "instagram" | "facebook" | "twitter" | "linkedin" | "tiktok";
 
-type PlatformConnection = {
-  connected: boolean;
-  username?: string;
+type SocialConnectionRow = {
+  id: string;
+  platform: PlatformId;
+  account_username: string | null;
+  account_name: string | null;
+  token_expires_at: string | null;
 };
 
-const PLATFORMS = [
-  { id: 'instagram', label: 'Instagram', icon: '📷' },
-  { id: 'facebook', label: 'Facebook', icon: '👤' },
-  { id: 'twitter', label: 'Twitter (X)', icon: '🐦' },
-  { id: 'linkedin', label: 'LinkedIn', icon: '💼' },
-  { id: 'tiktok', label: 'TikTok', icon: '🎵' },
+interface PlatformDef {
+  id: PlatformId;
+  label: string;
+  icon: string;
+  status: "available" | "manual" | "unavailable";
+  note?: string;
+  helpUrl?: string;
+}
+
+const PLATFORMS: PlatformDef[] = [
+  {
+    id: "linkedin",
+    label: "LinkedIn",
+    icon: "in",
+    status: "available",
+    helpUrl: "https://learn.microsoft.com/en-us/linkedin/marketing/integrations/community-management/shares/ugc-post-api",
+  },
+  {
+    id: "facebook",
+    label: "Facebook",
+    icon: "fb",
+    status: "available",
+    note: "Connecte une Page Facebook (Pages publiques uniquement). Nécessite un compte Meta Developers et la review de l'app.",
+    helpUrl: "https://developers.facebook.com/docs/pages-api",
+  },
+  {
+    id: "instagram",
+    label: "Instagram",
+    icon: "ig",
+    status: "available",
+    note: "Requiert un compte Instagram Business lié à une Page Facebook (Instagram Graph API).",
+    helpUrl: "https://developers.facebook.com/docs/instagram-api",
+  },
+  {
+    id: "twitter",
+    label: "Twitter (X)",
+    icon: "X",
+    status: "manual",
+    note: "L'API X est payante et son OAuth nécessite une app validée. Non activé par défaut.",
+    helpUrl: "https://developer.twitter.com/en/docs/twitter-api",
+  },
+  {
+    id: "tiktok",
+    label: "TikTok",
+    icon: "TT",
+    status: "unavailable",
+    note: "L'API de publication TikTok est en accès restreint. Demande un partenariat TikTok.",
+    helpUrl: "https://developers.tiktok.com/doc/content-posting-api",
+  },
 ];
 
-export function SocialMediaConnect({ isOpen, onOpenChange, userProfile, onUpdate }: SocialMediaConnectProps) {
+function buildOAuthStartUrl(platform: PlatformId): string | null {
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+  if (!supabaseUrl) return null;
+  // OAuth start endpoints should be implemented as edge functions
+  // (oauth-start-<platform>) that redirect to the platform's authorize
+  // URL with the right client_id/redirect_uri. Until those edge
+  // functions are deployed, we surface the absence to the user instead
+  // of silently failing.
+  return `${supabaseUrl}/functions/v1/oauth-start-${platform}`;
+}
+
+export function SocialMediaConnect({
+  isOpen,
+  onOpenChange,
+  userProfile,
+  onUpdate,
+}: SocialMediaConnectProps) {
   const [loading, setLoading] = useState(false);
-  const [connections, setConnections] = useState<Record<string, PlatformConnection>>({});
-  const [selectedPlatform, setSelectedPlatform] = useState<string | null>(null);
-  const [username, setUsername] = useState("");
+  const [connections, setConnections] = useState<SocialConnectionRow[]>([]);
+
+  const connectionsByPlatform = useMemo(() => {
+    const map: Partial<Record<PlatformId, SocialConnectionRow>> = {};
+    for (const c of connections) {
+      map[c.platform] = c;
+    }
+    return map;
+  }, [connections]);
 
   useEffect(() => {
-    if (userProfile) {
-      const initialConnections: Record<string, PlatformConnection> = {};
-      PLATFORMS.forEach(platform => {
-        const platformId = platform.id as PlatformId;
-        const usernameKey = `${platformId}_username` as keyof typeof userProfile;
-        const hasUsername = !!userProfile[usernameKey];
-        
-        initialConnections[platform.id] = {
-          connected: hasUsername || userProfile.connected_platforms?.includes(platform.label) || false,
-          username: userProfile[usernameKey] || undefined
-        };
-      });
-      setConnections(initialConnections);
-    }
-  }, [userProfile]);
+    if (!isOpen) return;
+    const load = async () => {
+      try {
+        const { data, error } = await supabase
+          .from("social_connections")
+          .select("id, platform, account_username, account_name, token_expires_at");
+        if (error) throw error;
+        setConnections((data as SocialConnectionRow[]) || []);
+      } catch (err) {
+        console.error("Failed to load social connections", err);
+      }
+    };
+    load();
+  }, [isOpen, userProfile?.id]);
 
-  const handleConnect = async (platformId: string) => {
-    if (!username.trim()) {
-      toast.error("Veuillez entrer un nom d'utilisateur");
+  const handleConnect = async (platform: PlatformDef) => {
+    if (platform.status === "unavailable") {
+      toast.error(`${platform.label}: connexion non disponible pour le moment.`);
       return;
     }
 
-    setLoading(true);
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.user) throw new Error("Non authentifié");
-
-      const platform = PLATFORMS.find(p => p.id === platformId);
-      if (!platform) return;
-
-      const usernameKey = `${platformId}_username`;
-      const currentConnectedPlatforms = userProfile?.connected_platforms || [];
-      const updatedConnectedPlatforms = [...currentConnectedPlatforms];
-      
-      if (!updatedConnectedPlatforms.includes(platform.label)) {
-        updatedConnectedPlatforms.push(platform.label);
-      }
-
-      const { error } = await supabase
-        .from('profiles')
-        .update({ 
-          [usernameKey]: username,
-          connected_platforms: updatedConnectedPlatforms
-        })
-        .eq('id', session.user.id);
-
-      if (error) throw error;
-
-      setConnections({
-        ...connections,
-        [platformId]: { connected: true, username: username }
-      });
-      setSelectedPlatform(null);
-      setUsername("");
-      toast.success(`${platform.label} connecté avec succès !`);
-      onUpdate();
-    } catch (error: any) {
-      toast.error("Erreur lors de la connexion");
-      console.error(error);
-    } finally {
-      setLoading(false);
+    const startUrl = buildOAuthStartUrl(platform.id);
+    if (!startUrl) {
+      toast.error("Configuration manquante. Contactez le support.");
+      return;
     }
+
+    // We open the OAuth flow in a new tab. The callback edge function
+    // is expected to upsert into social_connections and close the tab.
+    window.open(startUrl, "_blank", "noopener,noreferrer");
+    toast.info(
+      `Une nouvelle fenêtre s'est ouverte pour autoriser ${platform.label}. Revenez ici une fois terminé.`,
+    );
   };
 
-  const handleDisconnect = async (platformId: string) => {
+  const handleDisconnect = async (platform: PlatformDef) => {
+    const connection = connectionsByPlatform[platform.id];
+    if (!connection) return;
+
     setLoading(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.user) throw new Error("Non authentifié");
-
-      const platform = PLATFORMS.find(p => p.id === platformId);
-      if (!platform) return;
-
-      const usernameKey = `${platformId}_username`;
-      const currentConnectedPlatforms = userProfile?.connected_platforms || [];
-      const updatedConnectedPlatforms = currentConnectedPlatforms.filter((p: string) => p !== platform.label);
-
       const { error } = await supabase
-        .from('profiles')
-        .update({ 
-          [usernameKey]: null,
-          connected_platforms: updatedConnectedPlatforms
-        })
-        .eq('id', session.user.id);
-
+        .from("social_connections")
+        .delete()
+        .eq("id", connection.id);
       if (error) throw error;
 
-      setConnections({
-        ...connections,
-        [platformId]: { connected: false, username: undefined }
-      });
-      toast.success(`${platform.label} déconnecté avec succès`);
+      // Also remove the legacy mirror in profiles for backward compat.
+      const updates: Record<string, string | null | string[]> = {
+        [`${platform.id}_username`]: null,
+      };
+      const currentConnected =
+        (userProfile?.connected_platforms as string[] | undefined) || [];
+      updates.connected_platforms = currentConnected.filter(
+        (p) => p.toLowerCase() !== platform.id,
+      );
+
+      if (userProfile?.id) {
+        await supabase.from("profiles").update(updates).eq("id", userProfile.id);
+      }
+
+      setConnections((prev) => prev.filter((c) => c.id !== connection.id));
+      toast.success(`${platform.label} déconnecté`);
       onUpdate();
-    } catch (error: any) {
+    } catch (err) {
+      console.error(err);
       toast.error("Erreur lors de la déconnexion");
-      console.error(error);
     } finally {
       setLoading(false);
     }
@@ -144,29 +191,54 @@ export function SocialMediaConnect({ isOpen, onOpenChange, userProfile, onUpdate
         <DialogHeader>
           <DialogTitle>Gérer vos réseaux sociaux</DialogTitle>
           <DialogDescription>
-            Connectez vos comptes de réseaux sociaux pour publier automatiquement
+            Connectez vos comptes via OAuth officiel. La publication automatique
+            n'est possible que pour les comptes effectivement reliés ici.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 mt-4">
           {PLATFORMS.map((platform) => {
-            const connection = connections[platform.id] || { connected: false };
-
+            const connection = connectionsByPlatform[platform.id];
+            const isConnected = !!connection;
+            const isUnavailable = platform.status === "unavailable";
             return (
               <Card key={platform.id} className="glass-card p-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <span className="text-2xl">{platform.icon}</span>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start gap-3">
+                    <span className="inline-flex items-center justify-center w-10 h-10 rounded-lg bg-muted text-xs font-bold">
+                      {platform.icon}
+                    </span>
                     <div>
                       <p className="font-medium">{platform.label}</p>
-                      {connection.connected && connection.username && (
-                        <p className="text-sm text-muted-foreground">@{connection.username}</p>
+                      {isConnected ? (
+                        <p className="text-sm text-muted-foreground">
+                          {connection.account_username
+                            ? `@${connection.account_username}`
+                            : connection.account_name || "Compte connecté"}
+                        </p>
+                      ) : (
+                        platform.note && (
+                          <p className="text-xs text-muted-foreground max-w-md">
+                            {platform.note}
+                          </p>
+                        )
+                      )}
+                      {platform.helpUrl && (
+                        <a
+                          href={platform.helpUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs inline-flex items-center gap-1 text-primary hover:underline mt-1"
+                        >
+                          Documentation officielle
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
                       )}
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    {connection.connected ? (
+                  <div className="flex items-center gap-2 shrink-0">
+                    {isConnected ? (
                       <>
                         <div className="flex items-center gap-1 text-green-500">
                           <Check className="w-4 h-4" />
@@ -175,7 +247,7 @@ export function SocialMediaConnect({ isOpen, onOpenChange, userProfile, onUpdate
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => handleDisconnect(platform.id)}
+                          onClick={() => handleDisconnect(platform)}
                           disabled={loading}
                           className="glass-card"
                         >
@@ -186,66 +258,33 @@ export function SocialMediaConnect({ isOpen, onOpenChange, userProfile, onUpdate
                     ) : (
                       <Button
                         size="sm"
-                        onClick={() => setSelectedPlatform(platform.id)}
+                        disabled={isUnavailable}
+                        onClick={() => handleConnect(platform)}
                         className="bg-gradient-to-r from-primary to-secondary"
                       >
-                        Connecter
+                        {isUnavailable ? "Indisponible" : "Connecter"}
                       </Button>
                     )}
                   </div>
                 </div>
-
-                {selectedPlatform === platform.id && !connection.connected && (
-                  <div className="mt-4 pt-4 border-t border-border/50 space-y-3">
-                    <div>
-                      <Label htmlFor={`username-${platform.id}`} className="text-sm text-muted-foreground">
-                        Nom d'utilisateur {platform.label}
-                      </Label>
-                      <Input
-                        id={`username-${platform.id}`}
-                        placeholder={`@votre_username_${platform.id}`}
-                        value={username}
-                        onChange={(e) => setUsername(e.target.value)}
-                        className="glass-card mt-1"
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' && username.trim()) {
-                            handleConnect(platform.id);
-                          }
-                        }}
-                      />
-                    </div>
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          setSelectedPlatform(null);
-                          setUsername("");
-                        }}
-                        className="glass-card flex-1"
-                      >
-                        Annuler
-                      </Button>
-                      <Button
-                        size="sm"
-                        onClick={() => handleConnect(platform.id)}
-                        disabled={loading || !username.trim()}
-                        className="bg-gradient-to-r from-primary to-secondary flex-1"
-                      >
-                        {loading ? "Connexion..." : "Confirmer"}
-                      </Button>
-                    </div>
-                  </div>
-                )}
               </Card>
             );
           })}
         </div>
 
-        <div className="mt-6 p-4 bg-muted/50 rounded-lg">
-          <p className="text-sm text-muted-foreground">
-            <strong>Note :</strong> La publication automatique nécessite l'autorisation des plateformes. 
-            Les posts seront programmés et vous devrez les publier manuellement pour le moment.
+        <div className="mt-6 p-4 bg-muted/50 rounded-lg space-y-2">
+          <p className="text-sm">
+            <strong>Comment ça marche :</strong>{" "}
+            la connexion utilise les OAuth officiels des plateformes. Vos
+            identifiants ne sont jamais demandés ni stockés ici – seuls les jetons
+            d'accès délivrés par la plateforme sont conservés (chiffrés au repos
+            par Supabase).
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Le déploiement de chaque OAuth nécessite la création d'une app
+            développeur sur la plateforme (Meta Developers, LinkedIn Developers,
+            etc.) et la configuration des variables d'environnement{" "}
+            <code>OAUTH_*</code> côté Supabase. Voir DEPLOYMENT.md.
           </p>
         </div>
       </DialogContent>

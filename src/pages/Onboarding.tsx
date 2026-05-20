@@ -29,13 +29,13 @@ export default function Onboarding() {
   });
 
   const DAYS = [
-    { id: "monday", label: "Lundi" },
-    { id: "tuesday", label: "Mardi" },
-    { id: "wednesday", label: "Mercredi" },
-    { id: "thursday", label: "Jeudi" },
-    { id: "friday", label: "Vendredi" },
-    { id: "saturday", label: "Samedi" },
-    { id: "sunday", label: "Dimanche" },
+    { id: "Lundi", label: "Lundi" },
+    { id: "Mardi", label: "Mardi" },
+    { id: "Mercredi", label: "Mercredi" },
+    { id: "Jeudi", label: "Jeudi" },
+    { id: "Vendredi", label: "Vendredi" },
+    { id: "Samedi", label: "Samedi" },
+    { id: "Dimanche", label: "Dimanche" },
   ];
 
   useEffect(() => {
@@ -59,28 +59,34 @@ export default function Onboarding() {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session?.user) throw new Error("Non authentifié");
 
-        const { error } = await supabase.from('profiles').upsert({
-          id: session.user.id,
-          email: session.user.email,
-          company_name: formData.companyName,
-          sector: formData.sector,
-          content_types: [formData.contentType],
-          tone: formData.tone,
-          post_frequency: parseInt(formData.frequency),
-          description: formData.description,
-          style_example: formData.styleExample,
-          platforms: formData.platforms.length > 0 ? formData.platforms : ['Instagram'],
-          preferred_days: formData.preferredDays,
-          auto_publish: false,
-          image_people_type: formData.imagePeopleType,
-        } as any);
+        const { error } = await supabase
+          .from('profiles')
+          .upsert(
+            {
+              id: session.user.id,
+              email: session.user.email,
+              company_name: formData.companyName,
+              sector: formData.sector,
+              content_types: [formData.contentType],
+              tone: formData.tone,
+              post_frequency: parseInt(formData.frequency),
+              description: formData.description,
+              style_example: formData.styleExample,
+              platforms: formData.platforms.length > 0 ? formData.platforms : ['Instagram'],
+              preferred_days: formData.preferredDays,
+              auto_publish: false,
+              image_people_type: formData.imagePeopleType,
+            },
+            { onConflict: 'id' }
+          );
 
         if (error) throw error;
 
         toast.success("Profil configuré ! Redirection vers le dashboard...");
         setTimeout(() => navigate("/dashboard"), 1500);
-      } catch (error: any) {
-        toast.error(error.message || "Erreur lors de la sauvegarde");
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "Erreur lors de la sauvegarde";
+        toast.error(message);
       } finally {
         setLoading(false);
       }

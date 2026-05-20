@@ -33,8 +33,9 @@ export default function Auth() {
 
       toast.success("Compte créé ! Vérifiez votre email.");
       navigate("/onboarding");
-    } catch (error: any) {
-      toast.error(error.message || "Erreur lors de l'inscription");
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Erreur lors de l'inscription";
+      toast.error(message);
     } finally {
       setLoading(false);
     }
@@ -70,8 +71,9 @@ export default function Auth() {
 
       toast.success("Connexion réussie !");
       navigate("/dashboard");
-    } catch (error: any) {
-      toast.error(error.message || "Erreur lors de la connexion");
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Erreur lors de la connexion";
+      toast.error(message);
     } finally {
       setLoading(false);
     }

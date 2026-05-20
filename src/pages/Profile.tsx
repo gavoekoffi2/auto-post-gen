@@ -11,18 +11,28 @@ import { ArrowLeft, Save, Building2, Settings, ImageIcon } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { LogoUpload } from "@/components/LogoUpload";
 import { CustomImageLibrary } from "@/components/CustomImageLibrary";
 import { AccountSettings } from "@/components/AccountSettings";
 
 const DAYS = [
-  { id: "monday", label: "Lundi" },
-  { id: "tuesday", label: "Mardi" },
-  { id: "wednesday", label: "Mercredi" },
-  { id: "thursday", label: "Jeudi" },
-  { id: "friday", label: "Vendredi" },
-  { id: "saturday", label: "Samedi" },
-  { id: "sunday", label: "Dimanche" },
+  { id: "Lundi", label: "Lundi" },
+  { id: "Mardi", label: "Mardi" },
+  { id: "Mercredi", label: "Mercredi" },
+  { id: "Jeudi", label: "Jeudi" },
+  { id: "Vendredi", label: "Vendredi" },
+  { id: "Samedi", label: "Samedi" },
+  { id: "Dimanche", label: "Dimanche" },
 ];
 
 export default function Profile() {
@@ -30,6 +40,8 @@ export default function Profile() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [userEmail, setUserEmail] = useState("");
+  const [autoPublishConfirmOpen, setAutoPublishConfirmOpen] = useState(false);
+  const [autoPublishAcknowledged, setAutoPublishAcknowledged] = useState(false);
   const [profile, setProfile] = useState({
     company_name: "",
     logo_url: "",
@@ -71,7 +83,7 @@ export default function Profile() {
 
       if (data) {
         setProfile({
-          company_name: (data as any).company_name || "",
+          company_name: data.company_name || "",
           logo_url: data.logo_url || "",
           sector: data.sector || "",
           content_types: data.content_types || [],
@@ -82,12 +94,13 @@ export default function Profile() {
           platforms: data.platforms || [],
           preferred_days: data.preferred_days || [],
           auto_publish: data.auto_publish || false,
-          image_people_type: (data as any).image_people_type || "african",
+          image_people_type: data.image_people_type || "african",
           use_custom_images: data.use_custom_images || false,
           custom_image_urls: data.custom_image_urls || [],
         });
+        setAutoPublishAcknowledged(!!data.auto_publish);
       }
-    } catch (error: any) {
+    } catch (_error) {
       toast.error('Erreur lors du chargement du profil');
     } finally {
       setLoading(false);
@@ -117,16 +130,36 @@ export default function Profile() {
           image_people_type: profile.image_people_type,
           use_custom_images: profile.use_custom_images,
           custom_image_urls: profile.custom_image_urls,
-        } as any)
+        })
         .eq('id', session.user.id);
 
       if (error) throw error;
       toast.success("Profil mis à jour !");
-    } catch (error: any) {
-      toast.error(error.message || "Erreur lors de la sauvegarde");
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Erreur lors de la sauvegarde";
+      toast.error(message);
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleAutoPublishToggle = (checked: boolean) => {
+    if (!checked) {
+      setProfile({ ...profile, auto_publish: false });
+      setAutoPublishAcknowledged(false);
+      return;
+    }
+    if (autoPublishAcknowledged) {
+      setProfile({ ...profile, auto_publish: true });
+      return;
+    }
+    setAutoPublishConfirmOpen(true);
+  };
+
+  const confirmAutoPublish = () => {
+    setProfile({ ...profile, auto_publish: true });
+    setAutoPublishAcknowledged(true);
+    setAutoPublishConfirmOpen(false);
   };
 
   const toggleDay = (day: string) => {
@@ -340,14 +373,15 @@ export default function Profile() {
                   <Checkbox
                     id="auto-publish"
                     checked={profile.auto_publish}
-                    onCheckedChange={(checked) => setProfile({ ...profile, auto_publish: !!checked })}
+                    onCheckedChange={(checked) => handleAutoPublishToggle(!!checked)}
                   />
                   <label htmlFor="auto-publish" className="text-sm cursor-pointer">
                     Activer la publication automatique
                   </label>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Si activé, les posts validés seront automatiquement publiés aux jours sélectionnés
+                  Si activé, des posts seront générés et publiés automatiquement sur vos comptes connectés.
+                  Vous restez responsable du contenu publié.
                 </p>
               </div>
             </Card>
@@ -392,6 +426,29 @@ export default function Profile() {
           </TabsContent>
         </Tabs>
       </div>
+
+      <AlertDialog open={autoPublishConfirmOpen} onOpenChange={setAutoPublishConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Activer la publication automatique ?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Avec cette option, des posts générés par IA seront publiés automatiquement
+              sur vos comptes connectés aux jours et heures que vous avez choisis, sans
+              validation manuelle de chaque publication.
+              <br /><br />
+              Vous êtes responsable du contenu publié. Vérifiez que vos comptes sont
+              correctement reliés et que vos préférences (secteur, ton, description)
+              sont à jour.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Annuler</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmAutoPublish}>
+              J'ai compris, activer
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

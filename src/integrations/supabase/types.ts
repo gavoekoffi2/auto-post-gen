@@ -16,11 +16,13 @@ export type Database = {
     Tables: {
       posts: {
         Row: {
+          auto_publish_attempted_at: string | null
           content: string
           created_at: string | null
           id: string
           image_url: string | null
           platforms: string[]
+          publish_error: string | null
           published_at: string | null
           scheduled_for: string | null
           status: string
@@ -29,14 +31,18 @@ export type Database = {
           user_id: string
           validation_status: string | null
           validation_token: string | null
+          validation_token_created_at: string | null
+          validation_token_used_at: string | null
           week_number: number | null
         }
         Insert: {
+          auto_publish_attempted_at?: string | null
           content: string
           created_at?: string | null
           id?: string
           image_url?: string | null
           platforms?: string[]
+          publish_error?: string | null
           published_at?: string | null
           scheduled_for?: string | null
           status?: string
@@ -45,14 +51,18 @@ export type Database = {
           user_id: string
           validation_status?: string | null
           validation_token?: string | null
+          validation_token_created_at?: string | null
+          validation_token_used_at?: string | null
           week_number?: number | null
         }
         Update: {
+          auto_publish_attempted_at?: string | null
           content?: string
           created_at?: string | null
           id?: string
           image_url?: string | null
           platforms?: string[]
+          publish_error?: string | null
           published_at?: string | null
           scheduled_for?: string | null
           status?: string
@@ -61,7 +71,84 @@ export type Database = {
           user_id?: string
           validation_status?: string | null
           validation_token?: string | null
+          validation_token_created_at?: string | null
+          validation_token_used_at?: string | null
           week_number?: number | null
+        }
+        Relationships: []
+      }
+      social_connections: {
+        Row: {
+          access_token: string
+          account_id: string
+          account_name: string | null
+          account_username: string | null
+          created_at: string | null
+          id: string
+          meta: Json | null
+          platform: string
+          refresh_token: string | null
+          scopes: string[] | null
+          token_expires_at: string | null
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          access_token: string
+          account_id: string
+          account_name?: string | null
+          account_username?: string | null
+          created_at?: string | null
+          id?: string
+          meta?: Json | null
+          platform: string
+          refresh_token?: string | null
+          scopes?: string[] | null
+          token_expires_at?: string | null
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          access_token?: string
+          account_id?: string
+          account_name?: string | null
+          account_username?: string | null
+          created_at?: string | null
+          id?: string
+          meta?: Json | null
+          platform?: string
+          refresh_token?: string | null
+          scopes?: string[] | null
+          token_expires_at?: string | null
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      generation_usage: {
+        Row: {
+          created_at: string | null
+          error: string | null
+          function_name: string
+          id: string
+          status: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          error?: string | null
+          function_name: string
+          id?: string
+          status?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          error?: string | null
+          function_name?: string
+          id?: string
+          status?: string
+          user_id?: string
         }
         Relationships: []
       }

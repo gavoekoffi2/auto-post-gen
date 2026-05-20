@@ -51,7 +51,7 @@ export default function CalendarPage() {
 
       if (error) throw error;
       setPosts(postsData || []);
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error loading posts:', error);
       toast.error('Erreur lors du chargement des posts');
     } finally {
@@ -78,7 +78,12 @@ export default function CalendarPage() {
     try {
       const scheduledDateTime = new Date(selectedDate);
       const [hours, minutes] = scheduleTime.split(':');
-      scheduledDateTime.setHours(parseInt(hours), parseInt(minutes));
+      scheduledDateTime.setHours(parseInt(hours, 10), parseInt(minutes, 10), 0, 0);
+
+      if (scheduledDateTime.getTime() < Date.now()) {
+        toast.error("L'heure de publication est déjà passée. Choisissez une date future.");
+        return;
+      }
 
       const { error } = await supabase
         .from('posts')
@@ -90,7 +95,7 @@ export default function CalendarPage() {
       toast.success("Post programmé avec succès !");
       setIsScheduleDialogOpen(false);
       loadPosts();
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error scheduling post:', error);
       toast.error('Erreur lors de la programmation');
     }

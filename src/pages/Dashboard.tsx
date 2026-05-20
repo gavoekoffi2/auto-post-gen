@@ -1,7 +1,7 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Calendar, TrendingUp, CheckCircle, Clock, Edit2, Sparkles, Settings, Share2, Calendar as CalendarIcon, Trash2, User, BarChart3 } from "lucide-react";
+import { Calendar, TrendingUp, CheckCircle, Clock, Edit2, Sparkles, Settings, Share2, Calendar as CalendarIcon, Trash2, User, BarChart3, Send } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,6 +14,8 @@ import SettingsDialog from "@/components/SettingsDialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { SocialMediaConnect } from "@/components/SocialMediaConnect";
 
+type PostStatus = "pending" | "validated" | "published" | "failed";
+
 type Post = {
   id: string;
   user_id?: string;
@@ -25,7 +27,14 @@ type Post = {
   title: string;
   content: string;
   image_url?: string;
-  status: "pending" | "validated";
+  status: PostStatus;
+};
+
+type UserProfile = {
+  id?: string;
+  description?: string | null;
+  platforms?: string[] | null;
+  [key: string]: unknown;
 };
 
 export default function Dashboard() {
@@ -38,7 +47,10 @@ export default function Dashboard() {
   const [isSettingsDialogOpen, setIsSettingsDialogOpen] = useState(false);
   const [isSocialMediaDialogOpen, setIsSocialMediaDialogOpen] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [userProfile, setUserProfile] = useState<any>(null);
+  const [generating, setGenerating] = useState(false);
+  const [publishingId, setPublishingId] = useState<string | null>(null);
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
 
   useEffect(() => {
     checkAuthAndLoadData();
@@ -70,17 +82,26 @@ export default function Dashboard() {
 
       if (error) throw error;
       
-      // Transform database posts to match component format
-      const transformedPosts = (postsData || []).map(post => ({
-        ...post,
-        platform: post.platforms?.[0] || 'Instagram',
-        date: post.scheduled_for ? new Date(post.scheduled_for).toISOString().split('T')[0] : '',
-        time: post.scheduled_for ? new Date(post.scheduled_for).toTimeString().substring(0, 5) : '',
-        status: (post.status === 'validated' ? 'validated' : 'pending') as 'pending' | 'validated',
-      }));
-      
+      const transformedPosts: Post[] = (postsData || []).map((post) => {
+        const status: PostStatus =
+          post.status === "validated" ||
+          post.status === "published" ||
+          post.status === "failed"
+            ? (post.status as PostStatus)
+            : "pending";
+        return {
+          ...post,
+          platform: post.platforms?.[0] || 'Instagram',
+          date: post.scheduled_for ? new Date(post.scheduled_for).toISOString().split('T')[0] : '',
+          time: post.scheduled_for
+            ? new Date(post.scheduled_for).toTimeString().substring(0, 5)
+            : '',
+          status,
+        };
+      });
+
       setPosts(transformedPosts);
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error loading data:', error);
       toast.error('Erreur lors du chargement des données');
     } finally {
@@ -103,12 +124,44 @@ export default function Dashboard() {
 
       if (error) throw error;
 
-      setPosts(posts.map(post => 
+      setPosts(posts.map(post =>
         post.id === postId ? { ...post, status: "validated" as const } : post
       ));
       toast.success("Post validé !");
-    } catch (error: any) {
+    } catch (_error) {
       toast.error('Erreur lors de la validation');
+    }
+  };
+
+  const handlePublish = async (post: Post) => {
+    if (publishingId) return;
+    if (post.status !== "validated") {
+      toast.error("Validez le post avant de le publier");
+      return;
+    }
+    setPublishingId(post.id);
+    const loadingToast = toast.loading("Publication en cours...");
+    try {
+      const { data, error } = await supabase.functions.invoke('publish-post', {
+        body: { postId: post.id },
+      });
+      toast.dismiss(loadingToast);
+      if (error) throw error;
+      const results = (data?.results || []) as Array<{ status: string; platform: string; message?: string }>;
+      const anyOk = results.some((r) => r.status === "ok");
+      if (anyOk) {
+        setPosts(posts.map(p => p.id === post.id ? { ...p, status: "published" as const } : p));
+        toast.success("Post publié !");
+      } else {
+        const messages = results.map((r) => `${r.platform}: ${r.status}${r.message ? ` (${r.message})` : ""}`).join("\n");
+        toast.error(`Échec de publication. ${messages || "Aucun réseau connecté."}`);
+      }
+    } catch (error: unknown) {
+      toast.dismiss(loadingToast);
+      const message = error instanceof Error ? error.message : "Erreur lors de la publication";
+      toast.error(message);
+    } finally {
+      setPublishingId(null);
     }
   };
 
@@ -118,43 +171,43 @@ export default function Dashboard() {
   };
 
   const handleSaveEdit = async () => {
-    if (editingPost) {
-      try {
-        const { error } = await supabase
-          .from('posts')
-          .update({
-            title: editingPost.title,
-            content: editingPost.content,
-            platforms: editingPost.platforms || ['Instagram'],
-            scheduled_for: editingPost.date && editingPost.time 
-              ? `${editingPost.date}T${editingPost.time}:00` 
-              : null,
-          })
-          .eq('id', editingPost.id);
+    if (!editingPost) return;
+    try {
+      const { error } = await supabase
+        .from('posts')
+        .update({
+          title: editingPost.title,
+          content: editingPost.content,
+          platforms: editingPost.platforms || ['Instagram'],
+          scheduled_for: editingPost.date && editingPost.time
+            ? `${editingPost.date}T${editingPost.time}:00`
+            : null,
+        })
+        .eq('id', editingPost.id);
 
-        if (error) throw error;
+      if (error) throw error;
 
-        setPosts(posts.map(post => 
-          post.id === editingPost.id ? editingPost : post
-        ));
-        setIsEditDialogOpen(false);
-        setEditingPost(null);
-        toast.success("Post modifié !");
-      } catch (error: any) {
-        toast.error('Erreur lors de la modification');
-      }
+      setPosts(posts.map(post =>
+        post.id === editingPost.id ? editingPost : post
+      ));
+      setIsEditDialogOpen(false);
+      setEditingPost(null);
+      toast.success("Post modifié !");
+    } catch (_error) {
+      toast.error('Erreur lors de la modification');
     }
   };
 
   const handleGenerate = async () => {
+    if (generating) return;
+    setGenerating(true);
+    const loadingToast = toast.loading("Génération de contenu et d'image en cours...");
     try {
-      const loadingToast = toast.loading("Génération de contenu et d'image en cours...");
-      
       const { data, error } = await supabase.functions.invoke('generate-content', {
-        body: { 
+        body: {
           prompt: "Génère un post engageant pour mes réseaux sociaux",
-          userPreferences: userProfile 
-        }
+          userPreferences: userProfile,
+        },
       });
 
       toast.dismiss(loadingToast);
@@ -164,31 +217,26 @@ export default function Dashboard() {
         throw error;
       }
 
-      if (!data) {
-        throw new Error('Aucune donnée reçue de la génération');
+      if (!data || !data.content) {
+        throw new Error('Aucun contenu reçu de la génération');
       }
-
-      console.log('Generated content:', { content: data.content?.substring(0, 100), hasImage: !!data.imageUrl });
 
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error("Non authentifié");
 
-      // Use user's preferred platforms or default to Instagram
-      const defaultPlatforms = userProfile?.platforms && userProfile.platforms.length > 0 
-        ? userProfile.platforms 
-        : ['Instagram'];
+      const defaultPlatforms =
+        userProfile?.platforms && userProfile.platforms.length > 0
+          ? userProfile.platforms
+          : ['Instagram'];
 
-      // Save to database
       const newPost = {
         user_id: session.user.id,
         title: "Nouveau contenu IA",
-        content: data.content || "Contenu généré",
+        content: data.content,
         image_url: data.imageUrl || null,
-        status: 'pending',
+        status: 'pending' as const,
         platforms: defaultPlatforms,
       };
-
-      console.log('Saving post to DB:', newPost);
 
       const { data: savedPost, error: saveError } = await supabase
         .from('posts')
@@ -201,22 +249,30 @@ export default function Dashboard() {
         throw saveError;
       }
 
-      console.log('Post saved successfully:', savedPost.id);
+      const status: PostStatus =
+        savedPost.status === "validated" ||
+        savedPost.status === "published" ||
+        savedPost.status === "failed"
+          ? (savedPost.status as PostStatus)
+          : "pending";
 
-      // Transform to match component format
-      const transformedPost = {
+      const transformedPost: Post = {
         ...savedPost,
         platform: savedPost.platforms?.[0] || 'Instagram',
         date: savedPost.scheduled_for ? new Date(savedPost.scheduled_for).toISOString().split('T')[0] : '',
         time: savedPost.scheduled_for ? new Date(savedPost.scheduled_for).toTimeString().substring(0, 5) : '',
-        status: (savedPost.status === 'validated' ? 'validated' : 'pending') as 'pending' | 'validated',
+        status,
       };
 
       setPosts([transformedPost, ...posts]);
       toast.success("Contenu et image générés avec succès !");
-    } catch (error: any) {
+    } catch (error: unknown) {
+      toast.dismiss(loadingToast);
       console.error('Generation error:', error);
-      toast.error(error.message || 'Erreur lors de la génération');
+      const message = error instanceof Error ? error.message : 'Erreur lors de la génération';
+      toast.error(message);
+    } finally {
+      setGenerating(false);
     }
   };
 
@@ -238,6 +294,8 @@ export default function Dashboard() {
   };
 
   const handleDelete = async (postId: string) => {
+    if (deletingIds.has(postId)) return;
+    setDeletingIds((prev) => new Set(prev).add(postId));
     try {
       const { error } = await supabase
         .from('posts')
@@ -248,8 +306,14 @@ export default function Dashboard() {
 
       setPosts(posts.filter(post => post.id !== postId));
       toast.success("Post supprimé !");
-    } catch (error: any) {
+    } catch (_error) {
       toast.error('Erreur lors de la suppression');
+    } finally {
+      setDeletingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(postId);
+        return next;
+      });
     }
   };
 
@@ -273,6 +337,7 @@ export default function Dashboard() {
     scheduled: posts.length,
     validated: posts.filter(p => p.status === 'validated').length,
     pending: posts.filter(p => p.status === 'pending').length,
+    published: posts.filter(p => p.status === 'published').length,
   };
 
   return (
@@ -355,9 +420,9 @@ export default function Dashboard() {
             {posts.length === 0 ? (
               <Card className="glass-card p-8 text-center">
                 <p className="text-muted-foreground mb-4">Aucun post pour le moment</p>
-                <Button onClick={handleGenerate} className="bg-gradient-to-r from-primary to-secondary">
+                <Button onClick={handleGenerate} disabled={generating} className="bg-gradient-to-r from-primary to-secondary">
                   <Sparkles className="w-4 h-4 mr-2" />
-                  Générer votre premier post
+                  {generating ? "Génération..." : "Générer votre premier post"}
                 </Button>
               </Card>
             ) : (
@@ -375,11 +440,21 @@ export default function Dashboard() {
                         </div>
                       </div>
                       <span className={`px-3 py-1 rounded-full text-xs ${
-                        post.status === "validated" 
-                          ? "bg-secondary/20 text-secondary" 
+                        post.status === "published"
+                          ? "bg-primary/20 text-primary"
+                          : post.status === "validated"
+                          ? "bg-secondary/20 text-secondary"
+                          : post.status === "failed"
+                          ? "bg-destructive/20 text-destructive"
                           : "bg-accent/20 text-accent"
                       }`}>
-                        {post.status === "validated" ? "Validé" : "En attente"}
+                        {post.status === "published"
+                          ? "Publié"
+                          : post.status === "validated"
+                          ? "Validé"
+                          : post.status === "failed"
+                          ? "Échec"
+                          : "En attente"}
                       </span>
                     </div>
                     {(post.date || post.time) && (
@@ -423,8 +498,8 @@ export default function Dashboard() {
                         Modifier
                       </Button>
                       {post.status === "pending" && (
-                        <Button 
-                          size="sm" 
+                        <Button
+                          size="sm"
                           className="bg-gradient-to-r from-primary to-secondary flex-1"
                           onClick={() => handleValidate(post.id)}
                         >
@@ -432,11 +507,23 @@ export default function Dashboard() {
                           Valider
                         </Button>
                       )}
-                      <Button 
-                        size="sm" 
-                        variant="outline" 
+                      {post.status === "validated" && (
+                        <Button
+                          size="sm"
+                          className="bg-gradient-to-r from-primary to-secondary flex-1"
+                          onClick={() => handlePublish(post)}
+                          disabled={publishingId === post.id}
+                        >
+                          <Send className="w-4 h-4 mr-1" />
+                          {publishingId === post.id ? "Publication..." : "Publier"}
+                        </Button>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="outline"
                         className="glass-card text-destructive hover:bg-destructive/10"
                         onClick={() => handleDelete(post.id)}
+                        disabled={deletingIds.has(post.id)}
                       >
                         <Trash2 className="w-4 h-4" />
                       </Button>
@@ -455,12 +542,13 @@ export default function Dashboard() {
                 <p className="text-sm text-muted-foreground mb-4">
                   Créer de nouveaux posts avec l'IA
                 </p>
-                <Button 
+                <Button
                   className="w-full bg-gradient-to-r from-primary to-secondary"
                   onClick={handleGenerate}
+                  disabled={generating}
                 >
                   <Sparkles className="w-4 h-4 mr-2" />
-                  Générer
+                  {generating ? "Génération..." : "Générer"}
                 </Button>
               </Card>
 

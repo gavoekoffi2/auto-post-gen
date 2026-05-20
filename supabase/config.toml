@@ -1,10 +1,25 @@
 project_id = "prdpzatcevbqeqnaocdl"
 
+# generate-content is called by authenticated clients. We verify the user
+# JWT inside the function (so the function can use the service role key
+# to record usage), but Supabase's gateway should still require an apikey.
 [functions.generate-content]
-verify_jwt = false
+verify_jwt = true
 
+# auto-generate-weekly is a cron-only entry point. Protected by CRON_SECRET.
 [functions.auto-generate-weekly]
 verify_jwt = false
 
+# send-validation-email is cron-only. Protected by CRON_SECRET.
 [functions.send-validation-email]
+verify_jwt = false
+
+# validate-post is hit from the email link without a session token.
+# Token validation is done in-function.
+[functions.validate-post]
+verify_jwt = false
+
+# publish-post: manual triggers require user JWT; cron triggers use
+# CRON_SECRET. The function itself enforces both paths.
+[functions.publish-post]
 verify_jwt = false

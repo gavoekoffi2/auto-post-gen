@@ -52,8 +52,9 @@ export function AccountSettings({ userEmail }: AccountSettingsProps) {
       toast.success("Mot de passe mis à jour !");
       setNewPassword("");
       setConfirmPassword("");
-    } catch (error: any) {
-      toast.error(error.message || "Erreur lors du changement de mot de passe");
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Erreur lors du changement de mot de passe";
+      toast.error(message);
     } finally {
       setChangingPassword(false);
     }
@@ -65,25 +66,36 @@ export function AccountSettings({ userEmail }: AccountSettingsProps) {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error("Non authentifié");
 
-      // Delete user's posts
-      await supabase
-        .from("posts")
-        .delete()
-        .eq("user_id", session.user.id);
+      const userId = session.user.id;
 
-      // Delete user's profile
-      await supabase
-        .from("profiles")
-        .delete()
-        .eq("id", session.user.id);
+      // Best-effort: remove all storage objects under the user's folder.
+      try {
+        const { data: files } = await supabase.storage
+          .from("user-assets")
+          .list(userId, { limit: 1000 });
+        if (files && files.length > 0) {
+          const paths = files.map((f) => `${userId}/${f.name}`);
+          await supabase.storage.from("user-assets").remove(paths);
+        }
+      } catch (storageError) {
+        console.error("Storage cleanup failed:", storageError);
+      }
 
-      // Sign out (actual user deletion would require admin API)
+      await supabase.from("social_connections").delete().eq("user_id", userId);
+      await supabase.from("generation_usage").delete().eq("user_id", userId);
+      await supabase.from("posts").delete().eq("user_id", userId);
+      await supabase.from("profiles").delete().eq("id", userId);
+
+      // The auth.users row itself can only be removed via the admin API,
+      // so we sign the user out and rely on a manual/admin step or a
+      // delete-account edge function for full removal.
       await supabase.auth.signOut();
-      
+
       toast.success("Compte supprimé. Au revoir !");
       navigate("/");
-    } catch (error: any) {
-      toast.error(error.message || "Erreur lors de la suppression");
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Erreur lors de la suppression";
+      toast.error(message);
     } finally {
       setDeleting(false);
     }

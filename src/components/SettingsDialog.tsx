@@ -11,10 +11,23 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Upload, X } from "lucide-react";
 
+type UserProfileLike = {
+  sector?: string | null;
+  content_types?: string[] | null;
+  tone?: string | null;
+  post_frequency?: number | null;
+  description?: string | null;
+  style_example?: string | null;
+  platforms?: string[] | null;
+  logo_url?: string | null;
+  use_custom_images?: boolean | null;
+  custom_image_urls?: string[] | null;
+};
+
 type SettingsDialogProps = {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
-  userProfile: any;
+  userProfile: UserProfileLike | null;
   onProfileUpdate: () => void;
 };
 
@@ -60,28 +73,32 @@ export default function SettingsDialog({ isOpen, onOpenChange, userProfile, onPr
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.user) throw new Error("Non authentifié");
 
-      const { error } = await supabase.from('profiles').upsert({
-        id: session.user.id,
-        email: session.user.email,
-        sector: formData.sector,
-        content_types: [formData.contentType],
-        tone: formData.tone,
-        post_frequency: parseInt(formData.frequency),
-        description: formData.description,
-        style_example: formData.useStyleExample ? formData.styleExample : null,
-        platforms: formData.platforms.length > 0 ? formData.platforms : ['Instagram'],
-        logo_url: formData.useCustomVisuals ? formData.logoUrl : null,
-        use_custom_images: formData.useCustomImages,
-        custom_image_urls: formData.useCustomImages ? formData.customImageUrls : [],
-      });
+      const { error } = await supabase.from('profiles').upsert(
+        {
+          id: session.user.id,
+          email: session.user.email,
+          sector: formData.sector,
+          content_types: [formData.contentType],
+          tone: formData.tone,
+          post_frequency: parseInt(formData.frequency),
+          description: formData.description,
+          style_example: formData.useStyleExample ? formData.styleExample : null,
+          platforms: formData.platforms.length > 0 ? formData.platforms : ['Instagram'],
+          logo_url: formData.useCustomVisuals ? formData.logoUrl : null,
+          use_custom_images: formData.useCustomImages,
+          custom_image_urls: formData.useCustomImages ? formData.customImageUrls : [],
+        },
+        { onConflict: 'id' }
+      );
 
       if (error) throw error;
 
       toast.success("Paramètres mis à jour !");
       onProfileUpdate();
       onOpenChange(false);
-    } catch (error: any) {
-      toast.error(error.message || "Erreur lors de la sauvegarde");
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Erreur lors de la sauvegarde";
+      toast.error(message);
     } finally {
       setLoading(false);
     }
@@ -95,13 +112,22 @@ export default function SettingsDialog({ isOpen, onOpenChange, userProfile, onPr
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.user) throw new Error("Non authentifié");
 
+      if (!file.type.startsWith("image/")) {
+        toast.error("Veuillez sélectionner une image");
+        return;
+      }
+      if (file.size > 5 * 1024 * 1024) {
+        toast.error("L'image ne doit pas dépasser 5 Mo");
+        return;
+      }
+
       const fileExt = file.name.split('.').pop();
-      const fileName = `${session.user.id}-logo-${Date.now()}.${fileExt}`;
-      const filePath = `logos/${fileName}`;
+      // RLS requires the first folder segment to equal the user id.
+      const filePath = `${session.user.id}/logo-${Date.now()}.${fileExt}`;
 
       const { error: uploadError } = await supabase.storage
         .from('user-assets')
-        .upload(filePath, file);
+        .upload(filePath, file, { upsert: true });
 
       if (uploadError) throw uploadError;
 
@@ -111,8 +137,9 @@ export default function SettingsDialog({ isOpen, onOpenChange, userProfile, onPr
 
       setFormData({ ...formData, logoUrl: publicUrl });
       toast.success("Logo uploadé !");
-    } catch (error: any) {
-      toast.error("Erreur lors de l'upload du logo");
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Erreur lors de l'upload du logo";
+      toast.error(message);
     }
   };
 
@@ -125,9 +152,15 @@ export default function SettingsDialog({ isOpen, onOpenChange, userProfile, onPr
       if (!session?.user) throw new Error("Non authentifié");
 
       const uploadPromises = Array.from(files).map(async (file) => {
+        if (!file.type.startsWith("image/")) {
+          throw new Error(`${file.name} n'est pas une image`);
+        }
+        if (file.size > 5 * 1024 * 1024) {
+          throw new Error(`${file.name} dépasse 5 Mo`);
+        }
         const fileExt = file.name.split('.').pop();
-        const fileName = `${session.user.id}-${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
-        const filePath = `custom-images/${fileName}`;
+        // RLS requires the first folder segment to equal the user id.
+        const filePath = `${session.user.id}/custom-${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
 
         const { error: uploadError } = await supabase.storage
           .from('user-assets')
@@ -143,13 +176,14 @@ export default function SettingsDialog({ isOpen, onOpenChange, userProfile, onPr
       });
 
       const uploadedUrls = await Promise.all(uploadPromises);
-      setFormData({ 
-        ...formData, 
-        customImageUrls: [...formData.customImageUrls, ...uploadedUrls] 
+      setFormData({
+        ...formData,
+        customImageUrls: [...formData.customImageUrls, ...uploadedUrls]
       });
       toast.success(`${uploadedUrls.length} image(s) uploadée(s) !`);
-    } catch (error: any) {
-      toast.error("Erreur lors de l'upload des images");
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Erreur lors de l'upload des images";
+      toast.error(message);
     }
   };
 

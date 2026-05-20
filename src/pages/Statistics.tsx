@@ -99,7 +99,7 @@ export default function Statistics() {
         Object.entries(platformCounts).map(([name, value]) => ({ name, value }))
       );
 
-    } catch (error: any) {
+    } catch (_error) {
       toast.error('Erreur lors du chargement des statistiques');
     } finally {
       setLoading(false);

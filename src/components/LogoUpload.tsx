@@ -49,7 +49,7 @@ export const LogoUpload = ({ currentLogoUrl, onUpload, onRemove }: LogoUploadPro
 
       onUpload(publicUrl);
       toast.success("Logo téléchargé avec succès");
-    } catch (error: any) {
+    } catch (error) {
       console.error('Upload error:', error);
       toast.error("Erreur lors du téléchargement");
     } finally {
