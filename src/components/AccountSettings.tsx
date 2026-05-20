@@ -66,29 +66,11 @@ export function AccountSettings({ userEmail }: AccountSettingsProps) {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error("Non authentifié");
 
-      const userId = session.user.id;
+      // The edge function uses the admin API to wipe storage, app data
+      // AND the auth.users row in a single transaction.
+      const { error } = await supabase.functions.invoke("delete-account", {});
+      if (error) throw error;
 
-      // Best-effort: remove all storage objects under the user's folder.
-      try {
-        const { data: files } = await supabase.storage
-          .from("user-assets")
-          .list(userId, { limit: 1000 });
-        if (files && files.length > 0) {
-          const paths = files.map((f) => `${userId}/${f.name}`);
-          await supabase.storage.from("user-assets").remove(paths);
-        }
-      } catch (storageError) {
-        console.error("Storage cleanup failed:", storageError);
-      }
-
-      await supabase.from("social_connections").delete().eq("user_id", userId);
-      await supabase.from("generation_usage").delete().eq("user_id", userId);
-      await supabase.from("posts").delete().eq("user_id", userId);
-      await supabase.from("profiles").delete().eq("id", userId);
-
-      // The auth.users row itself can only be removed via the admin API,
-      // so we sign the user out and rely on a manual/admin step or a
-      // delete-account edge function for full removal.
       await supabase.auth.signOut();
 
       toast.success("Compte supprimé. Au revoir !");

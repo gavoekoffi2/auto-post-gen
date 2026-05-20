@@ -14,10 +14,13 @@ export const ProtectedRoute = ({ children, requiresProfile = true }: ProtectedRo
   const location = useLocation();
 
   useEffect(() => {
+    let cancelled = false;
+
     const checkAuth = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
-        
+
+        if (cancelled) return;
         if (!session) {
           setIsAuthenticated(false);
           setLoading(false);
@@ -33,17 +36,22 @@ export const ProtectedRoute = ({ children, requiresProfile = true }: ProtectedRo
             .eq('id', session.user.id)
             .maybeSingle();
 
-          // Profile is complete if required fields are filled
-          const isProfileComplete = profile && profile.sector && profile.tone && profile.content_types?.length > 0;
-          setHasProfile(!!isProfileComplete);
+          if (cancelled) return;
+          const isProfileComplete =
+            !!profile &&
+            !!profile.sector &&
+            !!profile.tone &&
+            Array.isArray(profile.content_types) &&
+            profile.content_types.length > 0;
+          setHasProfile(isProfileComplete);
         } else {
           setHasProfile(true);
         }
       } catch (error) {
         console.error('Auth check error:', error);
-        setIsAuthenticated(false);
+        if (!cancelled) setIsAuthenticated(false);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
 
@@ -55,14 +63,15 @@ export const ProtectedRoute = ({ children, requiresProfile = true }: ProtectedRo
         setHasProfile(false);
       } else if (session) {
         setIsAuthenticated(true);
-        // Defer profile check
-        setTimeout(() => {
-          checkAuth();
-        }, 0);
+        // Re-check profile when the session changes.
+        checkAuth();
       }
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      cancelled = true;
+      subscription.unsubscribe();
+    };
   }, [requiresProfile]);
 
   if (loading) {

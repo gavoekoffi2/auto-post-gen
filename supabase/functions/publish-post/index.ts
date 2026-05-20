@@ -186,14 +186,35 @@ async function publishToFacebook(
   }
 }
 
+async function ensurePublicImage(
+  supabase: ReturnType<typeof createClient>,
+  imageUrl: string,
+  userId: string,
+): Promise<string> {
+  // If the URL already lives on our Supabase storage, return as-is.
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+  if (supabaseUrl && imageUrl.startsWith(supabaseUrl)) return imageUrl;
+
+  // Otherwise, fetch the image and re-upload to user-assets/<userId>/
+  // so we control its lifetime.
+  const resp = await fetch(imageUrl);
+  if (!resp.ok) throw new Error(`Failed to download image: ${resp.status}`);
+  const blob = await resp.blob();
+  const ext = (blob.type.split("/")[1] || "jpg").split(";")[0];
+  const path = `${userId}/published-${Date.now()}.${ext}`;
+  const { error: upErr } = await supabase.storage
+    .from("user-assets")
+    .upload(path, blob, { contentType: blob.type, upsert: true });
+  if (upErr) throw upErr;
+  const { data } = supabase.storage.from("user-assets").getPublicUrl(path);
+  return data.publicUrl;
+}
+
 async function publishToInstagram(
   connection: SocialConnection,
   content: string,
   imageUrl: string | null,
 ): Promise<PublishResult> {
-  // Instagram Graph API via a connected Facebook Page. The connection
-  // must store the IG business account id in meta.ig_user_id and the
-  // long-lived page token in access_token.
   if (!imageUrl) {
     return { platform: "instagram", status: "error", message: "Instagram requires an image" };
   }
@@ -320,6 +341,19 @@ async function publishPost(
   const platforms: string[] = post.platforms || [];
   const results: PublishResult[] = [];
 
+  // For platforms that require a long-lived public image URL (Instagram,
+  // Facebook URL-link posting), rehost the image on our own storage.
+  let stableImageUrl: string | null = post.image_url || null;
+  if (stableImageUrl) {
+    try {
+      stableImageUrl = await ensurePublicImage(supabase, stableImageUrl, post.user_id);
+    } catch (err) {
+      console.error("ensurePublicImage failed:", err);
+      // Fall back to the original URL.
+      stableImageUrl = post.image_url || null;
+    }
+  }
+
   for (const rawPlatform of platforms) {
     const platform = normalisePlatform(rawPlatform);
     const publisher = PUBLISHERS[platform];
@@ -328,13 +362,13 @@ async function publishPost(
       continue;
     }
     const connection = (connections || []).find(
-      (c: any) => c.platform === platform,
+      (c: { platform: string }) => c.platform === platform,
     ) as SocialConnection | undefined;
     if (!connection) {
       results.push({ platform, status: "not_connected" });
       continue;
     }
-    const result = await publisher(connection, post.content, post.image_url || null);
+    const result = await publisher(connection, post.content, stableImageUrl);
     results.push(result);
   }
 

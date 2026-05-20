@@ -36,11 +36,15 @@ environment variables in the Supabase dashboard before deploying.
 | `LOVABLE_API_KEY` | `generate-content`, `auto-generate-weekly` | AI Gateway access |
 | `SUPABASE_URL` | all server functions | (auto-provided) |
 | `SUPABASE_SERVICE_ROLE_KEY` | all server functions | (auto-provided) |
-| `CRON_SECRET` | `auto-generate-weekly`, `send-validation-email`, `publish-post` (cron) | Shared secret between Supabase Scheduler and the functions |
+| `CRON_SECRET` | `auto-generate-weekly`, `send-validation-email`, `publish-post` (cron) | Shared secret between Supabase Scheduler and the functions. Also used as the OAuth state HMAC secret if `OAUTH_STATE_SECRET` is unset. |
+| `OAUTH_STATE_SECRET` | all `oauth-*` functions | (Optional) Dedicated HMAC secret for OAuth state tokens; defaults to `CRON_SECRET`. |
 | `ALLOWED_ORIGINS` | all functions | Comma-separated list of origins (e.g. `https://app.example.com`). Defaults to `*` (DO NOT ship `*` to prod). |
 | `RESEND_API_KEY` | `send-validation-email` | Email delivery |
 | `RESEND_FROM` | `send-validation-email` | Verified sender (`Pro Social AI <no-reply@yourdomain.com>`) |
-| `APP_BASE_URL` | `send-validation-email` | Where to point the validation link (e.g. `https://app.example.com`) |
+| `APP_BASE_URL` | `send-validation-email`, validation links | Where to point the validation link (e.g. `https://app.example.com`) — should be the front-end origin, not the Supabase URL. |
+| `OAUTH_LINKEDIN_CLIENT_ID` / `OAUTH_LINKEDIN_CLIENT_SECRET` | `oauth-*-linkedin` | LinkedIn app credentials |
+| `OAUTH_META_APP_ID` / `OAUTH_META_APP_SECRET` | `oauth-*-meta` | Meta (Facebook + Instagram) app credentials |
+| `OAUTH_TWITTER_CLIENT_ID` / `OAUTH_TWITTER_CLIENT_SECRET` | `oauth-*-twitter` | Twitter/X app credentials (PKCE; secret only for confidential clients) |
 
 ### Frontend env (`.env`)
 
@@ -79,19 +83,25 @@ publier manuellement").
 
 ### What you still need to do
 
-For each platform you want to enable, you must:
+The full OAuth start + callback edge functions are now implemented for
+LinkedIn, Meta (Facebook + Instagram) and Twitter/X. To turn them on:
 
-1. Create a developer app on the platform.
-2. Configure the OAuth redirect URI to point at an edge function you
-   will deploy: `https://<project>.supabase.co/functions/v1/oauth-callback-<platform>`.
-3. Store the client id / secret as Supabase secrets:
-   - `OAUTH_LINKEDIN_CLIENT_ID`, `OAUTH_LINKEDIN_CLIENT_SECRET`
-   - `OAUTH_META_APP_ID`, `OAUTH_META_APP_SECRET` (covers Facebook + Instagram)
-   - `OAUTH_TWITTER_CLIENT_ID`, `OAUTH_TWITTER_CLIENT_SECRET`
-4. Implement the matching `oauth-start-<platform>` and
-   `oauth-callback-<platform>` edge functions. The publishing side
-   (`publish-post/index.ts`) already calls the right APIs once a token
-   is in `social_connections.access_token`.
+1. Create a developer app on each platform:
+   - **LinkedIn**: https://www.linkedin.com/developers/apps — enable
+     "Sign In with LinkedIn using OpenID Connect" + "Share on LinkedIn".
+   - **Meta** (Facebook + Instagram): https://developers.facebook.com/apps —
+     add the Pages and Instagram Graph products. Request the
+     `pages_manage_posts`, `instagram_content_publish`, etc. permissions
+     via App Review (mandatory before launch).
+   - **Twitter/X**: https://developer.twitter.com/en/portal — create an
+     OAuth 2.0 app with PKCE, request `tweet.write`.
+2. Set the OAuth redirect URI in each app to:
+   - LinkedIn: `https://<project>.supabase.co/functions/v1/oauth-callback-linkedin`
+   - Meta: `https://<project>.supabase.co/functions/v1/oauth-callback-meta`
+   - Twitter: `https://<project>.supabase.co/functions/v1/oauth-callback-twitter`
+3. Set the `OAUTH_*` secrets listed in §2 in the Supabase dashboard.
+4. The `SocialMediaConnect` dialog will now open the correct OAuth flow
+   when users click "Connecter".
 
 ### Can we use "private" APIs to avoid OAuth?
 
@@ -148,10 +158,9 @@ audit fix:
 4. **Bundle size**: the main bundle is 1.16 MB. Consider code-splitting
    the dashboard from the landing page (`React.lazy`) before serving
    real traffic.
-5. **Account deletion**: the actual `auth.users` row can only be removed
-   via the admin API. Currently we delete user data and sign them out;
-   the user record itself stays in `auth.users` until you wire an
-   admin-only `delete-account` function (or do it manually).
+5. **Account deletion**: handled by the `delete-account` edge function
+   which uses the admin API to remove the `auth.users` row in addition
+   to all app data and storage objects.
 6. **Audit logging**: no audit table is present. If you need GDPR
    compliance, add an `audit_logs` table written on every mutation.
 7. **Image moderation**: the AI image generator produces user-facing

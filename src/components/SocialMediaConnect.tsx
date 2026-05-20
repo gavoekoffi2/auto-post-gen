@@ -37,7 +37,13 @@ interface PlatformDef {
   id: PlatformId;
   label: string;
   icon: string;
-  status: "available" | "manual" | "unavailable";
+  // "available": OAuth start endpoint exists and the platform's API works
+  // for posting today. "unavailable": API not usable yet (TikTok content
+  // posting is restricted).
+  status: "available" | "unavailable";
+  // Which oauth-start-* edge function to call. For Meta we cover both
+  // Facebook and Instagram through the same flow.
+  oauthEndpoint?: string;
   note?: string;
   helpUrl?: string;
 }
@@ -48,14 +54,17 @@ const PLATFORMS: PlatformDef[] = [
     label: "LinkedIn",
     icon: "in",
     status: "available",
-    helpUrl: "https://learn.microsoft.com/en-us/linkedin/marketing/integrations/community-management/shares/ugc-post-api",
+    oauthEndpoint: "oauth-start-linkedin",
+    helpUrl:
+      "https://learn.microsoft.com/en-us/linkedin/marketing/integrations/community-management/shares/ugc-post-api",
   },
   {
     id: "facebook",
     label: "Facebook",
     icon: "fb",
     status: "available",
-    note: "Connecte une Page Facebook (Pages publiques uniquement). Nécessite un compte Meta Developers et la review de l'app.",
+    oauthEndpoint: "oauth-start-meta",
+    note: "Connecte une ou plusieurs Pages Facebook (publication via API officielle Meta).",
     helpUrl: "https://developers.facebook.com/docs/pages-api",
   },
   {
@@ -63,15 +72,17 @@ const PLATFORMS: PlatformDef[] = [
     label: "Instagram",
     icon: "ig",
     status: "available",
-    note: "Requiert un compte Instagram Business lié à une Page Facebook (Instagram Graph API).",
+    oauthEndpoint: "oauth-start-meta",
+    note: "La connexion Meta active aussi les comptes Instagram Business liés à une Page Facebook.",
     helpUrl: "https://developers.facebook.com/docs/instagram-api",
   },
   {
     id: "twitter",
     label: "Twitter (X)",
     icon: "X",
-    status: "manual",
-    note: "L'API X est payante et son OAuth nécessite une app validée. Non activé par défaut.",
+    status: "available",
+    oauthEndpoint: "oauth-start-twitter",
+    note: "Nécessite un compte développeur X. La publication ne supporte pas les images dans cette version.",
     helpUrl: "https://developer.twitter.com/en/docs/twitter-api",
   },
   {
@@ -84,15 +95,20 @@ const PLATFORMS: PlatformDef[] = [
   },
 ];
 
-function buildOAuthStartUrl(platform: PlatformId): string | null {
+async function buildOAuthStartUrl(endpoint: string): Promise<string | null> {
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
   if (!supabaseUrl) return null;
-  // OAuth start endpoints should be implemented as edge functions
-  // (oauth-start-<platform>) that redirect to the platform's authorize
-  // URL with the right client_id/redirect_uri. Until those edge
-  // functions are deployed, we surface the absence to the user instead
-  // of silently failing.
-  return `${supabaseUrl}/functions/v1/oauth-start-${platform}`;
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  if (!session?.access_token) return null;
+  // Pass the user's JWT as a query string so the oauth-start function
+  // can identify the user without relying on Supabase's anon-key
+  // gateway re-write of the Authorization header (the browser will
+  // follow the redirect and won't preserve custom headers).
+  const url = new URL(`${supabaseUrl}/functions/v1/${endpoint}`);
+  url.searchParams.set("token", session.access_token);
+  return url.toString();
 }
 
 export function SocialMediaConnect({
@@ -129,23 +145,29 @@ export function SocialMediaConnect({
   }, [isOpen, userProfile?.id]);
 
   const handleConnect = async (platform: PlatformDef) => {
-    if (platform.status === "unavailable") {
+    if (platform.status === "unavailable" || !platform.oauthEndpoint) {
       toast.error(`${platform.label}: connexion non disponible pour le moment.`);
       return;
     }
 
-    const startUrl = buildOAuthStartUrl(platform.id);
+    const startUrl = await buildOAuthStartUrl(platform.oauthEndpoint);
     if (!startUrl) {
-      toast.error("Configuration manquante. Contactez le support.");
+      toast.error("Vous devez être connecté pour relier un compte.");
       return;
     }
 
-    // We open the OAuth flow in a new tab. The callback edge function
-    // is expected to upsert into social_connections and close the tab.
     window.open(startUrl, "_blank", "noopener,noreferrer");
     toast.info(
       `Une nouvelle fenêtre s'est ouverte pour autoriser ${platform.label}. Revenez ici une fois terminé.`,
     );
+  };
+
+  const refreshConnections = async () => {
+    const { data } = await supabase
+      .from("social_connections")
+      .select("id, platform, account_username, account_name, token_expires_at");
+    setConnections((data as SocialConnectionRow[]) || []);
+    onUpdate();
   };
 
   const handleDisconnect = async (platform: PlatformDef) => {
@@ -270,6 +292,17 @@ export function SocialMediaConnect({
               </Card>
             );
           })}
+        </div>
+
+        <div className="mt-4 flex justify-end">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={refreshConnections}
+            className="glass-card"
+          >
+            Rafraîchir
+          </Button>
         </div>
 
         <div className="mt-6 p-4 bg-muted/50 rounded-lg space-y-2">

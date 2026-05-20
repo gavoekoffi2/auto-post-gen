@@ -39,11 +39,26 @@ export default function Onboarding() {
   ];
 
   useEffect(() => {
-    // Check if user is authenticated
     const checkAuth = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
         navigate('/auth');
+        return;
+      }
+      // If onboarding was already completed, skip back to the dashboard.
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('sector, tone, content_types, company_name')
+        .eq('id', session.user.id)
+        .maybeSingle();
+      if (
+        profile &&
+        profile.sector &&
+        profile.tone &&
+        Array.isArray(profile.content_types) &&
+        profile.content_types.length > 0
+      ) {
+        navigate('/dashboard');
       }
     };
     checkAuth();

@@ -19,7 +19,32 @@ verify_jwt = false
 [functions.validate-post]
 verify_jwt = false
 
-# publish-post: manual triggers require user JWT; cron triggers use
-# CRON_SECRET. The function itself enforces both paths.
+# publish-post: manual triggers require user JWT (validated in-function),
+# cron triggers use CRON_SECRET.
 [functions.publish-post]
+verify_jwt = false
+
+# OAuth flows: callbacks must be reachable without a JWT (the provider
+# does the redirect with just ?code=...&state=...).
+[functions.oauth-start-linkedin]
+verify_jwt = false
+
+[functions.oauth-callback-linkedin]
+verify_jwt = false
+
+[functions.oauth-start-meta]
+verify_jwt = false
+
+[functions.oauth-callback-meta]
+verify_jwt = false
+
+[functions.oauth-start-twitter]
+verify_jwt = false
+
+[functions.oauth-callback-twitter]
+verify_jwt = false
+
+# delete-account validates the user JWT in-function so it can call the
+# admin API on their behalf.
+[functions.delete-account]
 verify_jwt = false
