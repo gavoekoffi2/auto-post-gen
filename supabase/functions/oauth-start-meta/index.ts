@@ -11,7 +11,11 @@
 //
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { buildCorsHeaders } from "../_shared/cors.ts";
-import { getUserIdFromAuthHeader, signState } from "../_shared/oauth.ts";
+import {
+  getOAuthRedirectUri,
+  getUserIdFromAuthHeader,
+  signState,
+} from "../_shared/oauth.ts";
 
 const META_AUTHORIZE = "https://www.facebook.com/v19.0/dialog/oauth";
 
@@ -35,8 +39,7 @@ serve(async (req) => {
       return new Response("Not authenticated", { status: 401, headers: corsHeaders });
     }
 
-    const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
-    const redirectUri = `${supabaseUrl}/functions/v1/oauth-callback-meta`;
+    const redirectUri = getOAuthRedirectUri("oauth-callback-meta");
 
     const state = await signState({ userId, platform: "meta" });
     const scope = [

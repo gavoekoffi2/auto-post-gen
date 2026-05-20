@@ -149,12 +149,37 @@ export default function Dashboard() {
       if (error) throw error;
       const results = (data?.results || []) as Array<{ status: string; platform: string; message?: string }>;
       const anyOk = results.some((r) => r.status === "ok");
+      const allErrors = results.length > 0 && results.every((r) => r.status === "error");
+      // Refresh from the DB so the displayed status matches whatever
+      // publish-post settled on (published, failed or rolled back to
+      // validated when nothing was attempted).
+      const { data: refreshed } = await supabase
+        .from("posts")
+        .select("status")
+        .eq("id", post.id)
+        .maybeSingle();
+      if (refreshed) {
+        const status = (refreshed.status as PostStatus) || post.status;
+        setPosts((prev) =>
+          prev.map((p) => (p.id === post.id ? { ...p, status } : p)),
+        );
+      }
       if (anyOk) {
-        setPosts(posts.map(p => p.id === post.id ? { ...p, status: "published" as const } : p));
         toast.success("Post publié !");
+      } else if (allErrors) {
+        const messages = results
+          .map((r) => `${r.platform}: ${r.message || r.status}`)
+          .join("\n");
+        toast.error(`Échec de publication.\n${messages}`);
       } else {
-        const messages = results.map((r) => `${r.platform}: ${r.status}${r.message ? ` (${r.message})` : ""}`).join("\n");
-        toast.error(`Échec de publication. ${messages || "Aucun réseau connecté."}`);
+        const notConnected = results
+          .filter((r) => r.status === "not_connected")
+          .map((r) => r.platform);
+        toast.error(
+          notConnected.length > 0
+            ? `Réseaux non connectés: ${notConnected.join(", ")}. Connectez-les dans "Gérer les réseaux sociaux".`
+            : "Aucune publication effectuée.",
+        );
       }
     } catch (error: unknown) {
       toast.dismiss(loadingToast);
@@ -162,6 +187,24 @@ export default function Dashboard() {
       toast.error(message);
     } finally {
       setPublishingId(null);
+    }
+  };
+
+  const handleRetry = async (post: Post) => {
+    // Flip back to 'validated' first so handlePublish's pre-check
+    // accepts it, then publish.
+    try {
+      const { error } = await supabase
+        .from('posts')
+        .update({ status: 'validated', publish_error: null })
+        .eq('id', post.id);
+      if (error) throw error;
+      const revived: Post = { ...post, status: 'validated' };
+      setPosts((prev) => prev.map((p) => (p.id === post.id ? revived : p)));
+      await handlePublish(revived);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Erreur lors du retry";
+      toast.error(message);
     }
   };
 
@@ -407,9 +450,9 @@ export default function Dashboard() {
           <Card className="glass-card p-6 animate-fade-in" style={{ animationDelay: "0.3s" }}>
             <div className="flex items-center justify-between mb-4">
               <TrendingUp className="w-8 h-8 text-primary" />
-              <span className="text-3xl font-bold gradient-text">+24%</span>
+              <span className="text-3xl font-bold gradient-text">{stats.published}</span>
             </div>
-            <p className="text-sm text-muted-foreground">Engagement</p>
+            <p className="text-sm text-muted-foreground">Posts publiés</p>
           </Card>
         </div>
 
@@ -516,6 +559,18 @@ export default function Dashboard() {
                         >
                           <Send className="w-4 h-4 mr-1" />
                           {publishingId === post.id ? "Publication..." : "Publier"}
+                        </Button>
+                      )}
+                      {post.status === "failed" && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="glass-card flex-1"
+                          onClick={() => handleRetry(post)}
+                          disabled={publishingId === post.id}
+                        >
+                          <Send className="w-4 h-4 mr-1" />
+                          {publishingId === post.id ? "Tentative..." : "Réessayer"}
                         </Button>
                       )}
                       <Button

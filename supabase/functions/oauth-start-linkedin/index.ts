@@ -6,7 +6,11 @@
 //
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { buildCorsHeaders } from "../_shared/cors.ts";
-import { getUserIdFromAuthHeader, signState } from "../_shared/oauth.ts";
+import {
+  getOAuthRedirectUri,
+  getUserIdFromAuthHeader,
+  signState,
+} from "../_shared/oauth.ts";
 
 const LINKEDIN_AUTHORIZE = "https://www.linkedin.com/oauth/v2/authorization";
 
@@ -39,8 +43,7 @@ serve(async (req) => {
       return new Response("Not authenticated", { status: 401, headers: corsHeaders });
     }
 
-    const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
-    const redirectUri = `${supabaseUrl}/functions/v1/oauth-callback-linkedin`;
+    const redirectUri = getOAuthRedirectUri("oauth-callback-linkedin");
 
     const state = await signState({ userId, platform: "linkedin" });
 

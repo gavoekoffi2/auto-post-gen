@@ -91,15 +91,38 @@ serve(async (req) => {
       }
     }
 
-    const { error: updateError } = await supabase
+    // Only validate posts currently in 'pending' state. This prevents a
+    // leaked token from rolling back a post that's already been
+    // published, failed or manually validated.
+    if (post.status !== "pending") {
+      return new Response(
+        JSON.stringify({
+          error: `Post is in state '${post.status}', cannot be validated via email link`,
+          postId: post.id,
+        }),
+        { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    // Atomic transition: only update if still pending.
+    const { data: updated, error: updateError } = await supabase
       .from("posts")
       .update({
         status: "validated",
         validation_token_used_at: new Date().toISOString(),
       })
-      .eq("id", post.id);
+      .eq("id", post.id)
+      .eq("status", "pending")
+      .select("id")
+      .maybeSingle();
 
     if (updateError) throw updateError;
+    if (!updated) {
+      return new Response(
+        JSON.stringify({ error: "Post status changed concurrently", postId: post.id }),
+        { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
 
     return new Response(
       JSON.stringify({ success: true, postId: post.id }),

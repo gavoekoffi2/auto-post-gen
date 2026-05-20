@@ -97,16 +97,17 @@ const PLATFORMS: PlatformDef[] = [
 
 async function buildOAuthStartUrl(endpoint: string): Promise<string | null> {
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-  if (!supabaseUrl) return null;
+  const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+  if (!supabaseUrl || !anonKey) return null;
   const {
     data: { session },
   } = await supabase.auth.getSession();
   if (!session?.access_token) return null;
-  // Pass the user's JWT as a query string so the oauth-start function
-  // can identify the user without relying on Supabase's anon-key
-  // gateway re-write of the Authorization header (the browser will
-  // follow the redirect and won't preserve custom headers).
+  // Pass the user's JWT as ?token=... (the browser can't add custom
+  // headers on a popup navigation) and the anon key as ?apikey=... so
+  // Supabase's gateway lets the request through.
   const url = new URL(`${supabaseUrl}/functions/v1/${endpoint}`);
+  url.searchParams.set("apikey", anonKey);
   url.searchParams.set("token", session.access_token);
   return url.toString();
 }
@@ -144,6 +145,14 @@ export function SocialMediaConnect({
     load();
   }, [isOpen, userProfile?.id]);
 
+  const refreshConnections = async () => {
+    const { data } = await supabase
+      .from("social_connections")
+      .select("id, platform, account_username, account_name, token_expires_at");
+    setConnections((data as SocialConnectionRow[]) || []);
+    onUpdate();
+  };
+
   const handleConnect = async (platform: PlatformDef) => {
     if (platform.status === "unavailable" || !platform.oauthEndpoint) {
       toast.error(`${platform.label}: connexion non disponible pour le moment.`);
@@ -156,18 +165,33 @@ export function SocialMediaConnect({
       return;
     }
 
-    window.open(startUrl, "_blank", "noopener,noreferrer");
+    // Open OAuth in a popup. Note: noopener prevents us from reading
+    // popup.closed, so we open without it and watch for the popup
+    // to close, then refresh.
+    const popup = window.open(startUrl, "social_oauth", "width=600,height=720");
+    if (!popup) {
+      toast.error("Le navigateur a bloqué la fenêtre. Autorisez les popups pour ce site.");
+      return;
+    }
     toast.info(
-      `Une nouvelle fenêtre s'est ouverte pour autoriser ${platform.label}. Revenez ici une fois terminé.`,
+      `Autorisez ${platform.label} dans la nouvelle fenêtre. La liste se rafraîchira automatiquement.`,
     );
-  };
 
-  const refreshConnections = async () => {
-    const { data } = await supabase
-      .from("social_connections")
-      .select("id, platform, account_username, account_name, token_expires_at");
-    setConnections((data as SocialConnectionRow[]) || []);
-    onUpdate();
+    const interval = window.setInterval(() => {
+      try {
+        if (popup.closed) {
+          window.clearInterval(interval);
+          // Give Supabase a moment to propagate the upsert, then refetch.
+          window.setTimeout(() => {
+            refreshConnections();
+          }, 600);
+        }
+      } catch (_) {
+        window.clearInterval(interval);
+      }
+    }, 500);
+    // Hard stop after 10 minutes in case the user abandons.
+    window.setTimeout(() => window.clearInterval(interval), 10 * 60 * 1000);
   };
 
   const handleDisconnect = async (platform: PlatformDef) => {

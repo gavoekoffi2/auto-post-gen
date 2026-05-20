@@ -5,6 +5,7 @@
 //
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import {
+  getOAuthRedirectUri,
   htmlErrorPage,
   htmlSuccessPage,
   upsertConnection,
@@ -31,8 +32,7 @@ serve(async (req) => {
     const appSecret = Deno.env.get("OAUTH_META_APP_SECRET");
     if (!appId || !appSecret) return htmlErrorPage("Secrets Meta manquants côté serveur");
 
-    const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
-    const redirectUri = `${supabaseUrl}/functions/v1/oauth-callback-meta`;
+    const redirectUri = getOAuthRedirectUri("oauth-callback-meta");
 
     // 1. Exchange code for short-lived user token.
     const shortTokenUrl = new URL(`${GRAPH}/oauth/access_token`);

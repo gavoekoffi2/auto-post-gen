@@ -277,6 +277,41 @@ INSTRUCTIONS CRITIQUES:
         } else {
           console.error("Primary image model failed:", imageResponse.status);
         }
+
+        // If the gateway returned a base64 data URL, transcode it to a
+        // file in user-assets so the DB never holds megabytes of base64
+        // and so downstream publishing (Instagram, LinkedIn) can fetch
+        // a stable URL.
+        if (imageUrl && imageUrl.startsWith("data:")) {
+          try {
+            const commaIdx = imageUrl.indexOf(",");
+            const meta = imageUrl.slice(5, commaIdx);
+            const payload = imageUrl.slice(commaIdx + 1);
+            const contentType = (meta.split(";")[0] || "image/png").trim();
+            const isBase64 = meta.includes(";base64");
+            let bytes: Uint8Array;
+            if (isBase64) {
+              const bin = atob(payload);
+              bytes = new Uint8Array(bin.length);
+              for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+            } else {
+              bytes = new TextEncoder().encode(decodeURIComponent(payload));
+            }
+            const ext = (contentType.split("/")[1] || "png").split(";")[0];
+            const path = `${userId}/ai-${Date.now()}.${ext}`;
+            const { error: upErr } = await supabase.storage
+              .from("user-assets")
+              .upload(path, bytes, { contentType, upsert: true });
+            if (upErr) {
+              console.error("Failed to rehost data URL:", upErr);
+            } else {
+              const { data } = supabase.storage.from("user-assets").getPublicUrl(path);
+              imageUrl = data.publicUrl;
+            }
+          } catch (rehostErr) {
+            console.error("data URL rehost threw:", rehostErr);
+          }
+        }
       } catch (imgError) {
         console.error("Image generation threw:", imgError);
       }

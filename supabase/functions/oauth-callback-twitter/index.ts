@@ -1,6 +1,7 @@
 // Twitter/X OAuth 2.0 callback (PKCE).
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import {
+  getOAuthRedirectUri,
   htmlErrorPage,
   htmlSuccessPage,
   upsertConnection,
@@ -30,8 +31,7 @@ serve(async (req) => {
     const clientSecret = Deno.env.get("OAUTH_TWITTER_CLIENT_SECRET");
     if (!clientId) return htmlErrorPage("Twitter client id manquant côté serveur");
 
-    const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
-    const redirectUri = `${supabaseUrl}/functions/v1/oauth-callback-twitter`;
+    const redirectUri = getOAuthRedirectUri("oauth-callback-twitter");
 
     const body = new URLSearchParams();
     body.set("grant_type", "authorization_code");

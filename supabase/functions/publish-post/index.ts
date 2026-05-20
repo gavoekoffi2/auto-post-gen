@@ -3,12 +3,15 @@
 // publish-post: publishes a single post (manual trigger from the dashboard)
 // or a batch of due posts (cron trigger).
 //
-// Currently implements LinkedIn (UGC API). Stubs for Facebook (Pages),
-// Instagram (Graph API via FB Page), and Twitter/X are included with the
-// API contract so they can be filled in once the corresponding OAuth apps
-// are registered. TikTok requires the Content Posting API which is in
-// limited access — the stub returns a "not_implemented" error rather
-// than failing silently.
+// Implements LinkedIn (UGC API with image upload via the assets API),
+// Facebook Pages (feed/photos), Instagram (Graph API media + media_publish
+// via the connected Facebook Page) and Twitter/X (v2 tweets, text-only in
+// this version). TikTok is intentionally not implemented because the
+// Content Posting API is in limited access.
+//
+// Concurrency: before doing any external API call, we atomically flip the
+// post status from 'validated' to 'publishing' so concurrent cron + manual
+// invocations can't double-publish.
 //
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
@@ -88,19 +91,53 @@ async function publishToLinkedIn(
       if (registerResp.ok) {
         const registerData = await registerResp.json();
         mediaAsset = registerData?.value?.asset || null;
-        const uploadUrl =
+        const uploadMech =
           registerData?.value?.uploadMechanism?.[
             "com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest"
-          ]?.uploadUrl;
+          ];
+        const uploadUrl = uploadMech?.uploadUrl;
+        // LinkedIn returns the http method in the upload mechanism. The
+        // current API uses PUT for the binary upload, but read it back
+        // defensively in case LinkedIn ever advertises a different one.
+        const uploadMethod = (uploadMech?.method as string) || "PUT";
         if (uploadUrl) {
           const imgResp = await fetch(imageUrl);
+          if (!imgResp.ok) {
+            return {
+              platform: "linkedin",
+              status: "error",
+              message: `Image download failed: ${imgResp.status}`,
+            };
+          }
           const blob = await imgResp.arrayBuffer();
-          await fetch(uploadUrl, {
-            method: "POST",
-            headers: { Authorization: `Bearer ${connection.access_token}` },
+          const uploadResp = await fetch(uploadUrl, {
+            method: uploadMethod,
+            headers: {
+              Authorization: `Bearer ${connection.access_token}`,
+              "Content-Type": imgResp.headers.get("content-type") || "application/octet-stream",
+            },
             body: blob,
           });
+          if (!uploadResp.ok) {
+            return {
+              platform: "linkedin",
+              status: "error",
+              message: `LinkedIn upload ${uploadResp.status}: ${(await uploadResp.text()).slice(0, 200)}`,
+            };
+          }
+        } else {
+          // Unable to obtain an upload URL — fall back to text-only post
+          // rather than failing the whole publish.
+          mediaAsset = null;
         }
+      } else {
+        // registerUpload failed — fall back to text-only post.
+        console.error(
+          "LinkedIn registerUpload failed:",
+          registerResp.status,
+          (await registerResp.text()).slice(0, 200),
+        );
+        mediaAsset = null;
       }
     }
 
@@ -195,16 +232,39 @@ async function ensurePublicImage(
   const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
   if (supabaseUrl && imageUrl.startsWith(supabaseUrl)) return imageUrl;
 
-  // Otherwise, fetch the image and re-upload to user-assets/<userId>/
-  // so we control its lifetime.
-  const resp = await fetch(imageUrl);
-  if (!resp.ok) throw new Error(`Failed to download image: ${resp.status}`);
-  const blob = await resp.blob();
-  const ext = (blob.type.split("/")[1] || "jpg").split(";")[0];
+  let blob: Blob;
+  let contentType = "image/jpeg";
+
+  if (imageUrl.startsWith("data:")) {
+    // Inline data URL ("data:image/png;base64,XXXX..."): decode in-place.
+    const commaIdx = imageUrl.indexOf(",");
+    if (commaIdx < 0) throw new Error("Invalid data URL");
+    const meta = imageUrl.slice(5, commaIdx); // e.g. "image/png;base64"
+    const payload = imageUrl.slice(commaIdx + 1);
+    const isBase64 = meta.includes(";base64");
+    contentType = meta.split(";")[0] || contentType;
+    if (isBase64) {
+      const bin = atob(payload);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      blob = new Blob([bytes], { type: contentType });
+    } else {
+      blob = new Blob([decodeURIComponent(payload)], { type: contentType });
+    }
+  } else {
+    // Otherwise, fetch the image and re-upload to user-assets/<userId>/
+    // so we control its lifetime.
+    const resp = await fetch(imageUrl);
+    if (!resp.ok) throw new Error(`Failed to download image: ${resp.status}`);
+    blob = await resp.blob();
+    contentType = blob.type || contentType;
+  }
+
+  const ext = (contentType.split("/")[1] || "jpg").split(";")[0];
   const path = `${userId}/published-${Date.now()}.${ext}`;
   const { error: upErr } = await supabase.storage
     .from("user-assets")
-    .upload(path, blob, { contentType: blob.type, upsert: true });
+    .upload(path, blob, { contentType, upsert: true });
   if (upErr) throw upErr;
   const { data } = supabase.storage.from("user-assets").getPublicUrl(path);
   return data.publicUrl;
@@ -323,15 +383,29 @@ function normalisePlatform(label: string): string {
 async function publishPost(
   supabase: ReturnType<typeof createClient>,
   postId: string,
-): Promise<{ post_id: string; results: PublishResult[] }> {
-  const { data: post, error } = await supabase
+): Promise<{ post_id: string; results: PublishResult[]; skipped?: string }> {
+  // Atomically claim the post: only succeed if it is still in the
+  // 'validated' state, transitioning it to 'publishing'. This prevents
+  // a concurrent cron run and a manual click from both posting.
+  const { data: claimed, error: claimError } = await supabase
     .from("posts")
-    .select("*")
+    .update({
+      status: "publishing",
+      auto_publish_attempted_at: new Date().toISOString(),
+    })
     .eq("id", postId)
-    .single();
+    .eq("status", "validated")
+    .select("*")
+    .maybeSingle();
 
-  if (error || !post) throw new Error(`Post ${postId} not found`);
-  if (post.status === "published") return { post_id: postId, results: [] };
+  if (claimError) throw claimError;
+  if (!claimed) {
+    // Someone else is publishing this post (or it's not in a publishable
+    // state). Skip silently.
+    return { post_id: postId, results: [], skipped: "not_in_validated_state" };
+  }
+
+  const post = claimed;
 
   const { data: connections } = await supabase
     .from("social_connections")
@@ -375,13 +449,19 @@ async function publishPost(
   const anyOk = results.some((r) => r.status === "ok");
   const allErrors = results.length > 0 && results.every((r) => r.status === "error");
 
+  // Decide the resulting state. If at least one platform succeeded we
+  // mark the post 'published'; if every attempt failed we mark it
+  // 'failed' so the user knows to retry. Otherwise (e.g. all platforms
+  // are 'not_connected'), revert to 'validated' so the user can retry
+  // after connecting an account.
+  const finalStatus = anyOk ? "published" : allErrors ? "failed" : "validated";
+
   await supabase
     .from("posts")
     .update({
-      status: anyOk ? "published" : allErrors ? "failed" : post.status,
+      status: finalStatus,
       published_at: anyOk ? new Date().toISOString() : null,
-      auto_publish_attempted_at: new Date().toISOString(),
-      publish_error: allErrors ? JSON.stringify(results) : null,
+      publish_error: allErrors || finalStatus === "validated" ? JSON.stringify(results) : null,
     })
     .eq("id", postId);
 
@@ -409,13 +489,9 @@ serve(async (req) => {
   const isCron = cronSecret && headerCron && headerCron === cronSecret;
 
   let userId: string | null = null;
-  let body: any = {};
-
-  try {
-    body = await req.json().catch(() => ({}));
-  } catch (_) {
-    body = {};
-  }
+  // The body is optional (cron mode sends none). `.catch(() => ({}))`
+  // covers the empty-body case where req.json() would throw.
+  const body: { postId?: string } = await req.json().catch(() => ({}));
 
   if (!isCron) {
     // Require a logged-in user for manual publishes.
@@ -483,12 +559,23 @@ serve(async (req) => {
       );
     }
 
+    // Recover any post that's been stuck in 'publishing' for >10min
+    // (function timed out or crashed mid-batch). Non-fatal if the
+    // function isn't yet deployed.
+    const { error: recoverError } = await supabase.rpc("recover_stuck_publishing");
+    if (recoverError) console.error("recover_stuck_publishing:", recoverError);
+
     const nowIso = new Date().toISOString();
+    // Cap the per-run batch so a stuck queue can't exhaust the function
+    // runtime; remaining items are picked up on the next cron tick.
+    const CRON_BATCH_SIZE = 50;
     const { data: due } = await supabase
       .from("posts")
       .select("id")
       .eq("status", "validated")
-      .lte("scheduled_for", nowIso);
+      .lte("scheduled_for", nowIso)
+      .order("scheduled_for", { ascending: true })
+      .limit(CRON_BATCH_SIZE);
 
     const results: any[] = [];
     for (const row of due || []) {

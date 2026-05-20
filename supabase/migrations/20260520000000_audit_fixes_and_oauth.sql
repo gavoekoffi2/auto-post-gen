@@ -91,6 +91,7 @@ BEGIN
   END IF;
 END $$;
 
+DROP TRIGGER IF EXISTS update_social_connections_updated_at ON public.social_connections;
 CREATE TRIGGER update_social_connections_updated_at
   BEFORE UPDATE ON public.social_connections
   FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();

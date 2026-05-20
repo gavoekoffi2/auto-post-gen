@@ -2,6 +2,7 @@
 // upserts a social_connections row.
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import {
+  getOAuthRedirectUri,
   htmlErrorPage,
   htmlSuccessPage,
   upsertConnection,
@@ -32,8 +33,7 @@ serve(async (req) => {
     if (!clientId || !clientSecret) {
       return htmlErrorPage("LinkedIn OAuth secrets manquants côté serveur");
     }
-    const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
-    const redirectUri = `${supabaseUrl}/functions/v1/oauth-callback-linkedin`;
+    const redirectUri = getOAuthRedirectUri("oauth-callback-linkedin");
 
     const tokenParams = new URLSearchParams();
     tokenParams.set("grant_type", "authorization_code");

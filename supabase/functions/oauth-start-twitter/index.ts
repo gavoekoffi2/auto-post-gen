@@ -9,7 +9,11 @@
 //
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { buildCorsHeaders } from "../_shared/cors.ts";
-import { getUserIdFromAuthHeader, signState } from "../_shared/oauth.ts";
+import {
+  getOAuthRedirectUri,
+  getUserIdFromAuthHeader,
+  signState,
+} from "../_shared/oauth.ts";
 
 const AUTHORIZE = "https://twitter.com/i/oauth2/authorize";
 
@@ -48,8 +52,7 @@ serve(async (req) => {
       return new Response("Not authenticated", { status: 401, headers: corsHeaders });
     }
 
-    const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
-    const redirectUri = `${supabaseUrl}/functions/v1/oauth-callback-twitter`;
+    const redirectUri = getOAuthRedirectUri("oauth-callback-twitter");
 
     const codeVerifier = randomString(48);
     const codeChallenge = await sha256(codeVerifier);

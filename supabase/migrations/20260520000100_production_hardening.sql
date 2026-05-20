@@ -89,3 +89,41 @@ WHERE status = 'validated'
   AND (scheduled_for IS NULL OR scheduled_for <= now());
 
 GRANT SELECT ON public.due_validated_posts TO service_role;
+
+-- 11. The publisher uses an intermediate 'publishing' status to atomically
+--     claim a post and prevent double-publishing between cron + manual
+--     invocations. Add it to the canonical status set.
+ALTER TABLE public.posts DROP CONSTRAINT IF EXISTS posts_status_check;
+ALTER TABLE public.posts
+  ADD CONSTRAINT posts_status_check
+  CHECK (status IN ('pending', 'validated', 'publishing', 'published', 'failed'))
+  NOT VALID;
+UPDATE public.posts SET status = 'pending'
+WHERE status NOT IN ('pending', 'validated', 'publishing', 'published', 'failed');
+ALTER TABLE public.posts VALIDATE CONSTRAINT posts_status_check;
+
+-- 12. Recovery: if a post has been stuck in 'publishing' for more than
+--     10 minutes (function timed out, crashed, etc.) the next cron tick
+--     should retry it. We expose this via a helper function the cron
+--     can call before its main pass.
+CREATE OR REPLACE FUNCTION public.recover_stuck_publishing()
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  affected integer;
+BEGIN
+  UPDATE public.posts
+  SET status = 'validated',
+      publish_error = COALESCE(publish_error, 'recovered_from_publishing_timeout')
+  WHERE status = 'publishing'
+    AND auto_publish_attempted_at IS NOT NULL
+    AND auto_publish_attempted_at < now() - interval '10 minutes';
+  GET DIAGNOSTICS affected = ROW_COUNT;
+  RETURN affected;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.recover_stuck_publishing() FROM public;
+GRANT EXECUTE ON FUNCTION public.recover_stuck_publishing() TO service_role;

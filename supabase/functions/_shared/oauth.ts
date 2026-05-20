@@ -15,6 +15,17 @@ export function getAppBaseUrl(): string {
   return Deno.env.get("APP_BASE_URL") || "";
 }
 
+// Build the redirect_uri we register with each OAuth provider. We append
+// the public anon key as a query parameter so the request reaches the
+// edge function gateway with a valid apikey even though OAuth providers
+// can't send custom headers when they redirect the user back.
+export function getOAuthRedirectUri(callbackName: string): string {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
+  const base = `${supabaseUrl}/functions/v1/${callbackName}`;
+  return anonKey ? `${base}?apikey=${encodeURIComponent(anonKey)}` : base;
+}
+
 function base64UrlEncode(bytes: Uint8Array): string {
   let bin = "";
   for (const b of bytes) bin += String.fromCharCode(b);
@@ -55,7 +66,7 @@ export async function signState(payload: Record<string, unknown>): Promise<strin
 
 export async function verifyState(
   token: string,
-  maxAgeMs = 15 * 60 * 1000,
+  maxAgeMs = 30 * 60 * 1000,
 ): Promise<Record<string, unknown>> {
   const [body, sig] = token.split(".");
   if (!body || !sig) throw new Error("Invalid state");
@@ -121,13 +132,14 @@ export async function upsertConnection(payload: OAuthConnectionPayload) {
 }
 
 export function htmlSuccessPage(platform: string): Response {
+  const safePlatform = escapeForHtml(platform);
   const html = `<!doctype html>
-<html lang="fr"><head><meta charset="utf-8"><title>${platform} connecté</title>
+<html lang="fr"><head><meta charset="utf-8"><title>${safePlatform} connecté</title>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#0a0a1a;color:#fff}
 .card{background:#111133;border-radius:16px;padding:32px;text-align:center;max-width:420px}
 h1{margin:0 0 12px 0;font-size:22px}
 button{background:linear-gradient(135deg,#8B5CF6,#3B82F6);color:#fff;border:0;padding:10px 20px;border-radius:8px;font-size:14px;cursor:pointer}</style>
-</head><body><div class="card"><h1>${platform} connecté ✓</h1>
+</head><body><div class="card"><h1>${safePlatform} connecté ✓</h1>
 <p>Vous pouvez fermer cet onglet et revenir à l'application.</p>
 <button onclick="window.close()">Fermer</button>
 <script>setTimeout(() => { try { window.close(); } catch(e){} }, 2500);</script>

@@ -95,10 +95,11 @@ LinkedIn, Meta (Facebook + Instagram) and Twitter/X. To turn them on:
      via App Review (mandatory before launch).
    - **Twitter/X**: https://developer.twitter.com/en/portal — create an
      OAuth 2.0 app with PKCE, request `tweet.write`.
-2. Set the OAuth redirect URI in each app to:
-   - LinkedIn: `https://<project>.supabase.co/functions/v1/oauth-callback-linkedin`
-   - Meta: `https://<project>.supabase.co/functions/v1/oauth-callback-meta`
-   - Twitter: `https://<project>.supabase.co/functions/v1/oauth-callback-twitter`
+2. Set the OAuth redirect URI in each app to the URLs **with the `?apikey=<ANON_KEY>` query parameter** — this is required because Supabase Edge Functions enforce the `apikey` check at the gateway and OAuth providers can't add custom headers when they redirect:
+   - LinkedIn: `https://<project>.supabase.co/functions/v1/oauth-callback-linkedin?apikey=<ANON_KEY>`
+   - Meta: `https://<project>.supabase.co/functions/v1/oauth-callback-meta?apikey=<ANON_KEY>`
+   - Twitter: `https://<project>.supabase.co/functions/v1/oauth-callback-twitter?apikey=<ANON_KEY>`
+   The anon key is the public `VITE_SUPABASE_PUBLISHABLE_KEY` (safe to expose). The start endpoints automatically include it in the `redirect_uri` they send to the provider.
 3. Set the `OAUTH_*` secrets listed in §2 in the Supabase dashboard.
 4. The `SocialMediaConnect` dialog will now open the correct OAuth flow
    when users click "Connecter".
