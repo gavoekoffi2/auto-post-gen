@@ -64,12 +64,12 @@ serve(async (req) => {
   try {
     const { data: existing } = await supabase
       .from("social_connections")
-      .select("profile_key")
+      .select("profile_key, meta")
       .eq("user_id", userId)
       .eq("provider", "ayrshare")
       .maybeSingle();
 
-    if (!existing?.profile_key) {
+    if (!existing) {
       return new Response(
         JSON.stringify({ provisioned: false, platforms: [] }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
@@ -83,24 +83,25 @@ serve(async (req) => {
       );
     }
 
-    const resp = await fetch(`${AYRSHARE_BASE}/user`, {
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Profile-Key": existing.profile_key,
-      },
-    });
+    const mode = (existing.meta as { mode?: string } | null)?.mode || (existing.profile_key ? "business" : "shared");
+
+    const headers: Record<string, string> = { Authorization: `Bearer ${apiKey}` };
+    // In Business mode we scope to the user's profile; in shared mode
+    // we query the API key owner's main account.
+    if (existing.profile_key) headers["Profile-Key"] = existing.profile_key;
+
+    const resp = await fetch(`${AYRSHARE_BASE}/user`, { headers });
     if (!resp.ok) {
       const text = await resp.text();
       return new Response(
-        JSON.stringify({ provisioned: true, platforms: [], error: text.slice(0, 200) }),
+        JSON.stringify({ provisioned: true, platforms: [], mode, error: text.slice(0, 200) }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
     const data = await resp.json();
-    // Ayrshare's /user returns activeSocialAccounts: ["facebook","instagram",...]
     const platforms: string[] = data.activeSocialAccounts || data.socialNetworks || [];
     return new Response(
-      JSON.stringify({ provisioned: true, platforms }),
+      JSON.stringify({ provisioned: true, platforms, mode }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err) {

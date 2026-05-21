@@ -91,9 +91,11 @@ serve(async (req) => {
       .maybeSingle();
 
     let profileKey: string | null = existing?.profile_key || null;
+    let mode: "business" | "shared" = "business";
+    let connectUrl: string;
 
-    // 1. Provision a new Ayrshare profile if we don't have one yet.
     if (!profileKey) {
+      // Attempt to provision a per-user profile (Business Plan).
       const { data: profile } = await supabase
         .from("profiles")
         .select("company_name, email")
@@ -109,67 +111,82 @@ serve(async (req) => {
         },
         body: JSON.stringify({ title }),
       });
-      if (!createResp.ok) {
+
+      if (createResp.ok) {
+        const created = await createResp.json();
+        profileKey = created.profileKey || created.profile_key || null;
+      } else {
+        // Free / Premium plans don't have per-user profiles. We fall
+        // back to "shared mode": every Pro Social AI user posts through
+        // the API key owner's single Ayrshare account.
         const text = await createResp.text();
-        return new Response(
-          JSON.stringify({ error: `Ayrshare profile creation failed: ${text.slice(0, 300)}` }),
-          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-        );
-      }
-      const created = await createResp.json();
-      profileKey = created.profileKey || created.profile_key;
-      if (!profileKey) {
-        return new Response(
-          JSON.stringify({ error: "Ayrshare did not return a profileKey" }),
-          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-        );
-      }
-
-      // Persist the umbrella row. We use platform='all' to indicate this
-      // single connection covers every social platform the user authorises
-      // through Ayrshare.
-      const { error: upsertError } = await supabase
-        .from("social_connections")
-        .upsert(
-          {
-            user_id: userId,
-            provider: "ayrshare",
-            platform: "all",
-            account_id: profileKey, // stored here so the unique key works
-            account_name: title,
-            access_token: profileKey, // not actually a token; placeholder for NOT NULL
-            profile_key: profileKey,
-          },
-          { onConflict: "user_id,platform,account_id" },
-        );
-      if (upsertError) {
-        console.error("Failed to persist ayrshare connection:", upsertError);
+        if (createResp.status === 403 || text.includes("business plan") || text.includes("Business Plan")) {
+          mode = "shared";
+        } else {
+          return new Response(
+            JSON.stringify({ error: `Ayrshare profile creation failed: ${text.slice(0, 300)}` }),
+            { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+        }
       }
     }
 
-    // 2. Generate a one-time JWT URL the user can open to connect their
-    //    social accounts through Ayrshare's UI.
-    const jwtResp = await fetch(`${AYRSHARE_BASE}/profiles/generateJWT`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ profileKey }),
-    });
-    if (!jwtResp.ok) {
-      const text = await jwtResp.text();
-      return new Response(
-        JSON.stringify({ error: `Ayrshare JWT failed: ${text.slice(0, 300)}` }),
-        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    if (mode === "business" && profileKey) {
+      // Per-user mode: generate a one-time JWT URL.
+      const jwtResp = await fetch(`${AYRSHARE_BASE}/profiles/generateJWT`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ profileKey }),
+      });
+      if (!jwtResp.ok) {
+        const text = await jwtResp.text();
+        return new Response(
+          JSON.stringify({ error: `Ayrshare JWT failed: ${text.slice(0, 300)}` }),
+          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+      const jwtData = await jwtResp.json();
+      connectUrl = jwtData.url;
+    } else {
+      // Shared mode: send the operator to Ayrshare's main dashboard
+      // where they connect the social accounts that EVERY end-user of
+      // this platform will publish to.
+      mode = "shared";
+      connectUrl = "https://app.ayrshare.com/social-accounts";
+    }
+
+    // Persist the umbrella row.
+    const accountIdForRow = profileKey || `shared-${userId.slice(0, 8)}`;
+    const { error: upsertError } = await supabase
+      .from("social_connections")
+      .upsert(
+        {
+          user_id: userId,
+          provider: "ayrshare",
+          platform: "all",
+          account_id: accountIdForRow,
+          account_name: mode === "business" ? "Ayrshare profile" : "Ayrshare (shared)",
+          access_token: apiKey, // we need *something* non-null; the publisher uses AYRSHARE_API_KEY from env anyway
+          profile_key: profileKey,
+          meta: { mode },
+        },
+        { onConflict: "user_id,platform,account_id" },
       );
+    if (upsertError) {
+      console.error("Failed to persist ayrshare connection:", upsertError);
     }
-    const jwtData = await jwtResp.json();
 
     return new Response(
       JSON.stringify({
-        connectUrl: jwtData.url,
+        connectUrl,
         profileKey,
+        mode,
+        notice: mode === "shared"
+          ? "Plan gratuit/Premium: tous les utilisateurs publient via votre compte Ayrshare. Pour une connexion par utilisateur, passez au Business Plan."
+          : undefined,
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );

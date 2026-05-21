@@ -7,6 +7,7 @@
 //
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
+import { generateImageUrl, getOpenRouterKey } from "../_shared/ai.ts";
 
 const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "*")
   .split(",")
@@ -25,12 +26,6 @@ function buildCorsHeaders(origin: string | null) {
     Vary: "Origin",
   };
 }
-
-const IMAGE_MODELS = [
-  "google/gemini-3-pro-image-preview",
-  "google/gemini-2.5-flash-image-preview",
-  "google/gemini-2.5-flash",
-];
 
 const MAX_PAYLOAD_BYTES = 64 * 1024;
 
@@ -56,10 +51,9 @@ serve(async (req) => {
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-  if (!supabaseUrl || !supabaseServiceKey || !LOVABLE_API_KEY) {
+  if (!supabaseUrl || !supabaseServiceKey || !getOpenRouterKey()) {
     return new Response(
-      JSON.stringify({ error: "Server misconfigured" }),
+      JSON.stringify({ error: "Server misconfigured (missing OPENROUTER_API_KEY?)" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }
@@ -165,40 +159,8 @@ RÈGLES CRITIQUES:
 - Le visuel doit immédiatement évoquer l'univers de "${sector}"
 - COHÉRENT avec la marque (les couleurs de la charte doivent être visibles)`;
 
-    let imageUrl: string | null = null;
-    let lastError: string | null = null;
-
-    for (const model of IMAGE_MODELS) {
-      try {
-        const resp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${LOVABLE_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model,
-            messages: [{ role: "user", content: [{ type: "text", text: imagePrompt }] }],
-            modalities: ["image", "text"],
-          }),
-        });
-        if (!resp.ok) {
-          lastError = `${model} ${resp.status}: ${(await resp.text()).slice(0, 200)}`;
-          console.error(lastError);
-          continue;
-        }
-        const data = await resp.json();
-        imageUrl =
-          data?.choices?.[0]?.message?.images?.[0]?.image_url?.url ||
-          data?.choices?.[0]?.message?.image_url?.url ||
-          null;
-        if (imageUrl) break;
-        lastError = `${model} returned no image`;
-      } catch (err) {
-        lastError = `${model} threw: ${err instanceof Error ? err.message : String(err)}`;
-        console.error(lastError);
-      }
-    }
+    const { imageUrl: rawImageUrl, lastError } = await generateImageUrl(imagePrompt);
+    let imageUrl: string | null = rawImageUrl;
 
     if (!imageUrl) {
       return new Response(

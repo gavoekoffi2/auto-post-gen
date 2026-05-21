@@ -381,10 +381,13 @@ function normalisePlatform(label: string): string {
 }
 
 // Ayrshare publish: a single API call posts to every social account
-// the user has linked through their Ayrshare profile. We pass the
-// requested platforms so the user can still scope a post to a subset.
+// the user has linked through their Ayrshare profile.
+//
+// When profileKey is null we're in "shared mode" (the operator's free
+// or Premium plan doesn't support per-user profiles) — we omit the
+// Profile-Key header and post via the API key owner's main account.
 async function publishViaAyrshare(
-  profileKey: string,
+  profileKey: string | null,
   content: string,
   imageUrl: string | null,
   platforms: string[],
@@ -398,16 +401,15 @@ async function publishViaAyrshare(
     }));
   }
   try {
-    const ayrPlatforms = platforms
-      .map(normalisePlatform)
-      .filter((p) => p !== "tiktok" || true); // Ayrshare supports TikTok
+    const ayrPlatforms = platforms.map(normalisePlatform);
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    };
+    if (profileKey) headers["Profile-Key"] = profileKey;
     const resp = await fetch("https://app.ayrshare.com/api/post", {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Profile-Key": profileKey,
-        "Content-Type": "application/json",
-      },
+      headers,
       body: JSON.stringify({
         post: content,
         platforms: ayrPlatforms,
@@ -481,9 +483,8 @@ async function publishPost(
   // direct OAuth. Ayrshare publishes to every platform in one call and
   // dispenses with managing tokens ourselves.
   const ayrshare = (connections || []).find(
-    (c: { provider?: string; profile_key?: string }) =>
-      c.provider === "ayrshare" && c.profile_key,
-  ) as { profile_key: string } | undefined;
+    (c: { provider?: string }) => c.provider === "ayrshare",
+  ) as { profile_key: string | null } | undefined;
 
   const platforms: string[] = post.platforms || [];
   const results: PublishResult[] = [];

@@ -38,6 +38,7 @@ type SocialConnectionRow = {
 type AyrshareStatus = {
   provisioned: boolean;
   platforms: string[];
+  mode?: "business" | "shared";
   error?: string;
 };
 
@@ -159,6 +160,7 @@ export function SocialMediaConnect({
       setAyrshare({
         provisioned: !!data?.provisioned,
         platforms: data?.platforms || [],
+        mode: data?.mode,
         error: data?.error,
       });
     } catch (err) {
@@ -181,6 +183,10 @@ export function SocialMediaConnect({
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
       if (!data?.connectUrl) throw new Error("Ayrshare n'a pas retourné de lien.");
+
+      if (data.notice) {
+        toast.info(data.notice);
+      }
 
       const popup = window.open(
         data.connectUrl,

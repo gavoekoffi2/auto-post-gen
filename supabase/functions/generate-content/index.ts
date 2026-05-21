@@ -1,8 +1,8 @@
 // deno-lint-ignore-file no-explicit-any
 //
-// generate-content: text-only generation. Image is generated separately
-// by the `generate-image` function so users see the text instantly and
-// the image is attached asynchronously.
+// generate-content: text-only generation via OpenRouter. Image is
+// generated separately by the `generate-image` function so users see
+// the text instantly and the image is attached asynchronously.
 //
 // Quality safeguards baked in:
 //   - The last 20 posts of the user are passed back to the LLM with
@@ -16,6 +16,7 @@
 //
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
+import { AIQuotaError, chatCompletion, getOpenRouterKey, getTextModel } from "../_shared/ai.ts";
 
 const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "*")
   .split(",")
@@ -505,10 +506,9 @@ serve(async (req) => {
       );
     }
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) {
+    if (!getOpenRouterKey()) {
       return new Response(
-        JSON.stringify({ error: "AI service not configured" }),
+        JSON.stringify({ error: "AI service not configured (OPENROUTER_API_KEY missing)" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
@@ -635,51 +635,52 @@ ${recentList || "(aucun pour l'instant)"}
 
 Réponds UNIQUEMENT avec le texte du post, sans titre ni explication, sans guillemets autour.`;
 
-    const textResponse = await fetch(
-      "https://ai.gateway.lovable.dev/v1/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${LOVABLE_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "google/gemini-2.5-flash",
-          // Higher temperature for more diversity across calls.
-          temperature: 0.95,
-          top_p: 0.95,
-          messages: [
-            { role: "system", content: systemPrompt },
-            {
-              role: "user",
-              content: prompt ||
-                `Génère un post pertinent avec l'angle "${angle.name}" pour mon audience.`,
-            },
-          ],
-        }),
-      },
-    );
-
-    if (!textResponse.ok) {
-      if (textResponse.status === 429) {
+    let generatedContent = "";
+    try {
+      const textResponse = await chatCompletion({
+        model: getTextModel(),
+        messages: [
+          { role: "system", content: systemPrompt },
+          {
+            role: "user",
+            content: prompt ||
+              `Génère un post pertinent avec l'angle "${angle.name}" pour mon audience.`,
+          },
+        ],
+        temperature: 0.95,
+        top_p: 0.95,
+      });
+      if (!textResponse.ok) {
+        if (textResponse.status === 429) {
+          return new Response(
+            JSON.stringify({ error: "Limite de taux atteinte, réessayez plus tard." }),
+            { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+        }
+        if (textResponse.status === 402) {
+          return new Response(
+            JSON.stringify({ error: "Crédit insuffisant, veuillez recharger votre compte." }),
+            { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+        }
+        console.error("OpenRouter text status:", textResponse.status);
+        throw new Error("OpenRouter error");
+      }
+      const textData = await textResponse.json();
+      generatedContent = textData?.choices?.[0]?.message?.content?.trim() || "";
+    } catch (err) {
+      if (err instanceof AIQuotaError) {
         return new Response(
-          JSON.stringify({ error: "Limite de taux atteinte, réessayez plus tard." }),
-          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          JSON.stringify({
+            error: err.code === "rate"
+              ? "Limite de taux atteinte, réessayez plus tard."
+              : "Crédit insuffisant.",
+          }),
+          { status: err.code === "rate" ? 429 : 402, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
-      if (textResponse.status === 402) {
-        return new Response(
-          JSON.stringify({ error: "Crédit insuffisant, veuillez recharger votre compte." }),
-          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-        );
-      }
-      console.error("AI Gateway text status:", textResponse.status);
-      throw new Error("AI Gateway error");
+      throw err;
     }
-
-    const textData = await textResponse.json();
-    const generatedContent =
-      textData?.choices?.[0]?.message?.content?.trim() || "";
 
     if (!generatedContent) {
       throw new Error("AI returned empty content");

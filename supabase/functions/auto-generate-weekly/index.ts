@@ -1,6 +1,7 @@
 // deno-lint-ignore-file no-explicit-any
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
+import { chatText, getOpenRouterKey, getTextModel } from "../_shared/ai.ts";
 
 const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "*")
   .split(",")
@@ -66,13 +67,12 @@ serve(async (req) => {
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
 
     if (!supabaseUrl || !supabaseServiceKey) {
       throw new Error("Supabase service credentials are not configured");
     }
-    if (!lovableApiKey) {
-      throw new Error("LOVABLE_API_KEY is not configured");
+    if (!getOpenRouterKey()) {
+      throw new Error("OPENROUTER_API_KEY is not configured");
     }
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
@@ -139,31 +139,19 @@ Le post doit:
 
 Génère uniquement le texte du post, sans titre ni explication.`;
 
-          const contentResponse = await fetch(
-            "https://ai.gateway.lovable.dev/v1/chat/completions",
-            {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${lovableApiKey}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                model: "google/gemini-2.5-flash",
-                messages: [{ role: "user", content: contentPrompt }],
-              }),
-            },
-          );
-
-          if (!contentResponse.ok) {
+          let generatedContent = "";
+          try {
+            generatedContent = await chatText({
+              model: getTextModel(),
+              messages: [{ role: "user", content: contentPrompt }],
+            });
+          } catch (genErr) {
             console.error(
-              `AI text generation failed for ${profile.id}: ${contentResponse.status}`,
+              `AI text generation failed for ${profile.id}:`,
+              genErr instanceof Error ? genErr.message : genErr,
             );
             continue;
           }
-
-          const contentData = await contentResponse.json();
-          const generatedContent =
-            contentData?.choices?.[0]?.message?.content || "";
 
           if (!generatedContent.trim()) {
             console.error(`Empty content returned for ${profile.id}`);
