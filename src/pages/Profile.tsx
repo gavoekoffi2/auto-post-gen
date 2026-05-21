@@ -62,7 +62,10 @@ export default function Profile() {
     brand_accent_color: "#F59E0B",
     brand_font: "Inter",
     image_style: "photorealistic",
+    style_examples: [] as Array<{ label: string; content: string }>,
   });
+  const [newStyleLabel, setNewStyleLabel] = useState("");
+  const [newStyleContent, setNewStyleContent] = useState("");
 
   useEffect(() => {
     loadProfile();
@@ -107,6 +110,9 @@ export default function Profile() {
           brand_accent_color: data.brand_accent_color || "#F59E0B",
           brand_font: data.brand_font || "Inter",
           image_style: data.image_style || "photorealistic",
+          style_examples: Array.isArray(data.style_examples)
+            ? (data.style_examples as Array<{ label: string; content: string }>)
+            : [],
         });
         setAutoPublishAcknowledged(!!data.auto_publish);
       }
@@ -145,6 +151,7 @@ export default function Profile() {
           brand_accent_color: profile.brand_accent_color,
           brand_font: profile.brand_font,
           image_style: profile.image_style,
+          style_examples: profile.style_examples,
         })
         .eq('id', session.user.id);
 
@@ -322,6 +329,84 @@ export default function Profile() {
                   value={profile.style_example}
                   onChange={(e) => setProfile({ ...profile, style_example: e.target.value })}
                 />
+                <p className="text-xs text-muted-foreground">
+                  Description courte du style. Pour des exemples concrets, utilisez la bibliothèque ci-dessous.
+                </p>
+              </div>
+            </Card>
+
+            <Card className="glass-card p-6">
+              <h2 className="text-lg font-semibold mb-2">Bibliothèque de styles d'écriture</h2>
+              <p className="text-xs text-muted-foreground mb-4">
+                Collez ici des posts que vous trouvez bien écrits (les vôtres ou ceux d'autres entreprises).
+                L'IA s'inspirera du ton, de la structure et du rythme de ces exemples pour générer vos
+                propres posts dans le même style. <strong>2 à 5 exemples</strong> suffisent.
+              </p>
+
+              {profile.style_examples.length > 0 && (
+                <div className="space-y-3 mb-4">
+                  {profile.style_examples.map((ex, idx) => (
+                    <div key={idx} className="rounded-lg border border-border/50 p-3 bg-muted/30">
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <p className="text-sm font-medium">{ex.label || `Exemple ${idx + 1}`}</p>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() =>
+                            setProfile({
+                              ...profile,
+                              style_examples: profile.style_examples.filter((_, i) => i !== idx),
+                            })
+                          }
+                        >
+                          Supprimer
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground whitespace-pre-wrap line-clamp-4">{ex.content}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="space-y-2 border-t border-border/50 pt-4">
+                <Label>Ajouter un exemple</Label>
+                <Input
+                  placeholder="Étiquette (ex: 'Post LinkedIn de Tim Cook' — optionnel)"
+                  value={newStyleLabel}
+                  onChange={(e) => setNewStyleLabel(e.target.value)}
+                  className="glass-card"
+                />
+                <Textarea
+                  placeholder="Collez ici le texte du post dont vous aimez le style..."
+                  className="glass-card min-h-[120px]"
+                  value={newStyleContent}
+                  onChange={(e) => setNewStyleContent(e.target.value)}
+                />
+                <Button
+                  size="sm"
+                  disabled={newStyleContent.trim().length < 20}
+                  onClick={() => {
+                    if (profile.style_examples.length >= 10) {
+                      toast.error("Maximum 10 exemples — supprimez-en un pour en ajouter un autre.");
+                      return;
+                    }
+                    setProfile({
+                      ...profile,
+                      style_examples: [
+                        ...profile.style_examples,
+                        { label: newStyleLabel.trim(), content: newStyleContent.trim() },
+                      ],
+                    });
+                    setNewStyleLabel("");
+                    setNewStyleContent("");
+                  }}
+                  className="bg-gradient-to-r from-primary to-secondary"
+                >
+                  Ajouter à la bibliothèque
+                </Button>
+                <p className="text-xs text-muted-foreground">
+                  {profile.style_examples.length} / 10 exemples. N'oubliez pas d'enregistrer le profil.
+                </p>
               </div>
             </Card>
 

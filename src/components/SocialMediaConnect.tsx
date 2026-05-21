@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { Check, ExternalLink, X } from "lucide-react";
+import { Check, ExternalLink, Sparkles, X, Zap } from "lucide-react";
 
 type SocialMediaConnectProps = {
   isOpen: boolean;
@@ -27,10 +27,18 @@ type PlatformId = "instagram" | "facebook" | "twitter" | "linkedin" | "tiktok";
 
 type SocialConnectionRow = {
   id: string;
-  platform: PlatformId;
+  platform: string;
+  provider?: string | null;
   account_username: string | null;
   account_name: string | null;
   token_expires_at: string | null;
+  profile_key?: string | null;
+};
+
+type AyrshareStatus = {
+  provisioned: boolean;
+  platforms: string[];
+  error?: string;
 };
 
 interface PlatformDef {
@@ -120,37 +128,114 @@ export function SocialMediaConnect({
 }: SocialMediaConnectProps) {
   const [loading, setLoading] = useState(false);
   const [connections, setConnections] = useState<SocialConnectionRow[]>([]);
+  const [ayrshare, setAyrshare] = useState<AyrshareStatus | null>(null);
+  const [ayrLoading, setAyrLoading] = useState(false);
 
   const connectionsByPlatform = useMemo(() => {
     const map: Partial<Record<PlatformId, SocialConnectionRow>> = {};
     for (const c of connections) {
-      map[c.platform] = c;
+      if ((c.provider ?? "direct") === "direct") {
+        map[c.platform as PlatformId] = c;
+      }
     }
     return map;
   }, [connections]);
 
-  useEffect(() => {
-    if (!isOpen) return;
-    const load = async () => {
-      try {
-        const { data, error } = await supabase
-          .from("social_connections")
-          .select("id, platform, account_username, account_name, token_expires_at");
-        if (error) throw error;
-        setConnections((data as SocialConnectionRow[]) || []);
-      } catch (err) {
-        console.error("Failed to load social connections", err);
-      }
-    };
-    load();
-  }, [isOpen, userProfile?.id]);
-
   const refreshConnections = async () => {
     const { data } = await supabase
       .from("social_connections")
-      .select("id, platform, account_username, account_name, token_expires_at");
+      .select("id, platform, provider, account_username, account_name, token_expires_at, profile_key");
     setConnections((data as SocialConnectionRow[]) || []);
     onUpdate();
+  };
+
+  const refreshAyrshare = async () => {
+    try {
+      const { data, error } = await supabase.functions.invoke("ayrshare-status", {});
+      if (error) {
+        setAyrshare({ provisioned: false, platforms: [] });
+        return;
+      }
+      setAyrshare({
+        provisioned: !!data?.provisioned,
+        platforms: data?.platforms || [],
+        error: data?.error,
+      });
+    } catch (err) {
+      console.error("ayrshare-status threw:", err);
+      setAyrshare({ provisioned: false, platforms: [] });
+    }
+  };
+
+  useEffect(() => {
+    if (!isOpen) return;
+    refreshConnections();
+    refreshAyrshare();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, userProfile?.id]);
+
+  const handleAyrshareConnect = async () => {
+    setAyrLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("ayrshare-connect", {});
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      if (!data?.connectUrl) throw new Error("Ayrshare n'a pas retourné de lien.");
+
+      const popup = window.open(
+        data.connectUrl,
+        "ayrshare_connect",
+        "width=720,height=820",
+      );
+      if (!popup) {
+        toast.error("Le navigateur a bloqué la fenêtre. Autorisez les popups.");
+        return;
+      }
+      toast.info("Autorisez vos comptes dans la fenêtre Ayrshare. La liste se rafraîchira automatiquement.");
+
+      const interval = window.setInterval(() => {
+        try {
+          if (popup.closed) {
+            window.clearInterval(interval);
+            window.setTimeout(() => {
+              refreshConnections();
+              refreshAyrshare();
+            }, 800);
+          }
+        } catch (_) {
+          window.clearInterval(interval);
+        }
+      }, 500);
+      window.setTimeout(() => window.clearInterval(interval), 10 * 60 * 1000);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Erreur Ayrshare";
+      toast.error(message);
+    } finally {
+      setAyrLoading(false);
+    }
+  };
+
+  const handleAyrshareDisconnect = async () => {
+    if (!confirm("Déconnecter Ayrshare ? Vos comptes Ayrshare ne seront plus utilisés pour publier.")) {
+      return;
+    }
+    setAyrLoading(true);
+    try {
+      const { error } = await supabase
+        .from("social_connections")
+        .delete()
+        .eq("user_id", userProfile?.id || "")
+        .eq("provider", "ayrshare");
+      if (error) throw error;
+      toast.success("Ayrshare déconnecté");
+      await refreshConnections();
+      setAyrshare({ provisioned: false, platforms: [] });
+    } catch (err) {
+      toast.error("Erreur lors de la déconnexion");
+      console.error(err);
+    } finally {
+      setAyrLoading(false);
+    }
   };
 
   const handleConnect = async (platform: PlatformDef) => {
@@ -237,12 +322,82 @@ export function SocialMediaConnect({
         <DialogHeader>
           <DialogTitle>Gérer vos réseaux sociaux</DialogTitle>
           <DialogDescription>
-            Connectez vos comptes via OAuth officiel. La publication automatique
-            n'est possible que pour les comptes effectivement reliés ici.
+            Deux options: connexion rapide via Ayrshare (un seul clic pour tout)
+            ou OAuth officiel plateforme par plateforme.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 mt-4">
+        {/* Ayrshare quick-connect (recommended for MVP) */}
+        <Card className="glass-card p-4 mt-4 border-primary/40">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <span className="inline-flex items-center justify-center w-10 h-10 rounded-lg bg-gradient-to-br from-primary to-secondary">
+                <Zap className="w-5 h-5 text-white" />
+              </span>
+              <div className="flex-1">
+                <div className="flex items-center gap-2">
+                  <p className="font-medium">Connexion rapide (Ayrshare)</p>
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary">
+                    Recommandé
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1 max-w-md">
+                  Un seul clic pour relier Instagram, Facebook, LinkedIn, X, TikTok,
+                  YouTube, Pinterest, Threads, Bluesky en une seule fois. Ayrshare
+                  gère toutes les autorisations à votre place.
+                </p>
+                {ayrshare?.provisioned && ayrshare.platforms.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {ayrshare.platforms.map((p) => (
+                      <span
+                        key={p}
+                        className="text-xs px-2 py-0.5 rounded-full bg-green-500/10 text-green-500 inline-flex items-center gap-1"
+                      >
+                        <Check className="w-3 h-3" />
+                        {p}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {ayrshare?.error && (
+                  <p className="text-xs text-destructive mt-2">
+                    Erreur Ayrshare: {ayrshare.error}
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="flex flex-col gap-2 shrink-0">
+              <Button
+                size="sm"
+                onClick={handleAyrshareConnect}
+                disabled={ayrLoading}
+                className="bg-gradient-to-r from-primary to-secondary"
+              >
+                <Sparkles className="w-4 h-4 mr-1" />
+                {ayrshare?.provisioned ? "Ajouter / gérer" : "Connecter en 1 clic"}
+              </Button>
+              {ayrshare?.provisioned && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleAyrshareDisconnect}
+                  disabled={ayrLoading}
+                  className="glass-card"
+                >
+                  Déconnecter
+                </Button>
+              )}
+            </div>
+          </div>
+        </Card>
+
+        <div className="my-4 flex items-center gap-3">
+          <div className="flex-1 h-px bg-border" />
+          <span className="text-xs text-muted-foreground">ou OAuth officiel par plateforme</span>
+          <div className="flex-1 h-px bg-border" />
+        </div>
+
+        <div className="space-y-4">
           {PLATFORMS.map((platform) => {
             const connection = connectionsByPlatform[platform.id];
             const isConnected = !!connection;

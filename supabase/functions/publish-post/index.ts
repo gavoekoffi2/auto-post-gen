@@ -380,6 +380,71 @@ function normalisePlatform(label: string): string {
   return map[label] || label.toLowerCase();
 }
 
+// Ayrshare publish: a single API call posts to every social account
+// the user has linked through their Ayrshare profile. We pass the
+// requested platforms so the user can still scope a post to a subset.
+async function publishViaAyrshare(
+  profileKey: string,
+  content: string,
+  imageUrl: string | null,
+  platforms: string[],
+): Promise<PublishResult[]> {
+  const apiKey = Deno.env.get("AYRSHARE_API_KEY");
+  if (!apiKey) {
+    return platforms.map((p) => ({
+      platform: p,
+      status: "error" as const,
+      message: "AYRSHARE_API_KEY not configured",
+    }));
+  }
+  try {
+    const ayrPlatforms = platforms
+      .map(normalisePlatform)
+      .filter((p) => p !== "tiktok" || true); // Ayrshare supports TikTok
+    const resp = await fetch("https://app.ayrshare.com/api/post", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Profile-Key": profileKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        post: content,
+        platforms: ayrPlatforms,
+        mediaUrls: imageUrl ? [imageUrl] : undefined,
+      }),
+    });
+    if (!resp.ok) {
+      const text = await resp.text();
+      return ayrPlatforms.map((p) => ({
+        platform: p,
+        status: "error" as const,
+        message: `Ayrshare ${resp.status}: ${text.slice(0, 200)}`,
+      }));
+    }
+    const data = await resp.json();
+    const postIds = data?.postIds || {};
+    const errors = data?.errors || [];
+    return ayrPlatforms.map((p) => {
+      const err = errors.find((e: any) => e.platform === p);
+      if (err) {
+        return { platform: p, status: "error" as const, message: err.message || "Ayrshare error" };
+      }
+      return {
+        platform: p,
+        status: "ok" as const,
+        externalId: postIds[p] || data?.id,
+      };
+    });
+  } catch (err) {
+    return platforms.map((p) => ({
+      platform: p,
+      status: "error" as const,
+      message: err instanceof Error ? err.message : String(err),
+    }));
+  }
+}
+
 async function publishPost(
   supabase: ReturnType<typeof createClient>,
   postId: string,
@@ -412,6 +477,14 @@ async function publishPost(
     .select("*")
     .eq("user_id", post.user_id);
 
+  // If the user has an Ayrshare umbrella connection, prefer that over
+  // direct OAuth. Ayrshare publishes to every platform in one call and
+  // dispenses with managing tokens ourselves.
+  const ayrshare = (connections || []).find(
+    (c: { provider?: string; profile_key?: string }) =>
+      c.provider === "ayrshare" && c.profile_key,
+  ) as { profile_key: string } | undefined;
+
   const platforms: string[] = post.platforms || [];
   const results: PublishResult[] = [];
 
@@ -423,27 +496,40 @@ async function publishPost(
       stableImageUrl = await ensurePublicImage(supabase, stableImageUrl, post.user_id);
     } catch (err) {
       console.error("ensurePublicImage failed:", err);
-      // Fall back to the original URL.
       stableImageUrl = post.image_url || null;
     }
   }
 
-  for (const rawPlatform of platforms) {
-    const platform = normalisePlatform(rawPlatform);
-    const publisher = PUBLISHERS[platform];
-    if (!publisher) {
-      results.push({ platform, status: "error", message: "Unknown platform" });
-      continue;
+  if (ayrshare) {
+    // One-shot publish via Ayrshare for every requested platform.
+    const ayrResults = await publishViaAyrshare(
+      ayrshare.profile_key,
+      post.content,
+      stableImageUrl,
+      platforms,
+    );
+    results.push(...ayrResults);
+  } else {
+    // Direct-OAuth fallback: one API call per platform, one connection
+    // row required per platform.
+    for (const rawPlatform of platforms) {
+      const platform = normalisePlatform(rawPlatform);
+      const publisher = PUBLISHERS[platform];
+      if (!publisher) {
+        results.push({ platform, status: "error", message: "Unknown platform" });
+        continue;
+      }
+      const connection = (connections || []).find(
+        (c: { platform: string; provider?: string }) =>
+          c.platform === platform && (c.provider ?? "direct") === "direct",
+      ) as SocialConnection | undefined;
+      if (!connection) {
+        results.push({ platform, status: "not_connected" });
+        continue;
+      }
+      const result = await publisher(connection, post.content, stableImageUrl);
+      results.push(result);
     }
-    const connection = (connections || []).find(
-      (c: { platform: string }) => c.platform === platform,
-    ) as SocialConnection | undefined;
-    if (!connection) {
-      results.push({ platform, status: "not_connected" });
-      continue;
-    }
-    const result = await publisher(connection, post.content, stableImageUrl);
-    results.push(result);
   }
 
   const anyOk = results.some((r) => r.status === "ok");

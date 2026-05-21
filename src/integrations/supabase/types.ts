@@ -87,6 +87,8 @@ export type Database = {
           id: string
           meta: Json | null
           platform: string
+          profile_key: string | null
+          provider: string | null
           refresh_token: string | null
           scopes: string[] | null
           token_expires_at: string | null
@@ -102,6 +104,8 @@ export type Database = {
           id?: string
           meta?: Json | null
           platform: string
+          profile_key?: string | null
+          provider?: string | null
           refresh_token?: string | null
           scopes?: string[] | null
           token_expires_at?: string | null
@@ -117,6 +121,8 @@ export type Database = {
           id?: string
           meta?: Json | null
           platform?: string
+          profile_key?: string | null
+          provider?: string | null
           refresh_token?: string | null
           scopes?: string[] | null
           token_expires_at?: string | null
@@ -179,6 +185,7 @@ export type Database = {
           preferred_days: string[] | null
           sector: string
           style_example: string | null
+          style_examples: Json | null
           tiktok_username: string | null
           tone: string
           twitter_username: string | null
@@ -211,6 +218,7 @@ export type Database = {
           preferred_days?: string[] | null
           sector: string
           style_example?: string | null
+          style_examples?: Json | null
           tiktok_username?: string | null
           tone: string
           twitter_username?: string | null
@@ -243,6 +251,7 @@ export type Database = {
           preferred_days?: string[] | null
           sector?: string
           style_example?: string | null
+          style_examples?: Json | null
           tiktok_username?: string | null
           tone?: string
           twitter_username?: string | null

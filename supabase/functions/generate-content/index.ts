@@ -66,6 +66,7 @@ interface UserPreferences {
   tone?: string;
   styleExample?: string;
   style_example?: string;
+  style_examples?: Array<{ label?: string; content: string }>;
   company_name?: string;
   description?: string;
   image_people_type?: string;
@@ -529,6 +530,23 @@ serve(async (req) => {
     const styleExample =
       userPreferences?.styleExample || userPreferences?.style_example || "";
 
+    // Style examples library: up to 3 picked at random per call, fed to
+    // the LLM as concrete reference posts to imitate in tone/rhythm/
+    // structure (but never copy verbatim).
+    const allStyleExamples = (userPreferences?.style_examples || [])
+      .filter((s) => s && typeof s.content === "string" && s.content.trim().length > 20);
+    const shuffledStyles = [...allStyleExamples].sort(() => Math.random() - 0.5).slice(0, 3);
+    const styleLibraryBlock = shuffledStyles.length
+      ? `\nBIBLIOTHÈQUE DE STYLES À IMITER (ton, rythme, structure — JAMAIS le contenu):\n${
+          shuffledStyles
+            .map(
+              (ex, i) =>
+                `--- Exemple ${i + 1}${ex.label ? ` (${ex.label})` : ""} ---\n${ex.content.slice(0, 800)}`,
+            )
+            .join("\n")
+        }\n--- Fin des exemples ---\n`
+      : "";
+
     // Pull the last 20 posts of this user so the model knows what to
     // avoid repeating.
     const { data: recentPosts } = await supabase
@@ -579,6 +597,7 @@ ${description ? `Description détaillée de l'activité: ${description}` : ""}
 Types de contenu privilégiés: ${contentTypes.join(", ")}
 Tonalité: ${tone}
 ${styleExample ? `Style préféré: ${styleExample}` : ""}
+${styleLibraryBlock}
 ═══════════════════════════════════════════════════════════
 
 RÈGLE D'OR — PERTINENCE MÉTIER:

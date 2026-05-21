@@ -36,6 +36,7 @@ environment variables in the Supabase dashboard before deploying.
 | `LOVABLE_API_KEY` | `generate-content`, `generate-image`, `auto-generate-weekly` | AI Gateway access |
 | `TAVILY_API_KEY` *(optional upgrade)* | `generate-content` | Premium web-search source. The function already uses **free** Google News RSS + DuckDuckGo by default — Tavily just adds higher quality results when configured. Free tier 1k queries/month at https://tavily.com. |
 | `BRAVE_SEARCH_API_KEY` *(optional upgrade)* | `generate-content` | Same idea as Tavily: optional premium search source. Free tier 2k queries/month at https://brave.com/search/api. |
+| `AYRSHARE_API_KEY` *(strongly recommended for MVP)* | `ayrshare-connect`, `ayrshare-status`, `publish-post` | When set, users see a "Connexion rapide" button that handles all social platforms (IG, FB, LinkedIn, X, TikTok, YouTube, Pinterest, Threads, Bluesky) through one Ayrshare account. No Meta App Review, no LinkedIn approval, no TikTok partnership — Ayrshare has done all that. Free trial (100 posts/month, 1 profile) at https://app.ayrshare.com. Paid tiers from $49/month. |
 | `SUPABASE_URL` | all server functions | (auto-provided) |
 | `SUPABASE_SERVICE_ROLE_KEY` | all server functions | (auto-provided) |
 | `CRON_SECRET` | `auto-generate-weekly`, `send-validation-email`, `publish-post` (cron) | Shared secret between Supabase Scheduler and the functions. Also used as the OAuth state HMAC secret if `OAUTH_STATE_SECRET` is unset. |
