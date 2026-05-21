@@ -229,6 +229,7 @@ ${styleExample ? `- Inspire-toi du style fourni` : ""}`;
     }
 
     let imageUrl: string | null = null;
+    let imageWarning: string | null = null;
 
     if (
       userPreferences?.use_custom_images &&
@@ -249,47 +250,82 @@ INSTRUCTIONS CRITIQUES:
 - Couleurs vibrantes et attrayantes
 - Format adapté pour réseaux sociaux (carré ou portrait)`;
 
-      try {
-        const imageResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${LOVABLE_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: "google/gemini-3-pro-image-preview",
-            messages: [
-              {
-                role: "user",
-                content: [{ type: "text", text: imagePrompt }],
-              },
-            ],
-            modalities: ["image", "text"],
-          }),
-        });
+      // Try a sequence of image-capable models. Lovable Gateway routes
+      // change over time and individual models can become temporarily
+      // unavailable; falling back keeps the user experience consistent.
+      const imageModels = [
+        "google/gemini-3-pro-image-preview",
+        "google/gemini-2.5-flash-image-preview",
+        "google/gemini-2.5-flash",
+      ];
 
-        if (imageResponse.ok) {
+      let lastError: string | null = null;
+
+      for (const model of imageModels) {
+        try {
+          const imageResponse = await fetch(
+            "https://ai.gateway.lovable.dev/v1/chat/completions",
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${LOVABLE_API_KEY}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                model,
+                messages: [
+                  { role: "user", content: [{ type: "text", text: imagePrompt }] },
+                ],
+                modalities: ["image", "text"],
+              }),
+            },
+          );
+
+          if (!imageResponse.ok) {
+            const txt = await imageResponse.text();
+            lastError = `${model} ${imageResponse.status}: ${txt.slice(0, 200)}`;
+            console.error("Image model failed:", lastError);
+            continue;
+          }
+
           const imageData = await imageResponse.json();
-          imageUrl =
+          const candidate =
             imageData?.choices?.[0]?.message?.images?.[0]?.image_url?.url ||
             imageData?.choices?.[0]?.message?.image_url?.url ||
             null;
-        } else {
-          console.error("Primary image model failed:", imageResponse.status);
-        }
 
-        // If the gateway returned a base64 data URL, transcode it to a
-        // file in user-assets so the DB never holds megabytes of base64
-        // and so downstream publishing (Instagram, LinkedIn) can fetch
-        // a stable URL.
-        if (imageUrl && imageUrl.startsWith("data:")) {
-          try {
+          if (candidate) {
+            imageUrl = candidate;
+            break;
+          }
+          lastError = `${model} returned no image`;
+          console.error("Image extraction failed for", model, "keys:", Object.keys(imageData?.choices?.[0]?.message ?? {}));
+        } catch (modelErr) {
+          lastError = `${model} threw: ${modelErr instanceof Error ? modelErr.message : String(modelErr)}`;
+          console.error(lastError);
+        }
+      }
+
+      if (!imageUrl) {
+        imageWarning = lastError || "Image non générée";
+      }
+
+      // Whether the result is a data: URL or an externally-hosted URL,
+      // re-host it in our own storage. AI gateways routinely return URLs
+      // that expire within hours; without rehosting the dashboard would
+      // show broken images after a short time and Instagram/LinkedIn
+      // publishing would fail at the worst possible moment.
+      if (imageUrl && !imageUrl.startsWith(supabaseUrl)) {
+        try {
+          let bytes: Uint8Array;
+          let contentType = "image/png";
+
+          if (imageUrl.startsWith("data:")) {
             const commaIdx = imageUrl.indexOf(",");
             const meta = imageUrl.slice(5, commaIdx);
             const payload = imageUrl.slice(commaIdx + 1);
-            const contentType = (meta.split(";")[0] || "image/png").trim();
+            contentType = (meta.split(";")[0] || "image/png").trim();
             const isBase64 = meta.includes(";base64");
-            let bytes: Uint8Array;
             if (isBase64) {
               const bin = atob(payload);
               bytes = new Uint8Array(bin.length);
@@ -297,23 +333,32 @@ INSTRUCTIONS CRITIQUES:
             } else {
               bytes = new TextEncoder().encode(decodeURIComponent(payload));
             }
-            const ext = (contentType.split("/")[1] || "png").split(";")[0];
-            const path = `${userId}/ai-${Date.now()}.${ext}`;
-            const { error: upErr } = await supabase.storage
-              .from("user-assets")
-              .upload(path, bytes, { contentType, upsert: true });
-            if (upErr) {
-              console.error("Failed to rehost data URL:", upErr);
-            } else {
-              const { data } = supabase.storage.from("user-assets").getPublicUrl(path);
-              imageUrl = data.publicUrl;
+          } else {
+            const fetched = await fetch(imageUrl);
+            if (!fetched.ok) {
+              throw new Error(`Image fetch ${fetched.status}`);
             }
-          } catch (rehostErr) {
-            console.error("data URL rehost threw:", rehostErr);
+            const ab = await fetched.arrayBuffer();
+            bytes = new Uint8Array(ab);
+            contentType = fetched.headers.get("content-type") || "image/png";
           }
+
+          const ext = (contentType.split("/")[1] || "png").split(";")[0].replace(/[^a-z0-9]/gi, "") || "png";
+          const path = `${userId}/ai-${Date.now()}.${ext}`;
+          const { error: upErr } = await supabase.storage
+            .from("user-assets")
+            .upload(path, bytes, { contentType, upsert: true });
+          if (upErr) {
+            console.error("Failed to rehost image:", upErr);
+            // Keep the original URL — it may still work short-term.
+          } else {
+            const { data } = supabase.storage.from("user-assets").getPublicUrl(path);
+            imageUrl = data.publicUrl;
+          }
+        } catch (rehostErr) {
+          console.error("Image rehost threw:", rehostErr);
+          // Keep the original URL as a best-effort fallback.
         }
-      } catch (imgError) {
-        console.error("Image generation threw:", imgError);
       }
     }
 
@@ -324,7 +369,7 @@ INSTRUCTIONS CRITIQUES:
     });
 
     return new Response(
-      JSON.stringify({ content: generatedContent, imageUrl }),
+      JSON.stringify({ content: generatedContent, imageUrl, imageWarning }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (error) {

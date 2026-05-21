@@ -308,7 +308,17 @@ export default function Dashboard() {
       };
 
       setPosts([transformedPost, ...posts]);
-      toast.success("Contenu et image générés avec succès !");
+      if (data.imageUrl) {
+        toast.success("Contenu et image générés avec succès !");
+      } else {
+        // Surface the warning instead of pretending everything succeeded
+        // — without this the user thinks the image just hasn't loaded yet.
+        toast.warning(
+          data.imageWarning
+            ? `Texte généré, image indisponible (${data.imageWarning}). Vous pouvez régénérer ou utiliser votre bibliothèque d'images.`
+            : "Texte généré, image indisponible. Vous pouvez régénérer.",
+        );
+      }
     } catch (error: unknown) {
       toast.dismiss(loadingToast);
       console.error('Generation error:', error);
@@ -517,8 +527,24 @@ export default function Dashboard() {
                       </div>
                      )}
                      {post.image_url && (
-                       <div className="mb-4 rounded-lg overflow-hidden">
-                         <img src={post.image_url} alt="Post illustration" className="w-full h-48 object-cover" />
+                       <div className="mb-4 rounded-lg overflow-hidden bg-muted">
+                         <img
+                           src={post.image_url}
+                           alt="Post illustration"
+                           className="w-full h-48 object-cover"
+                           onError={(e) => {
+                             // Mark the image as broken so the layout
+                             // collapses instead of showing a blank
+                             // grey rectangle.
+                             const img = e.currentTarget;
+                             img.style.display = "none";
+                             const wrap = img.parentElement;
+                             if (wrap) {
+                               wrap.innerHTML =
+                                 '<div class="flex items-center justify-center h-48 text-xs text-muted-foreground">Image indisponible</div>';
+                             }
+                           }}
+                         />
                        </div>
                      )}
                      <p className="text-sm text-muted-foreground mb-4 line-clamp-2">{post.content}</p>
@@ -680,10 +706,19 @@ export default function Dashboard() {
                   {/* Post image */}
                   {previewPost.image_url && (
                     <div className="w-full">
-                      <img 
-                        src={previewPost.image_url} 
+                      <img
+                        src={previewPost.image_url}
                         alt="Post illustration"
                         className="w-full h-auto object-cover"
+                        onError={(e) => {
+                          const img = e.currentTarget;
+                          img.style.display = "none";
+                          const wrap = img.parentElement;
+                          if (wrap) {
+                            wrap.innerHTML =
+                              '<div class="py-12 text-center text-xs text-muted-foreground">Image indisponible</div>';
+                          }
+                        }}
                       />
                     </div>
                   )}
@@ -754,7 +789,22 @@ export default function Dashboard() {
               {editingPost.image_url && (
                 <div>
                   <Label>Image générée</Label>
-                  <img src={editingPost.image_url} alt="Post" className="w-full rounded-lg mt-2" />
+                  <img
+                    src={editingPost.image_url}
+                    alt="Post"
+                    className="w-full rounded-lg mt-2"
+                    onError={(e) => {
+                      const img = e.currentTarget;
+                      img.style.display = "none";
+                      const wrap = img.parentElement;
+                      if (wrap) {
+                        wrap.insertAdjacentHTML(
+                          "beforeend",
+                          '<p class="text-xs text-muted-foreground mt-2">Image indisponible</p>',
+                        );
+                      }
+                    }}
+                  />
                 </div>
               )}
               <div>
