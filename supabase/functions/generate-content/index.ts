@@ -1,4 +1,19 @@
 // deno-lint-ignore-file no-explicit-any
+//
+// generate-content: text-only generation. Image is generated separately
+// by the `generate-image` function so users see the text instantly and
+// the image is attached asynchronously.
+//
+// Quality safeguards baked in:
+//   - The last 20 posts of the user are passed back to the LLM with
+//     explicit instruction to avoid repetition.
+//   - A pool of 12 post structures is randomised per call so the AI
+//     can't fall into a single template.
+//   - If TAVILY_API_KEY or BRAVE_SEARCH_API_KEY is configured, the
+//     function does a quick web search on the user's sector and feeds
+//     the top 3 results into the prompt as inspiration. This is
+//     fail-soft: any search error is logged and ignored.
+//
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 
@@ -8,11 +23,11 @@ const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "*")
   .filter(Boolean);
 
 function buildCorsHeaders(origin: string | null) {
-  const allowed =
-    allowedOrigins.includes("*") || (origin && allowedOrigins.includes(origin));
+  const wildcard = allowedOrigins.includes("*");
+  const allowed = wildcard || (origin && allowedOrigins.includes(origin));
   return {
     "Access-Control-Allow-Origin":
-      allowed && origin ? origin : allowedOrigins[0] === "*" ? "*" : allowedOrigins[0],
+      allowed && origin ? origin : wildcard ? "*" : allowedOrigins[0],
     "Access-Control-Allow-Headers":
       "authorization, x-client-info, apikey, content-type",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -20,10 +35,29 @@ function buildCorsHeaders(origin: string | null) {
   };
 }
 
-// Per-user rate limit: how many AI generations are allowed per rolling window.
-const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000; // 1 hour
-const RATE_LIMIT_MAX = 20; // 20 generations / hour / user
+// Per-user rate limit
+const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
+const RATE_LIMIT_MAX = 20;
 const MAX_PAYLOAD_BYTES = 64 * 1024;
+
+// Pool of post structures. One is picked at random per generation to
+// prevent the AI from settling into a single template across calls.
+const POST_ANGLES = [
+  { name: "astuce_pratique", brief: "Astuce concrète et applicable immédiatement" },
+  { name: "erreur_courante", brief: "Erreur courante à éviter dans le secteur" },
+  { name: "statistique_choc", brief: "Statistique surprenante avec interprétation" },
+  { name: "histoire_courte", brief: "Mini-histoire ou anecdote inspirante" },
+  { name: "question_provocante", brief: "Question qui remet en cause une idée reçue" },
+  { name: "checklist", brief: "Mini-checklist en 3-5 points" },
+  { name: "comparaison", brief: "Avant/Après ou A vs B percutant" },
+  { name: "tendance_actu", brief: "Tendance ou actualité récente du secteur" },
+  { name: "experience_perso", brief: "Leçon tirée d'une expérience vécue" },
+  { name: "mythe_realite", brief: "Démolir un mythe répandu" },
+  { name: "outil_methode", brief: "Présenter un outil ou méthode utile" },
+  { name: "vision_futur", brief: "Vision sur l'évolution du secteur" },
+];
+
+const POST_TYPES = ["value", "value", "value", "value", "promo"] as const; // 80% value, 20% promo
 
 interface UserPreferences {
   sector?: string;
@@ -39,13 +73,101 @@ interface UserPreferences {
   custom_image_urls?: string[];
 }
 
+interface WebResult {
+  title: string;
+  snippet: string;
+  url: string;
+}
+
+async function tavilySearch(query: string): Promise<WebResult[]> {
+  const apiKey = Deno.env.get("TAVILY_API_KEY");
+  if (!apiKey) return [];
+  try {
+    const resp = await fetch("https://api.tavily.com/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        api_key: apiKey,
+        query,
+        max_results: 5,
+        search_depth: "basic",
+        include_answer: false,
+      }),
+    });
+    if (!resp.ok) {
+      console.error("Tavily error:", resp.status);
+      return [];
+    }
+    const data = await resp.json();
+    return (data.results || [])
+      .slice(0, 5)
+      .map((r: any) => ({
+        title: String(r.title || "").slice(0, 200),
+        snippet: String(r.content || "").slice(0, 400),
+        url: String(r.url || ""),
+      }));
+  } catch (err) {
+    console.error("Tavily threw:", err);
+    return [];
+  }
+}
+
+async function braveSearch(query: string): Promise<WebResult[]> {
+  const apiKey = Deno.env.get("BRAVE_SEARCH_API_KEY");
+  if (!apiKey) return [];
+  try {
+    const url = new URL("https://api.search.brave.com/res/v1/web/search");
+    url.searchParams.set("q", query);
+    url.searchParams.set("count", "5");
+    const resp = await fetch(url.toString(), {
+      headers: {
+        Accept: "application/json",
+        "X-Subscription-Token": apiKey,
+      },
+    });
+    if (!resp.ok) {
+      console.error("Brave error:", resp.status);
+      return [];
+    }
+    const data = await resp.json();
+    const items = data?.web?.results || [];
+    return items.slice(0, 5).map((r: any) => ({
+      title: String(r.title || "").slice(0, 200),
+      snippet: String(r.description || "").slice(0, 400),
+      url: String(r.url || ""),
+    }));
+  } catch (err) {
+    console.error("Brave threw:", err);
+    return [];
+  }
+}
+
+async function researchInspiration(
+  sector: string,
+  companyName: string,
+): Promise<WebResult[]> {
+  const queries = [
+    `tendances ${sector} ${new Date().getFullYear()}`,
+    `conseils ${sector}`,
+  ];
+  // Try Tavily first, fall back to Brave. Both fail soft.
+  for (const q of queries) {
+    const results = await tavilySearch(q);
+    if (results.length > 0) return results;
+  }
+  for (const q of queries) {
+    const results = await braveSearch(q);
+    if (results.length > 0) return results;
+  }
+  return [];
+}
+
 serve(async (req) => {
   const corsHeaders = buildCorsHeaders(req.headers.get("origin"));
 
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
-
   if (req.method !== "POST") {
     return new Response(
       JSON.stringify({ error: "Method not allowed" }),
@@ -53,7 +175,6 @@ serve(async (req) => {
     );
   }
 
-  // Reject oversized payloads early.
   const contentLength = parseInt(req.headers.get("content-length") || "0", 10);
   if (contentLength > MAX_PAYLOAD_BYTES) {
     return new Response(
@@ -62,9 +183,7 @@ serve(async (req) => {
     );
   }
 
-  // Authenticate the caller.
-  const authHeader = req.headers.get("Authorization") || "";
-  const jwt = authHeader.replace(/^Bearer\s+/i, "");
+  const jwt = req.headers.get("Authorization")?.replace(/^Bearer\s+/i, "") || "";
   if (!jwt) {
     return new Response(
       JSON.stringify({ error: "Not authenticated" }),
@@ -103,7 +222,7 @@ serve(async (req) => {
     const prompt = typeof body.prompt === "string" ? body.prompt.slice(0, 2000) : "";
     const userPreferences: UserPreferences = body.userPreferences || {};
 
-    // Enforce rate limit.
+    // Rate limit
     const since = new Date(Date.now() - RATE_LIMIT_WINDOW_MS).toISOString();
     const { count: usageCount } = await supabase
       .from("generation_usage")
@@ -129,19 +248,13 @@ serve(async (req) => {
       );
     }
 
-    const postTypes = ["value", "value", "value", "promo"] as const;
-    const postType = postTypes[Math.floor(Math.random() * postTypes.length)];
+    const postType = POST_TYPES[Math.floor(Math.random() * POST_TYPES.length)];
+    const angle = POST_ANGLES[Math.floor(Math.random() * POST_ANGLES.length)];
 
     const companyName =
       userPreferences?.company_name?.trim() ||
       userPreferences?.description?.split(" ").slice(0, 3).join(" ") ||
       "notre entreprise";
-
-    const peopleType = userPreferences?.image_people_type || "african";
-    const peopleDescription =
-      peopleType === "african"
-        ? "des personnes africaines/noires ultra-réalistes"
-        : "des personnes caucasiennes/blanches ultra-réalistes";
 
     const sector = userPreferences?.sector || "Business";
     const tone = userPreferences?.tone || "Professionnel";
@@ -152,56 +265,93 @@ serve(async (req) => {
     const styleExample =
       userPreferences?.styleExample || userPreferences?.style_example || "";
 
+    // Pull the last 20 posts of this user so the model knows what to
+    // avoid repeating.
+    const { data: recentPosts } = await supabase
+      .from("posts")
+      .select("content")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(20);
+
+    const recentList = (recentPosts || [])
+      .map((p: { content: string }, i: number) => `${i + 1}. ${p.content.slice(0, 200)}`)
+      .join("\n");
+
+    // Optional web inspiration. Fails soft, never blocks generation.
+    const webResults = await researchInspiration(sector, companyName);
+    const inspiration = webResults.length
+      ? `\nINSPIRATION RÉCENTE DU WEB (utilise comme matière brute, NE PAS recopier):\n${
+          webResults
+            .slice(0, 3)
+            .map((r, i) => `${i + 1}. ${r.title} — ${r.snippet}`)
+            .join("\n")
+        }\n`
+      : "";
+
     const systemPrompt = `Tu es un expert en création de contenu pour les réseaux sociaux, spécialisé dans le secteur: ${sector}.
 
 PROFIL DU CLIENT:
 Nom de l'entreprise: ${companyName}
-Secteur d'activité: ${sector}
-Type de contenu: ${contentTypes.join(", ")}
-Tonalité souhaitée: ${tone}
-${styleExample ? `Style de contenu préféré: ${styleExample}` : ""}
+Secteur: ${sector}
+Types de contenu privilégiés: ${contentTypes.join(", ")}
+Tonalité: ${tone}
+${styleExample ? `Style préféré: ${styleExample}` : ""}
 
-TYPE DE POST À GÉNÉRER: ${postType === "value" ? "CONTENU DE VALEUR (conseil, astuce, expertise)" : "POST PROMOTIONNEL (présentation services/produits)"}
+TYPE DE POST: ${postType === "value" ? "VALEUR (expertise, conseil)" : "PROMOTIONNEL (services/produits)"}
+ANGLE IMPOSÉ: ${angle.name} — ${angle.brief}
 
-${
-  postType === "value"
-    ? `INSTRUCTIONS POUR CONTENU DE VALEUR:
-- Partage une ASTUCE CONCRÈTE ou un CONSEIL PRATIQUE dans le domaine: ${sector}
-- Positionne ${companyName} comme EXPERT du secteur
-- Apporte une VRAIE VALEUR au lecteur
-- Mentionne ${companyName} subtilement en fin de post
-- NE FAIS PAS de promotion directe`
-    : `INSTRUCTIONS POUR POST PROMOTIONNEL:
+${postType === "value"
+  ? `INSTRUCTIONS CONTENU DE VALEUR:
+- Suis STRICTEMENT l'angle "${angle.name}": ${angle.brief}
+- Apporte une VRAIE valeur concrète au lecteur du secteur ${sector}
+- Positionne ${companyName} comme expert sans promotion directe
+- Mentionne ${companyName} subtilement en fin (1 phrase max)`
+  : `INSTRUCTIONS POST PROMOTIONNEL:
 - Présente les services/produits de ${companyName} de manière engageante
-- Mets en avant les bénéfices pour le client
-- Inclus un appel à l'action clair`
-}
-
+- Mets en avant un bénéfice client concret
+- Termine par un appel à l'action clair`}
+${inspiration}
 RÈGLES CRITIQUES:
 - Génère un post UNIQUE et ORIGINAL
-- Contenu 100% en FRANÇAIS
-- Utilise 2-4 émojis pertinents
-- Respecte la tonalité: ${tone}
-- ÉCRIS DIRECTEMENT "${companyName}" dans le post, JAMAIS entre crochets
-- Structure COURTE: paragraphes de 1-2 lignes max
-- Longueur idéale: 60-100 mots
-- Termine par une question engageante
-${styleExample ? `- Inspire-toi du style fourni` : ""}`;
+- 100% en FRANÇAIS
+- 2-4 émojis pertinents (PAS en début ni en fin de phrase clé)
+- Tonalité: ${tone}
+- ÉCRIS "${companyName}" tel quel, JAMAIS entre crochets ni en placeholder
+- Paragraphes courts (1-2 lignes)
+- Longueur: 60-100 mots
+- Termine par une question engageante OU un appel à l'action
+${styleExample ? "- Inspire-toi du style fourni sans le copier" : ""}
 
-    const textResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
+POSTS DÉJÀ GÉNÉRÉS POUR CE CLIENT (NE répète AUCUN sujet, AUCUN angle, AUCUNE accroche):
+${recentList || "(aucun pour l'instant)"}
+
+Réponds UNIQUEMENT avec le texte du post, sans titre ni explication, sans guillemets autour.`;
+
+    const textResponse = await fetch(
+      "https://ai.gateway.lovable.dev/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${LOVABLE_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "google/gemini-2.5-flash",
+          // Higher temperature for more diversity across calls.
+          temperature: 0.95,
+          top_p: 0.95,
+          messages: [
+            { role: "system", content: systemPrompt },
+            {
+              role: "user",
+              content: prompt ||
+                `Génère un post pertinent avec l'angle "${angle.name}" pour mon audience.`,
+            },
+          ],
+        }),
       },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: prompt || "Génère un post pertinent pour mon audience" },
-        ],
-      }),
-    });
+    );
 
     if (!textResponse.ok) {
       if (textResponse.status === 429) {
@@ -228,140 +378,7 @@ ${styleExample ? `- Inspire-toi du style fourni` : ""}`;
       throw new Error("AI returned empty content");
     }
 
-    let imageUrl: string | null = null;
-    let imageWarning: string | null = null;
-
-    if (
-      userPreferences?.use_custom_images &&
-      Array.isArray(userPreferences?.custom_image_urls) &&
-      userPreferences.custom_image_urls.length > 0
-    ) {
-      const idx = Math.floor(Math.random() * userPreferences.custom_image_urls.length);
-      imageUrl = userPreferences.custom_image_urls[idx];
-    } else {
-      const imagePrompt = `Crée une image ultra-réaliste et professionnelle pour ce post: "${generatedContent.substring(0, 150)}..."
-
-INSTRUCTIONS CRITIQUES:
-- Inclure ${peopleDescription} dans l'image (personnages réalistes, expressions naturelles)
-- Les personnes doivent être en situation professionnelle liée au contexte du post
-- Image 100% visuelle SANS TEXTE (aucun mot, lettre ou chiffre)
-- Style photo-réaliste, moderne et professionnel
-- Éclairage naturel de haute qualité
-- Couleurs vibrantes et attrayantes
-- Format adapté pour réseaux sociaux (carré ou portrait)`;
-
-      // Try a sequence of image-capable models. Lovable Gateway routes
-      // change over time and individual models can become temporarily
-      // unavailable; falling back keeps the user experience consistent.
-      const imageModels = [
-        "google/gemini-3-pro-image-preview",
-        "google/gemini-2.5-flash-image-preview",
-        "google/gemini-2.5-flash",
-      ];
-
-      let lastError: string | null = null;
-
-      for (const model of imageModels) {
-        try {
-          const imageResponse = await fetch(
-            "https://ai.gateway.lovable.dev/v1/chat/completions",
-            {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${LOVABLE_API_KEY}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                model,
-                messages: [
-                  { role: "user", content: [{ type: "text", text: imagePrompt }] },
-                ],
-                modalities: ["image", "text"],
-              }),
-            },
-          );
-
-          if (!imageResponse.ok) {
-            const txt = await imageResponse.text();
-            lastError = `${model} ${imageResponse.status}: ${txt.slice(0, 200)}`;
-            console.error("Image model failed:", lastError);
-            continue;
-          }
-
-          const imageData = await imageResponse.json();
-          const candidate =
-            imageData?.choices?.[0]?.message?.images?.[0]?.image_url?.url ||
-            imageData?.choices?.[0]?.message?.image_url?.url ||
-            null;
-
-          if (candidate) {
-            imageUrl = candidate;
-            break;
-          }
-          lastError = `${model} returned no image`;
-          console.error("Image extraction failed for", model, "keys:", Object.keys(imageData?.choices?.[0]?.message ?? {}));
-        } catch (modelErr) {
-          lastError = `${model} threw: ${modelErr instanceof Error ? modelErr.message : String(modelErr)}`;
-          console.error(lastError);
-        }
-      }
-
-      if (!imageUrl) {
-        imageWarning = lastError || "Image non générée";
-      }
-
-      // Whether the result is a data: URL or an externally-hosted URL,
-      // re-host it in our own storage. AI gateways routinely return URLs
-      // that expire within hours; without rehosting the dashboard would
-      // show broken images after a short time and Instagram/LinkedIn
-      // publishing would fail at the worst possible moment.
-      if (imageUrl && !imageUrl.startsWith(supabaseUrl)) {
-        try {
-          let bytes: Uint8Array;
-          let contentType = "image/png";
-
-          if (imageUrl.startsWith("data:")) {
-            const commaIdx = imageUrl.indexOf(",");
-            const meta = imageUrl.slice(5, commaIdx);
-            const payload = imageUrl.slice(commaIdx + 1);
-            contentType = (meta.split(";")[0] || "image/png").trim();
-            const isBase64 = meta.includes(";base64");
-            if (isBase64) {
-              const bin = atob(payload);
-              bytes = new Uint8Array(bin.length);
-              for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-            } else {
-              bytes = new TextEncoder().encode(decodeURIComponent(payload));
-            }
-          } else {
-            const fetched = await fetch(imageUrl);
-            if (!fetched.ok) {
-              throw new Error(`Image fetch ${fetched.status}`);
-            }
-            const ab = await fetched.arrayBuffer();
-            bytes = new Uint8Array(ab);
-            contentType = fetched.headers.get("content-type") || "image/png";
-          }
-
-          const ext = (contentType.split("/")[1] || "png").split(";")[0].replace(/[^a-z0-9]/gi, "") || "png";
-          const path = `${userId}/ai-${Date.now()}.${ext}`;
-          const { error: upErr } = await supabase.storage
-            .from("user-assets")
-            .upload(path, bytes, { contentType, upsert: true });
-          if (upErr) {
-            console.error("Failed to rehost image:", upErr);
-            // Keep the original URL — it may still work short-term.
-          } else {
-            const { data } = supabase.storage.from("user-assets").getPublicUrl(path);
-            imageUrl = data.publicUrl;
-          }
-        } catch (rehostErr) {
-          console.error("Image rehost threw:", rehostErr);
-          // Keep the original URL as a best-effort fallback.
-        }
-      }
-    }
-
+    // Record success
     await supabase.from("generation_usage").insert({
       user_id: userId,
       function_name: "generate-content",
@@ -369,7 +386,12 @@ INSTRUCTIONS CRITIQUES:
     });
 
     return new Response(
-      JSON.stringify({ content: generatedContent, imageUrl, imageWarning }),
+      JSON.stringify({
+        content: generatedContent,
+        angle: angle.name,
+        postType,
+        usedWebInspiration: webResults.length > 0,
+      }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (error) {

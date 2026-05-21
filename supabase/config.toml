@@ -6,6 +6,12 @@ project_id = "prdpzatcevbqeqnaocdl"
 [functions.generate-content]
 verify_jwt = true
 
+# generate-image is the asynchronous companion to generate-content; the
+# dashboard calls it right after text generation so the image can stream
+# in while the user already sees the post.
+[functions.generate-image]
+verify_jwt = true
+
 # auto-generate-weekly is a cron-only entry point. Protected by CRON_SECRET.
 [functions.auto-generate-weekly]
 verify_jwt = false

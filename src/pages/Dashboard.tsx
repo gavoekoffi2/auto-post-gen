@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Calendar, TrendingUp, CheckCircle, Clock, Edit2, Sparkles, Settings, Share2, Calendar as CalendarIcon, Trash2, User, BarChart3, Send } from "lucide-react";
+import { Calendar, TrendingUp, CheckCircle, Clock, Edit2, Sparkles, Settings, Share2, Calendar as CalendarIcon, Trash2, User, BarChart3, Send, ImageIcon, Loader2 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -50,6 +50,7 @@ export default function Dashboard() {
   const [generating, setGenerating] = useState(false);
   const [publishingId, setPublishingId] = useState<string | null>(null);
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
+  const [generatingImageIds, setGeneratingImageIds] = useState<Set<string>>(new Set());
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
 
   useEffect(() => {
@@ -244,7 +245,7 @@ export default function Dashboard() {
   const handleGenerate = async () => {
     if (generating) return;
     setGenerating(true);
-    const loadingToast = toast.loading("Génération de contenu et d'image en cours...");
+    const loadingToast = toast.loading("Génération du texte en cours...");
     try {
       const { data, error } = await supabase.functions.invoke('generate-content', {
         body: {
@@ -259,7 +260,6 @@ export default function Dashboard() {
         console.error('Edge function error:', error);
         throw error;
       }
-
       if (!data || !data.content) {
         throw new Error('Aucun contenu reçu de la génération');
       }
@@ -272,11 +272,13 @@ export default function Dashboard() {
           ? userProfile.platforms
           : ['Instagram'];
 
+      // 1. Save the post immediately with text only so the user sees
+      //    the result without waiting for the slow image generation.
       const newPost = {
         user_id: session.user.id,
         title: "Nouveau contenu IA",
         content: data.content,
-        image_url: data.imageUrl || null,
+        image_url: null,
         status: 'pending' as const,
         platforms: defaultPlatforms,
       };
@@ -287,10 +289,7 @@ export default function Dashboard() {
         .select()
         .single();
 
-      if (saveError) {
-        console.error('Save error:', saveError);
-        throw saveError;
-      }
+      if (saveError) throw saveError;
 
       const status: PostStatus =
         savedPost.status === "validated" ||
@@ -307,18 +306,47 @@ export default function Dashboard() {
         status,
       };
 
-      setPosts([transformedPost, ...posts]);
-      if (data.imageUrl) {
-        toast.success("Contenu et image générés avec succès !");
-      } else {
-        // Surface the warning instead of pretending everything succeeded
-        // — without this the user thinks the image just hasn't loaded yet.
-        toast.warning(
-          data.imageWarning
-            ? `Texte généré, image indisponible (${data.imageWarning}). Vous pouvez régénérer ou utiliser votre bibliothèque d'images.`
-            : "Texte généré, image indisponible. Vous pouvez régénérer.",
-        );
-      }
+      setPosts((prev) => [transformedPost, ...prev]);
+      toast.success("Texte généré. L'image est en cours...");
+
+      // 2. Kick off image generation asynchronously. Don't block the UI.
+      //    Mark the post as generating-image so the card can show a
+      //    spinner placeholder instead of nothing.
+      setGeneratingImageIds((prev) => new Set(prev).add(savedPost.id));
+      void (async () => {
+        try {
+          const { data: imgData, error: imgError } = await supabase.functions.invoke(
+            'generate-image',
+            {
+              body: {
+                postContent: data.content,
+                peopleType: userProfile?.image_people_type || 'african',
+                postId: savedPost.id,
+              },
+            },
+          );
+          if (imgError) throw imgError;
+          if (imgData?.imageUrl) {
+            setPosts((prev) =>
+              prev.map((p) =>
+                p.id === savedPost.id ? { ...p, image_url: imgData.imageUrl } : p,
+              ),
+            );
+            toast.success("Image ajoutée au post");
+          }
+        } catch (imgErr) {
+          console.error('Image gen failed:', imgErr);
+          toast.error(
+            "Image non générée. Cliquez sur 'Régénérer image' sur le post pour réessayer.",
+          );
+        } finally {
+          setGeneratingImageIds((prev) => {
+            const next = new Set(prev);
+            next.delete(savedPost.id);
+            return next;
+          });
+        }
+      })();
     } catch (error: unknown) {
       toast.dismiss(loadingToast);
       console.error('Generation error:', error);
@@ -326,6 +354,41 @@ export default function Dashboard() {
       toast.error(message);
     } finally {
       setGenerating(false);
+    }
+  };
+
+  const handleRegenerateImage = async (post: Post) => {
+    if (generatingImageIds.has(post.id)) return;
+    setGeneratingImageIds((prev) => new Set(prev).add(post.id));
+    const loadingToast = toast.loading("Génération d'image...");
+    try {
+      const { data, error } = await supabase.functions.invoke('generate-image', {
+        body: {
+          postContent: post.content,
+          peopleType: userProfile?.image_people_type || 'african',
+          postId: post.id,
+        },
+      });
+      toast.dismiss(loadingToast);
+      if (error) throw error;
+      if (data?.imageUrl) {
+        setPosts((prev) =>
+          prev.map((p) => (p.id === post.id ? { ...p, image_url: data.imageUrl } : p)),
+        );
+        toast.success("Image générée");
+      } else {
+        toast.error("Image non générée");
+      }
+    } catch (err) {
+      toast.dismiss(loadingToast);
+      const message = err instanceof Error ? err.message : "Erreur de génération d'image";
+      toast.error(message);
+    } finally {
+      setGeneratingImageIds((prev) => {
+        const next = new Set(prev);
+        next.delete(post.id);
+        return next;
+      });
     }
   };
 
@@ -526,16 +589,13 @@ export default function Dashboard() {
                         )}
                       </div>
                      )}
-                     {post.image_url && (
+                     {post.image_url ? (
                        <div className="mb-4 rounded-lg overflow-hidden bg-muted">
                          <img
                            src={post.image_url}
                            alt="Post illustration"
                            className="w-full h-48 object-cover"
                            onError={(e) => {
-                             // Mark the image as broken so the layout
-                             // collapses instead of showing a blank
-                             // grey rectangle.
                              const img = e.currentTarget;
                              img.style.display = "none";
                              const wrap = img.parentElement;
@@ -545,6 +605,25 @@ export default function Dashboard() {
                              }
                            }}
                          />
+                       </div>
+                     ) : generatingImageIds.has(post.id) ? (
+                       <div className="mb-4 rounded-lg overflow-hidden bg-muted h-48 flex items-center justify-center">
+                         <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                           <Loader2 className="w-6 h-6 animate-spin" />
+                           <span className="text-xs">Image en cours de génération...</span>
+                         </div>
+                       </div>
+                     ) : (
+                       <div className="mb-4 rounded-lg overflow-hidden bg-muted h-48 flex items-center justify-center">
+                         <Button
+                           variant="ghost"
+                           size="sm"
+                           className="flex flex-col items-center gap-2 h-auto py-3 text-muted-foreground"
+                           onClick={() => handleRegenerateImage(post)}
+                         >
+                           <ImageIcon className="w-6 h-6" />
+                           <span className="text-xs">Générer l'image</span>
+                         </Button>
                        </div>
                      )}
                      <p className="text-sm text-muted-foreground mb-4 line-clamp-2">{post.content}</p>
