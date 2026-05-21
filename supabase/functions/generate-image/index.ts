@@ -85,7 +85,6 @@ serve(async (req) => {
   try {
     const body = await req.json().catch(() => ({}));
     const postContent: string = (body?.postContent || "").toString().slice(0, 2000);
-    const peopleType: string = body?.peopleType || "african";
     const postId: string | null = body?.postId || null;
 
     if (!postContent) {
@@ -95,20 +94,76 @@ serve(async (req) => {
       );
     }
 
+    // Pull the user's brand preferences from their profile so every
+    // image respects the same visual identity.
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select(
+        "image_people_type, image_style, brand_primary_color, brand_secondary_color, brand_accent_color, brand_font, sector, description, company_name",
+      )
+      .eq("id", userId)
+      .maybeSingle();
+
+    const peopleType = (body?.peopleType as string) || profile?.image_people_type || "african";
+    const imageStyle: string = profile?.image_style || "photorealistic";
+    const primary = profile?.brand_primary_color || "#8B5CF6";
+    const secondary = profile?.brand_secondary_color || "#3B82F6";
+    const accent = profile?.brand_accent_color || "#F59E0B";
+    const font = profile?.brand_font || "Inter";
+    const sector = profile?.sector || "";
+    const description = profile?.description || "";
+
     const peopleDescription = peopleType === "african"
-      ? "des personnes africaines/noires ultra-réalistes"
-      : "des personnes caucasiennes/blanches ultra-réalistes";
+      ? "des personnes africaines/noires"
+      : "des personnes caucasiennes/blanches";
 
-    const imagePrompt = `Crée une image ultra-réaliste et professionnelle pour ce post: "${postContent.substring(0, 200)}..."
+    // Translate the image_style enum into a concrete artistic brief.
+    const STYLE_BRIEFS: Record<string, string> = {
+      photorealistic:
+        "Style PHOTO ULTRA-RÉALISTE: photographie professionnelle, éclairage naturel cinématique, profondeur de champ, détails de peau et de matière réalistes, qualité magazine.",
+      illustration:
+        "Style ILLUSTRATION numérique soignée: rendu dessiné moderne, traits propres, palette de couleurs harmonieuse, ambiance chaleureuse, NE PAS ressembler à une photo.",
+      minimalist:
+        "Style MINIMALISTE et abstrait: composition épurée, beaucoup d'espace négatif, formes géométriques simples, 2-3 couleurs maximum, élégance sobre.",
+      corporate:
+        "Style CORPORATE professionnel sobre: ambiance bureau premium, lignes nettes, ton institutionnel, palette restreinte, sérieux et crédibilité.",
+      flat_design:
+        "Style FLAT DESIGN vectoriel: aplats de couleurs, formes géométriques, pas d'ombres réalistes, design vectoriel propre type illustration UI moderne.",
+    };
+    const styleBrief = STYLE_BRIEFS[imageStyle] || STYLE_BRIEFS.photorealistic;
 
-INSTRUCTIONS CRITIQUES:
-- Inclure ${peopleDescription} dans l'image (personnages réalistes, expressions naturelles)
-- Les personnes doivent être en situation professionnelle liée au contexte du post
-- Image 100% visuelle SANS TEXTE (aucun mot, lettre ou chiffre)
-- Style photo-réaliste, moderne et professionnel
-- Éclairage naturel de haute qualité
-- Couleurs vibrantes et attrayantes
-- Format adapté pour réseaux sociaux (carré ou portrait)`;
+    const includesPeople = imageStyle === "photorealistic" || imageStyle === "illustration";
+
+    const imagePrompt = `Crée un visuel professionnel pour ce post sur les réseaux sociaux: "${postContent.substring(0, 200)}..."
+
+CONTEXTE BUSINESS:
+- Entreprise: ${profile?.company_name || "Entreprise"}
+- Secteur: ${sector}
+${description ? `- Activité: ${description.slice(0, 200)}` : ""}
+
+STYLE VISUEL (À RESPECTER STRICTEMENT):
+${styleBrief}
+
+CHARTE GRAPHIQUE (IMPÉRATIF):
+- Couleur principale dominante: ${primary}
+- Couleur secondaire d'appui: ${secondary}
+- Couleur d'accent (touche): ${accent}
+- L'image doit visuellement évoquer ces 3 couleurs (en arrière-plan, accessoires, vêtements, éléments graphiques)
+${font ? `- Si du texte doit apparaître, utilise une typographie type "${font}"` : ""}
+
+${includesPeople
+  ? `PERSONNAGES:
+- Inclure ${peopleDescription} en situation professionnelle pertinente au secteur "${sector}"
+- Expressions naturelles, attitudes engagées et crédibles
+- Tenue cohérente avec le secteur`
+  : `PAS DE PERSONNAGES — composition centrée sur des objets, formes ou métaphores visuelles liées au secteur.`}
+
+RÈGLES CRITIQUES:
+- AUCUN texte, mot, lettre ou chiffre visible dans l'image
+- Format carré 1:1 ou portrait 4:5 (réseaux sociaux)
+- Qualité finale haute, contraste maîtrisé
+- Le visuel doit immédiatement évoquer l'univers de "${sector}"
+- COHÉRENT avec la marque (les couleurs de la charte doivent être visibles)`;
 
     let imageUrl: string | null = null;
     let lastError: string | null = null;

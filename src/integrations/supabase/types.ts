@@ -154,7 +154,12 @@ export type Database = {
       }
       profiles: {
         Row: {
+          activity_keywords: string[] | null
           auto_publish: boolean | null
+          brand_accent_color: string | null
+          brand_font: string | null
+          brand_primary_color: string | null
+          brand_secondary_color: string | null
           company_name: string | null
           connected_platforms: string[] | null
           content_types: string[]
@@ -165,6 +170,7 @@ export type Database = {
           facebook_username: string | null
           id: string
           image_people_type: string | null
+          image_style: string | null
           instagram_username: string | null
           linkedin_username: string | null
           logo_url: string | null
@@ -180,7 +186,12 @@ export type Database = {
           use_custom_images: boolean | null
         }
         Insert: {
+          activity_keywords?: string[] | null
           auto_publish?: boolean | null
+          brand_accent_color?: string | null
+          brand_font?: string | null
+          brand_primary_color?: string | null
+          brand_secondary_color?: string | null
           company_name?: string | null
           connected_platforms?: string[] | null
           content_types: string[]
@@ -191,6 +202,7 @@ export type Database = {
           facebook_username?: string | null
           id: string
           image_people_type?: string | null
+          image_style?: string | null
           instagram_username?: string | null
           linkedin_username?: string | null
           logo_url?: string | null
@@ -206,7 +218,12 @@ export type Database = {
           use_custom_images?: boolean | null
         }
         Update: {
+          activity_keywords?: string[] | null
           auto_publish?: boolean | null
+          brand_accent_color?: string | null
+          brand_font?: string | null
+          brand_primary_color?: string | null
+          brand_secondary_color?: string | null
           company_name?: string | null
           connected_platforms?: string[] | null
           content_types?: string[]
@@ -217,6 +234,7 @@ export type Database = {
           facebook_username?: string | null
           id?: string
           image_people_type?: string | null
+          image_style?: string | null
           instagram_username?: string | null
           linkedin_username?: string | null
           logo_url?: string | null

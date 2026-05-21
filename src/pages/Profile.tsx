@@ -57,6 +57,11 @@ export default function Profile() {
     image_people_type: "african",
     use_custom_images: false,
     custom_image_urls: [] as string[],
+    brand_primary_color: "#8B5CF6",
+    brand_secondary_color: "#3B82F6",
+    brand_accent_color: "#F59E0B",
+    brand_font: "Inter",
+    image_style: "photorealistic",
   });
 
   useEffect(() => {
@@ -97,6 +102,11 @@ export default function Profile() {
           image_people_type: data.image_people_type || "african",
           use_custom_images: data.use_custom_images || false,
           custom_image_urls: data.custom_image_urls || [],
+          brand_primary_color: data.brand_primary_color || "#8B5CF6",
+          brand_secondary_color: data.brand_secondary_color || "#3B82F6",
+          brand_accent_color: data.brand_accent_color || "#F59E0B",
+          brand_font: data.brand_font || "Inter",
+          image_style: data.image_style || "photorealistic",
         });
         setAutoPublishAcknowledged(!!data.auto_publish);
       }
@@ -130,6 +140,11 @@ export default function Profile() {
           image_people_type: profile.image_people_type,
           use_custom_images: profile.use_custom_images,
           custom_image_urls: profile.custom_image_urls,
+          brand_primary_color: profile.brand_primary_color,
+          brand_secondary_color: profile.brand_secondary_color,
+          brand_accent_color: profile.brand_accent_color,
+          brand_font: profile.brand_font,
+          image_style: profile.image_style,
         })
         .eq('id', session.user.id);
 
@@ -390,15 +405,125 @@ export default function Profile() {
           {/* Images Tab */}
           <TabsContent value="images" className="space-y-6">
             <Card className="glass-card p-6">
-              <h2 className="text-lg font-semibold mb-4">Préférences d'images IA</h2>
-              
+              <h2 className="text-lg font-semibold mb-4">Identité visuelle (charte graphique)</h2>
+              <p className="text-xs text-muted-foreground mb-4">
+                Ces réglages sont envoyés au générateur d'images pour que toutes vos visuels
+                respectent l'identité de votre marque (couleurs et typographie).
+              </p>
+
+              <div className="grid md:grid-cols-3 gap-4 mb-6">
+                <div className="space-y-2">
+                  <Label>Couleur principale</Label>
+                  <div className="flex gap-2">
+                    <input
+                      type="color"
+                      className="w-12 h-10 rounded border border-border bg-transparent cursor-pointer"
+                      value={profile.brand_primary_color}
+                      onChange={(e) => setProfile({ ...profile, brand_primary_color: e.target.value })}
+                    />
+                    <Input
+                      value={profile.brand_primary_color}
+                      onChange={(e) => setProfile({ ...profile, brand_primary_color: e.target.value })}
+                      placeholder="#8B5CF6"
+                      className="glass-card font-mono"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Couleur secondaire</Label>
+                  <div className="flex gap-2">
+                    <input
+                      type="color"
+                      className="w-12 h-10 rounded border border-border bg-transparent cursor-pointer"
+                      value={profile.brand_secondary_color}
+                      onChange={(e) => setProfile({ ...profile, brand_secondary_color: e.target.value })}
+                    />
+                    <Input
+                      value={profile.brand_secondary_color}
+                      onChange={(e) => setProfile({ ...profile, brand_secondary_color: e.target.value })}
+                      placeholder="#3B82F6"
+                      className="glass-card font-mono"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Couleur d'accent</Label>
+                  <div className="flex gap-2">
+                    <input
+                      type="color"
+                      className="w-12 h-10 rounded border border-border bg-transparent cursor-pointer"
+                      value={profile.brand_accent_color}
+                      onChange={(e) => setProfile({ ...profile, brand_accent_color: e.target.value })}
+                    />
+                    <Input
+                      value={profile.brand_accent_color}
+                      onChange={(e) => setProfile({ ...profile, brand_accent_color: e.target.value })}
+                      placeholder="#F59E0B"
+                      className="glass-card font-mono"
+                    />
+                  </div>
+                </div>
+              </div>
+
               <div className="space-y-2">
+                <Label>Typographie</Label>
+                <Select
+                  value={profile.brand_font}
+                  onValueChange={(v) => setProfile({ ...profile, brand_font: v })}
+                >
+                  <SelectTrigger className="glass-card w-full md:w-72">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Inter">Inter (moderne, neutre)</SelectItem>
+                    <SelectItem value="Poppins">Poppins (rond, amical)</SelectItem>
+                    <SelectItem value="Montserrat">Montserrat (élégant)</SelectItem>
+                    <SelectItem value="Playfair Display">Playfair Display (luxe)</SelectItem>
+                    <SelectItem value="Roboto">Roboto (tech)</SelectItem>
+                    <SelectItem value="Lato">Lato (humain)</SelectItem>
+                    <SelectItem value="Bebas Neue">Bebas Neue (impact)</SelectItem>
+                    <SelectItem value="Oswald">Oswald (presse, sport)</SelectItem>
+                    <SelectItem value="Merriweather">Merriweather (lecture)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Police de référence utilisée par l'IA quand des éléments typographiques apparaissent dans l'image.
+                </p>
+              </div>
+            </Card>
+
+            <Card className="glass-card p-6">
+              <h2 className="text-lg font-semibold mb-4">Style visuel des images IA</h2>
+
+              <div className="space-y-2 mb-6">
+                <Label>Style d'image</Label>
+                <Select
+                  value={profile.image_style}
+                  onValueChange={(v) => setProfile({ ...profile, image_style: v })}
+                >
+                  <SelectTrigger className="glass-card w-full md:w-72">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="photorealistic">📸 Photo ultra-réaliste</SelectItem>
+                    <SelectItem value="illustration">🎨 Illustration / dessin</SelectItem>
+                    <SelectItem value="minimalist">⬜ Minimaliste / abstrait</SelectItem>
+                    <SelectItem value="corporate">🏢 Corporate / professionnel sobre</SelectItem>
+                    <SelectItem value="flat_design">🟦 Flat design / vectoriel</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Définit l'apparence de toutes les images générées par l'IA pour vos posts.
+                </p>
+              </div>
+
+              <div className="space-y-2 pt-4 border-t border-border/50">
                 <Label>Type de personnes dans les images générées</Label>
-                <Select 
-                  value={profile.image_people_type} 
+                <Select
+                  value={profile.image_people_type}
                   onValueChange={(v) => setProfile({ ...profile, image_people_type: v })}
                 >
-                  <SelectTrigger className="glass-card w-full md:w-64">
+                  <SelectTrigger className="glass-card w-full md:w-72">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -407,7 +532,7 @@ export default function Profile() {
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
-                  Les images générées par IA incluront principalement ce type de personnes
+                  Pertinent uniquement pour les styles photo et illustration.
                 </p>
               </div>
             </Card>

@@ -300,16 +300,70 @@ async function braveSearch(query: string): Promise<WebResult[]> {
   }
 }
 
+// Pull the meaningful nouns out of a free-form description so we can
+// build targeted search queries. We strip stopwords, punctuation and
+// short tokens. This keeps the queries focused on the actual activity
+// (e.g. "boulangerie artisanale Paris bio") rather than the generic
+// sector label (e.g. just "food").
+const FR_STOPWORDS = new Set([
+  "je", "tu", "il", "elle", "on", "nous", "vous", "ils", "elles",
+  "le", "la", "les", "un", "une", "des", "de", "du", "au", "aux",
+  "et", "ou", "mais", "donc", "or", "ni", "car", "que", "qui", "quoi",
+  "dont", "ce", "cet", "cette", "ces", "mon", "ma", "mes", "ton", "ta",
+  "tes", "son", "sa", "ses", "notre", "votre", "leur", "leurs", "se",
+  "pour", "par", "avec", "sans", "sur", "sous", "dans", "chez", "vers",
+  "est", "sont", "suis", "es", "ai", "as", "ont", "avons", "avez",
+  "été", "étant", "fait", "faire", "fais", "très", "plus", "moins",
+  "aussi", "encore", "déjà", "ne", "pas", "non", "oui", "si", "alors",
+  "comme", "mêmes", "mais", "the", "and", "for", "with",
+]);
+
+function extractKeywords(text: string, max = 6): string[] {
+  if (!text) return [];
+  const tokens = text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "") // strip accents for stopword match
+    .replace(/[^a-z0-9àâäéèêëîïôöùûüç \-]/gi, " ")
+    .split(/\s+/)
+    .filter((t) => t.length >= 3 && !FR_STOPWORDS.has(t));
+  // Frequency count, but for short descriptions we just keep order.
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const t of tokens) {
+    if (!seen.has(t)) {
+      seen.add(t);
+      out.push(t);
+    }
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
 async function researchInspiration(
   sector: string,
-  _companyName: string,
+  companyName: string,
+  description: string,
 ): Promise<WebResult[]> {
   const year = new Date().getFullYear();
-  const queries = [
-    `tendances ${sector} ${year}`,
-    `actualité ${sector}`,
-    `conseils ${sector}`,
-  ];
+  const keywords = extractKeywords(description, 6);
+  const keywordPhrase = keywords.slice(0, 4).join(" ");
+
+  // Build queries ordered from MOST SPECIFIC to least specific so the
+  // top results come from the user's actual activity, not their broad
+  // sector. The LLM is told to ignore irrelevant snippets, so over-
+  // fetching is safer than under-fetching.
+  const queries: string[] = [];
+  if (keywordPhrase) {
+    queries.push(`${keywordPhrase} ${year}`);
+    queries.push(`${keywordPhrase} conseils`);
+    queries.push(`actualité ${keywordPhrase}`);
+  }
+  if (companyName && companyName !== "notre entreprise") {
+    queries.push(`${companyName} ${sector}`);
+  }
+  queries.push(`tendances ${sector} ${year}`);
+  queries.push(`actualité ${sector}`);
 
   // Strategy: always try the free sources first. Google News RSS is
   // the most reliable (fresh news, multilingual). Wikipedia gives us
@@ -328,12 +382,18 @@ async function researchInspiration(
     }
   }
 
-  // 2. Wikipedia — encyclopedic context, very reliable from any IP
+  // 2. Wikipedia — encyclopedic context, very reliable from any IP.
+  //    Search for the most specific term we can derive (a key noun
+  //    from the description) before falling back to the broad sector.
   if (results.length < 4) {
-    const wiki = await wikipediaSearch(sector);
-    for (const r of wiki) {
+    const wikiQueries = keywords.length > 0 ? [keywords[0], sector] : [sector];
+    for (const wq of wikiQueries) {
       if (results.length >= 6) break;
-      results.push(r);
+      const wiki = await wikipediaSearch(wq);
+      for (const r of wiki) {
+        if (results.length >= 6) break;
+        results.push(r);
+      }
     }
   }
 
@@ -482,25 +542,48 @@ serve(async (req) => {
       .map((p: { content: string }, i: number) => `${i + 1}. ${p.content.slice(0, 200)}`)
       .join("\n");
 
-    // Optional web inspiration. Fails soft, never blocks generation.
-    const webResults = await researchInspiration(sector, companyName);
+    // Web inspiration with targeted queries built from the user's own
+    // description and company name (much more relevant than just the
+    // broad sector label).
+    const description = userPreferences?.description || "";
+    const webResults = await researchInspiration(sector, companyName, description);
+
+    // The LLM gets the results AND explicit instructions on how to
+    // handle them: filter for relevance, ignore irrelevant ones, and
+    // if nothing is relevant fall back to its own expertise about
+    // this specific business.
     const inspiration = webResults.length
-      ? `\nINSPIRATION RÉCENTE DU WEB (utilise comme matière brute, NE PAS recopier mot pour mot):\n${
-          webResults
-            .slice(0, 5)
-            .map((r, i) => `${i + 1}. [${r.source}] ${r.title}${r.snippet ? " — " + r.snippet : ""}`)
-            .join("\n")
-        }\n`
-      : "";
+      ? `\nMATIÈRE BRUTE TROUVÉE EN LIGNE (à FILTRER selon la pertinence pour "${description.slice(0, 120) || sector}"):
+${webResults
+  .slice(0, 6)
+  .map((r, i) => `${i + 1}. [${r.source}] ${r.title}${r.snippet ? " — " + r.snippet : ""}`)
+  .join("\n")}
 
-    const systemPrompt = `Tu es un expert en création de contenu pour les réseaux sociaux, spécialisé dans le secteur: ${sector}.
+INSTRUCTION DE FILTRAGE:
+- N'utilise QUE les éléments qui ont un lien clair avec l'activité spécifique du client ci-dessus
+- Ignore tout snippet qui ne concerne pas ce métier précis, MÊME s'il évoque le secteur en général
+- Si aucun snippet n'est pertinent, IGNORE TOUTE CETTE LISTE et génère depuis ton expertise du métier
+- Ne recopie JAMAIS un snippet mot pour mot, sers-t'en uniquement comme inspiration
+`
+      : `\n(Aucune matière web trouvée — génère depuis ton expertise du métier décrit ci-dessous.)
+`;
 
-PROFIL DU CLIENT:
+    const systemPrompt = `Tu es un expert en création de contenu pour les réseaux sociaux, spécialisé dans le métier décrit ci-dessous. Tu DOIS rester strictement dans le domaine d'activité du client — pas généraliser, pas dériver vers d'autres sujets.
+
+═══════════════════════════════════════════════════════════
+PROFIL PRÉCIS DU CLIENT (À RESPECTER EN TOUT TEMPS):
+═══════════════════════════════════════════════════════════
 Nom de l'entreprise: ${companyName}
-Secteur: ${sector}
+Secteur général: ${sector}
+${description ? `Description détaillée de l'activité: ${description}` : ""}
 Types de contenu privilégiés: ${contentTypes.join(", ")}
 Tonalité: ${tone}
 ${styleExample ? `Style préféré: ${styleExample}` : ""}
+═══════════════════════════════════════════════════════════
+
+RÈGLE D'OR — PERTINENCE MÉTIER:
+Chaque post DOIT être directement utile à un lecteur qui s'intéresse à "${description.slice(0, 150) || sector}".
+Si le post pourrait s'appliquer à n'importe quelle entreprise du secteur ${sector}, il est TROP GÉNÉRIQUE — recommence en y mettant un détail propre au métier décrit ci-dessus.
 
 TYPE DE POST: ${postType === "value" ? "VALEUR (expertise, conseil)" : "PROMOTIONNEL (services/produits)"}
 ANGLE IMPOSÉ: ${angle.name} — ${angle.brief}
@@ -508,12 +591,13 @@ ANGLE IMPOSÉ: ${angle.name} — ${angle.brief}
 ${postType === "value"
   ? `INSTRUCTIONS CONTENU DE VALEUR:
 - Suis STRICTEMENT l'angle "${angle.name}": ${angle.brief}
-- Apporte une VRAIE valeur concrète au lecteur du secteur ${sector}
+- Apporte une VRAIE valeur concrète et SPÉCIFIQUE au métier de ${companyName}
+- Donne un conseil/info que SEUL un connaisseur de ce métier précis pourrait donner
 - Positionne ${companyName} comme expert sans promotion directe
 - Mentionne ${companyName} subtilement en fin (1 phrase max)`
   : `INSTRUCTIONS POST PROMOTIONNEL:
-- Présente les services/produits de ${companyName} de manière engageante
-- Mets en avant un bénéfice client concret
+- Présente concrètement les services/produits de ${companyName} (basé sur la description)
+- Mets en avant un bénéfice client précis lié à cette activité
 - Termine par un appel à l'action clair`}
 ${inspiration}
 RÈGLES CRITIQUES:
