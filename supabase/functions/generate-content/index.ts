@@ -77,7 +77,163 @@ interface WebResult {
   title: string;
   snippet: string;
   url: string;
+  source: string;
 }
+
+// User-Agent that identifies us politely. Required by several free
+// services (Wikipedia, some news endpoints reject empty UAs).
+const HTTP_UA = "ProSocialAI/1.0 (+https://prosocial.ai)";
+
+// Strip HTML tags and decode the most common entities so RSS/HTML
+// snippets are clean enough to feed into the LLM.
+function htmlToText(html: string): string {
+  return html
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function pickTag(block: string, tag: string): string {
+  const re = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`, "i");
+  const m = block.match(re);
+  return m ? htmlToText(m[1]) : "";
+}
+
+// --- FREE SOURCES (no API key needed) ----------------------------
+
+// Google News RSS: officially provided by Google, no auth, fresh news
+// filtered by language/region. Best free source for sector trends.
+async function googleNewsRssSearch(
+  query: string,
+  lang = "fr",
+  region = "FR",
+): Promise<WebResult[]> {
+  try {
+    const url = new URL("https://news.google.com/rss/search");
+    url.searchParams.set("q", query);
+    url.searchParams.set("hl", lang);
+    url.searchParams.set("gl", region);
+    url.searchParams.set("ceid", `${region}:${lang}`);
+    const resp = await fetch(url.toString(), {
+      headers: { "User-Agent": HTTP_UA, Accept: "application/rss+xml" },
+    });
+    if (!resp.ok) {
+      console.error("Google News RSS:", resp.status);
+      return [];
+    }
+    const xml = await resp.text();
+    const items = xml.match(/<item>[\s\S]*?<\/item>/g) || [];
+    return items.slice(0, 5).map((block) => ({
+      title: pickTag(block, "title"),
+      snippet: pickTag(block, "description").slice(0, 400),
+      url: pickTag(block, "link"),
+      source: "google-news",
+    }));
+  } catch (err) {
+    console.error("Google News RSS threw:", err);
+    return [];
+  }
+}
+
+// Wikipedia REST API: free, no key, no rate-limit, reliable from any
+// IP including datacenter IPs (unlike DuckDuckGo). Great for the
+// foundational context of any topic. Multilingual via subdomain.
+async function wikipediaSearch(query: string, lang = "fr"): Promise<WebResult[]> {
+  try {
+    // 1. opensearch for matching article titles
+    const searchUrl = new URL(`https://${lang}.wikipedia.org/w/api.php`);
+    searchUrl.searchParams.set("action", "opensearch");
+    searchUrl.searchParams.set("search", query);
+    searchUrl.searchParams.set("limit", "5");
+    searchUrl.searchParams.set("format", "json");
+    const searchResp = await fetch(searchUrl.toString(), {
+      headers: { "User-Agent": HTTP_UA },
+    });
+    if (!searchResp.ok) {
+      console.error("Wikipedia search:", searchResp.status);
+      return [];
+    }
+    const data = await searchResp.json();
+    // opensearch returns [query, [titles], [descriptions], [urls]]
+    const titles: string[] = data[1] || [];
+    const descriptions: string[] = data[2] || [];
+    const urls: string[] = data[3] || [];
+
+    const results: WebResult[] = [];
+    for (let i = 0; i < titles.length && results.length < 4; i++) {
+      // Fetch the summary for richer snippet (descriptions array is
+      // often empty in opensearch).
+      try {
+        const sumUrl = `https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(titles[i])}`;
+        const sumResp = await fetch(sumUrl, { headers: { "User-Agent": HTTP_UA } });
+        let snippet = descriptions[i] || "";
+        if (sumResp.ok) {
+          const sumData = await sumResp.json();
+          snippet = sumData.extract || snippet;
+        }
+        results.push({
+          title: titles[i],
+          snippet: snippet.slice(0, 400),
+          url: urls[i] || "",
+          source: "wikipedia",
+        });
+      } catch (_) {
+        // Skip this article on error.
+      }
+    }
+    return results;
+  } catch (err) {
+    console.error("Wikipedia threw:", err);
+    return [];
+  }
+}
+
+// DuckDuckGo HTML — best-effort additional source. DDG aggressively
+// blocks datacenter IPs (HTTP 503) so we don't rely on it but try it
+// anyway; if it works on a given runtime, we get free extra results.
+async function duckduckgoHtmlSearch(query: string): Promise<WebResult[]> {
+  try {
+    const resp = await fetch("https://html.duckduckgo.com/html/", {
+      method: "POST",
+      headers: {
+        "User-Agent": HTTP_UA,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({ q: query }).toString(),
+    });
+    if (!resp.ok) return []; // silent failure; DDG often rejects from datacenter IPs
+    const html = await resp.text();
+    const results: WebResult[] = [];
+    const blocks = html.match(/<div class="result[^"]*"[\s\S]*?<\/div>\s*<\/div>/g) || [];
+    for (const block of blocks.slice(0, 8)) {
+      const titleMatch = block.match(/<a[^>]*class="result__a"[^>]*>([\s\S]*?)<\/a>/i);
+      const snippetMatch = block.match(/<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/i);
+      const urlMatch = block.match(/<a[^>]*class="result__a"[^>]*href="([^"]+)"/i);
+      if (titleMatch) {
+        results.push({
+          title: htmlToText(titleMatch[1]),
+          snippet: htmlToText(snippetMatch?.[1] || "").slice(0, 400),
+          url: urlMatch?.[1] || "",
+          source: "duckduckgo",
+        });
+      }
+      if (results.length >= 4) break;
+    }
+    return results;
+  } catch (_) {
+    return [];
+  }
+}
+
+// --- PREMIUM SOURCES (API key, better quality) -------------------
 
 async function tavilySearch(query: string): Promise<WebResult[]> {
   const apiKey = Deno.env.get("TAVILY_API_KEY");
@@ -105,6 +261,7 @@ async function tavilySearch(query: string): Promise<WebResult[]> {
         title: String(r.title || "").slice(0, 200),
         snippet: String(r.content || "").slice(0, 400),
         url: String(r.url || ""),
+        source: "tavily",
       }));
   } catch (err) {
     console.error("Tavily threw:", err);
@@ -135,6 +292,7 @@ async function braveSearch(query: string): Promise<WebResult[]> {
       title: String(r.title || "").slice(0, 200),
       snippet: String(r.description || "").slice(0, 400),
       url: String(r.url || ""),
+      source: "brave",
     }));
   } catch (err) {
     console.error("Brave threw:", err);
@@ -144,22 +302,68 @@ async function braveSearch(query: string): Promise<WebResult[]> {
 
 async function researchInspiration(
   sector: string,
-  companyName: string,
+  _companyName: string,
 ): Promise<WebResult[]> {
+  const year = new Date().getFullYear();
   const queries = [
-    `tendances ${sector} ${new Date().getFullYear()}`,
+    `tendances ${sector} ${year}`,
+    `actualité ${sector}`,
     `conseils ${sector}`,
   ];
-  // Try Tavily first, fall back to Brave. Both fail soft.
+
+  // Strategy: always try the free sources first. Google News RSS is
+  // the most reliable (fresh news, multilingual). Wikipedia gives us
+  // foundational context. DuckDuckGo is best-effort. Tavily/Brave are
+  // optional upgrades. Results from all sources are merged so the
+  // LLM gets the richest pool of inspiration possible.
+  const results: WebResult[] = [];
+
+  // 1. Google News RSS — fresh, multilingual, reliable
   for (const q of queries) {
-    const results = await tavilySearch(q);
-    if (results.length > 0) return results;
+    if (results.length >= 5) break;
+    const news = await googleNewsRssSearch(q);
+    for (const r of news) {
+      if (results.length >= 5) break;
+      results.push(r);
+    }
   }
-  for (const q of queries) {
-    const results = await braveSearch(q);
-    if (results.length > 0) return results;
+
+  // 2. Wikipedia — encyclopedic context, very reliable from any IP
+  if (results.length < 4) {
+    const wiki = await wikipediaSearch(sector);
+    for (const r of wiki) {
+      if (results.length >= 6) break;
+      results.push(r);
+    }
   }
-  return [];
+
+  // 3. DuckDuckGo — best-effort additional source
+  if (results.length < 4) {
+    const ddg = await duckduckgoHtmlSearch(queries[0]);
+    for (const r of ddg) {
+      if (results.length >= 6) break;
+      results.push(r);
+    }
+  }
+
+  // Upgrade tier: Tavily / Brave. Only spent if their keys are
+  // configured. We append rather than replace so we keep the breadth.
+  if (Deno.env.get("TAVILY_API_KEY")) {
+    const tav = await tavilySearch(queries[0]);
+    for (const r of tav) {
+      if (results.length >= 8) break;
+      results.push(r);
+    }
+  }
+  if (Deno.env.get("BRAVE_SEARCH_API_KEY") && results.length < 8) {
+    const br = await braveSearch(queries[0]);
+    for (const r of br) {
+      if (results.length >= 8) break;
+      results.push(r);
+    }
+  }
+
+  return results;
 }
 
 serve(async (req) => {
@@ -281,10 +485,10 @@ serve(async (req) => {
     // Optional web inspiration. Fails soft, never blocks generation.
     const webResults = await researchInspiration(sector, companyName);
     const inspiration = webResults.length
-      ? `\nINSPIRATION RÉCENTE DU WEB (utilise comme matière brute, NE PAS recopier):\n${
+      ? `\nINSPIRATION RÉCENTE DU WEB (utilise comme matière brute, NE PAS recopier mot pour mot):\n${
           webResults
-            .slice(0, 3)
-            .map((r, i) => `${i + 1}. ${r.title} — ${r.snippet}`)
+            .slice(0, 5)
+            .map((r, i) => `${i + 1}. [${r.source}] ${r.title}${r.snippet ? " — " + r.snippet : ""}`)
             .join("\n")
         }\n`
       : "";

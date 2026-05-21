@@ -34,8 +34,8 @@ environment variables in the Supabase dashboard before deploying.
 | Secret | Used by | Purpose |
 | --- | --- | --- |
 | `LOVABLE_API_KEY` | `generate-content`, `generate-image`, `auto-generate-weekly` | AI Gateway access |
-| `TAVILY_API_KEY` *(optional)* | `generate-content` | If set, the text generator pulls fresh sector trends from the web to inspire each post (highly recommended for content quality). Free tier at https://tavily.com. |
-| `BRAVE_SEARCH_API_KEY` *(optional)* | `generate-content` | Alternative web-search source used if Tavily is not configured. Free tier at https://brave.com/search/api. |
+| `TAVILY_API_KEY` *(optional upgrade)* | `generate-content` | Premium web-search source. The function already uses **free** Google News RSS + DuckDuckGo by default — Tavily just adds higher quality results when configured. Free tier 1k queries/month at https://tavily.com. |
+| `BRAVE_SEARCH_API_KEY` *(optional upgrade)* | `generate-content` | Same idea as Tavily: optional premium search source. Free tier 2k queries/month at https://brave.com/search/api. |
 | `SUPABASE_URL` | all server functions | (auto-provided) |
 | `SUPABASE_SERVICE_ROLE_KEY` | all server functions | (auto-provided) |
 | `CRON_SECRET` | `auto-generate-weekly`, `send-validation-email`, `publish-post` (cron) | Shared secret between Supabase Scheduler and the functions. Also used as the OAuth state HMAC secret if `OAUTH_STATE_SECRET` is unset. |
