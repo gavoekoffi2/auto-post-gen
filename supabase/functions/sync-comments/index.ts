@@ -15,6 +15,9 @@ import {
   ayrshareGetComments,
   ayrsharePostReply,
   draftReply,
+  zernioGetPostComments,
+  zernioListCommentedPosts,
+  zernioReply,
   type NormalizedComment,
 } from "../_shared/engagement.ts";
 
@@ -23,20 +26,158 @@ type DB = ReturnType<typeof createClient>;
 const POSTS_PER_USER = 25;
 const AUTO_REPLY_CAP = 10; // max auto-replies per user per run
 
-async function syncUser(
+type SyncResult = { fetched: number; inserted: number; replied: number; note?: string };
+
+// Dispatch to the user's engagement provider (Zernio preferred, else Ayrshare).
+async function syncUser(supabase: DB, userId: string): Promise<SyncResult> {
+  const { data: conns } = await supabase
+    .from("social_connections")
+    .select("provider, profile_key")
+    .eq("user_id", userId)
+    .in("provider", ["zernio", "ayrshare"]);
+  const zernio = (conns as any[] || []).find((c) => c.provider === "zernio");
+  const ayrshare = (conns as any[] || []).find((c) => c.provider === "ayrshare");
+  if (zernio) return await syncUserZernio(supabase, userId, zernio.profile_key ?? null);
+  if (ayrshare) return await syncUserAyrshare(supabase, userId, ayrshare.profile_key ?? null);
+  return { fetched: 0, inserted: 0, replied: 0, note: "no_comment_provider" };
+}
+
+// --- Zernio inbox: list commented posts → fetch each thread → upsert. ---
+async function syncUserZernio(
   supabase: DB,
   userId: string,
-): Promise<{ fetched: number; inserted: number; replied: number; note?: string }> {
-  const { data: conn } = await supabase
-    .from("social_connections")
-    .select("profile_key")
-    .eq("user_id", userId)
-    .eq("provider", "ayrshare")
-    .maybeSingle();
-  if (!conn) {
-    return { fetched: 0, inserted: 0, replied: 0, note: "no_comment_provider" };
+  profileKey: string | null,
+): Promise<SyncResult> {
+  const { posts, addonMissing } = await zernioListCommentedPosts(profileKey);
+  if (addonMissing) return { fetched: 0, inserted: 0, replied: 0, note: "zernio_inbox_addon_required" };
+
+  let fetched = 0;
+  let inserted = 0;
+  let replied = 0;
+  const newRows: Array<{
+    id: string;
+    message: string | null;
+    external_comment_id: string;
+    raw: any;
+    postContent: string | null;
+  }> = [];
+
+  for (const p of posts) {
+    let comments: NormalizedComment[] = [];
+    try {
+      comments = await zernioGetPostComments(p.id, p.accountId);
+    } catch (_e) {
+      continue;
+    }
+    fetched += comments.length;
+    if (comments.length === 0) continue;
+
+    // Link back to the local post we published (for the original content).
+    const { data: localPost } = await supabase
+      .from("posts")
+      .select("id, content")
+      .eq("user_id", userId)
+      .eq("provider_post_id", p.id)
+      .maybeSingle();
+
+    const ids = comments.map((c) => c.externalCommentId);
+    const { data: existing } = await supabase
+      .from("social_comments")
+      .select("external_comment_id")
+      .eq("user_id", userId)
+      .in("external_comment_id", ids);
+    const existingSet = new Set((existing as any[] || []).map((e) => e.external_comment_id));
+
+    const toInsert = comments
+      .filter((c) => !existingSet.has(c.externalCommentId))
+      .map((c) => ({
+        user_id: userId,
+        post_id: (localPost as any)?.id ?? null,
+        provider: "zernio",
+        platform: c.platform || p.platform,
+        external_comment_id: c.externalCommentId,
+        parent_comment_id: c.parentId ?? null,
+        author_name: c.author ?? null,
+        author_handle: c.handle ?? null,
+        author_avatar_url: c.avatar ?? null,
+        message: c.message ?? null,
+        comment_created_at: c.createdAt ?? null,
+        status: "new",
+        raw: c.raw ?? {},
+      }));
+
+    if (toInsert.length > 0) {
+      const { data: ins, error } = await supabase
+        .from("social_comments")
+        .insert(toInsert)
+        .select("id, message, external_comment_id, raw");
+      if (!error && ins) {
+        inserted += ins.length;
+        for (const r of ins as any[]) {
+          newRows.push({
+            id: r.id,
+            message: r.message,
+            external_comment_id: r.external_comment_id,
+            raw: r.raw,
+            postContent: (localPost as any)?.content ?? p.content ?? null,
+          });
+        }
+      }
+    }
   }
-  const profileKey = (conn as { profile_key: string | null }).profile_key ?? null;
+
+  if (newRows.length > 0) {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("tone, auto_reply_instructions, auto_reply_enabled")
+      .eq("id", userId)
+      .maybeSingle();
+    if (profile && (profile as any).auto_reply_enabled) {
+      const cap = Math.min(newRows.length, AUTO_REPLY_CAP);
+      for (let i = 0; i < cap; i++) {
+        const r = newRows[i];
+        if (!r.message) continue;
+        const zPostId = r.raw?.zPostId;
+        const zAccountId = r.raw?.zAccountId;
+        if (!zPostId || !zAccountId) continue;
+        try {
+          const reply = await draftReply({
+            comment: r.message,
+            postContent: r.postContent,
+            brandTone: (profile as any).tone,
+            instructions: (profile as any).auto_reply_instructions,
+          });
+          const res = await zernioReply(zPostId, zAccountId, reply, r.external_comment_id);
+          if (res.ok) {
+            await supabase
+              .from("social_comments")
+              .update({
+                status: "replied",
+                reply_text: reply,
+                reply_external_id: res.id ?? null,
+                replied_at: new Date().toISOString(),
+                replied_by: "auto",
+              })
+              .eq("id", r.id);
+            replied++;
+          }
+        } catch (_e) {
+          /* keep going */
+        }
+      }
+    }
+  }
+
+  return { fetched, inserted, replied };
+}
+
+// --- Ayrshare: per-post Comments API (provider_post_id required). ---
+async function syncUserAyrshare(
+  supabase: DB,
+  userId: string,
+  profileKeyArg: string | null,
+): Promise<SyncResult> {
+  const profileKey = profileKeyArg;
 
   const { data: posts } = await supabase
     .from("posts")
@@ -186,7 +327,7 @@ serve(async (req) => {
       const { data: rows } = await supabase
         .from("social_connections")
         .select("user_id")
-        .eq("provider", "ayrshare")
+        .in("provider", ["zernio", "ayrshare"])
         .limit(50);
       const userIds = Array.from(new Set((rows as any[] || []).map((r) => r.user_id)));
       const results = [];
@@ -213,7 +354,17 @@ serve(async (req) => {
         {
           ...result,
           notice:
-            "La synchronisation des commentaires nécessite un fournisseur compatible (Ayrshare Premium). Postiz publie mais n'expose pas d'API commentaires.",
+            "La synchronisation des commentaires nécessite un fournisseur compatible : Zernio (add-on Inbox) ou Ayrshare (Premium). Connectez-en un dans « Réseaux sociaux ».",
+        },
+        { cors },
+      );
+    }
+    if (result.note === "zernio_inbox_addon_required") {
+      return jsonResponse(
+        {
+          ...result,
+          notice:
+            "Les commentaires nécessitent l'add-on Inbox de Zernio. Activez-le sur votre compte Zernio pour collecter et répondre aux commentaires.",
         },
         { cors },
       );
