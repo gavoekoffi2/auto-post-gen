@@ -34,6 +34,8 @@ export type Database = {
           validation_token_created_at: string | null
           validation_token_used_at: string | null
           week_number: number | null
+          provider_post_id: string | null
+          external_post_ids: Json
         }
         Insert: {
           auto_publish_attempted_at?: string | null
@@ -54,6 +56,8 @@ export type Database = {
           validation_token_created_at?: string | null
           validation_token_used_at?: string | null
           week_number?: number | null
+          provider_post_id?: string | null
+          external_post_ids?: Json
         }
         Update: {
           auto_publish_attempted_at?: string | null
@@ -74,6 +78,8 @@ export type Database = {
           validation_token_created_at?: string | null
           validation_token_used_at?: string | null
           week_number?: number | null
+          provider_post_id?: string | null
+          external_post_ids?: Json
         }
         Relationships: []
       }
@@ -158,6 +164,75 @@ export type Database = {
         }
         Relationships: []
       }
+      social_comments: {
+        Row: {
+          author_avatar_url: string | null
+          author_handle: string | null
+          author_name: string | null
+          comment_created_at: string | null
+          created_at: string | null
+          external_comment_id: string
+          id: string
+          message: string | null
+          parent_comment_id: string | null
+          platform: string
+          post_id: string | null
+          provider: string
+          raw: Json
+          replied_at: string | null
+          replied_by: string | null
+          reply_external_id: string | null
+          reply_text: string | null
+          status: string
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          author_avatar_url?: string | null
+          author_handle?: string | null
+          author_name?: string | null
+          comment_created_at?: string | null
+          created_at?: string | null
+          external_comment_id: string
+          id?: string
+          message?: string | null
+          parent_comment_id?: string | null
+          platform: string
+          post_id?: string | null
+          provider?: string
+          raw?: Json
+          replied_at?: string | null
+          replied_by?: string | null
+          reply_external_id?: string | null
+          reply_text?: string | null
+          status?: string
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          author_avatar_url?: string | null
+          author_handle?: string | null
+          author_name?: string | null
+          comment_created_at?: string | null
+          created_at?: string | null
+          external_comment_id?: string
+          id?: string
+          message?: string | null
+          parent_comment_id?: string | null
+          platform?: string
+          post_id?: string | null
+          provider?: string
+          raw?: Json
+          replied_at?: string | null
+          replied_by?: string | null
+          reply_external_id?: string | null
+          reply_text?: string | null
+          status?: string
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           activity_keywords: string[] | null
@@ -191,6 +266,8 @@ export type Database = {
           twitter_username: string | null
           updated_at: string | null
           use_custom_images: boolean | null
+          auto_reply_enabled: boolean | null
+          auto_reply_instructions: string | null
         }
         Insert: {
           activity_keywords?: string[] | null
@@ -224,6 +301,8 @@ export type Database = {
           twitter_username?: string | null
           updated_at?: string | null
           use_custom_images?: boolean | null
+          auto_reply_enabled?: boolean | null
+          auto_reply_instructions?: string | null
         }
         Update: {
           activity_keywords?: string[] | null
@@ -257,6 +336,8 @@ export type Database = {
           twitter_username?: string | null
           updated_at?: string | null
           use_custom_images?: boolean | null
+          auto_reply_enabled?: boolean | null
+          auto_reply_instructions?: string | null
         }
         Relationships: []
       }

@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { Check, ExternalLink, Sparkles, X, Zap } from "lucide-react";
+import { Check, ExternalLink, Globe, Sparkles, X, Zap } from "lucide-react";
 
 type SocialMediaConnectProps = {
   isOpen: boolean;
@@ -131,6 +131,8 @@ export function SocialMediaConnect({
   const [connections, setConnections] = useState<SocialConnectionRow[]>([]);
   const [ayrshare, setAyrshare] = useState<AyrshareStatus | null>(null);
   const [ayrLoading, setAyrLoading] = useState(false);
+  const [postiz, setPostiz] = useState<{ provisioned: boolean; platforms: string[]; error?: string } | null>(null);
+  const [postizLoading, setPostizLoading] = useState(false);
 
   const connectionsByPlatform = useMemo(() => {
     const map: Partial<Record<PlatformId, SocialConnectionRow>> = {};
@@ -169,10 +171,29 @@ export function SocialMediaConnect({
     }
   };
 
+  const refreshPostiz = async () => {
+    try {
+      const { data, error } = await supabase.functions.invoke("postiz-status", {});
+      if (error) {
+        setPostiz({ provisioned: false, platforms: [] });
+        return;
+      }
+      setPostiz({
+        provisioned: !!data?.provisioned,
+        platforms: data?.platforms || [],
+        error: data?.error,
+      });
+    } catch (err) {
+      console.error("postiz-status threw:", err);
+      setPostiz({ provisioned: false, platforms: [] });
+    }
+  };
+
   useEffect(() => {
     if (!isOpen) return;
     refreshConnections();
     refreshAyrshare();
+    refreshPostiz();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, userProfile?.id]);
 
@@ -241,6 +262,41 @@ export function SocialMediaConnect({
       console.error(err);
     } finally {
       setAyrLoading(false);
+    }
+  };
+
+  const handlePostizConnect = async (platform: string) => {
+    setPostizLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("postiz-connect", {
+        body: { platform },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      if (!data?.connectUrl) throw new Error("Postiz n'a pas retourné de lien.");
+
+      const popup = window.open(data.connectUrl, "postiz_connect", "width=720,height=820");
+      if (!popup) {
+        toast.error("Le navigateur a bloqué la fenêtre. Autorisez les popups.");
+        return;
+      }
+      toast.info(`Autorisez ${platform} dans la fenêtre Postiz. La liste se rafraîchira automatiquement.`);
+
+      const interval = window.setInterval(() => {
+        try {
+          if (popup.closed) {
+            window.clearInterval(interval);
+            window.setTimeout(() => refreshPostiz(), 800);
+          }
+        } catch (_) {
+          window.clearInterval(interval);
+        }
+      }, 500);
+      window.setTimeout(() => window.clearInterval(interval), 10 * 60 * 1000);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erreur Postiz");
+    } finally {
+      setPostizLoading(false);
     }
   };
 
@@ -393,6 +449,50 @@ export function SocialMediaConnect({
                   Déconnecter
                 </Button>
               )}
+            </div>
+          </div>
+        </Card>
+
+        {/* Postiz quick-connect (the platform from the reference video) */}
+        <Card className="glass-card p-4 mt-3 border-secondary/40">
+          <div className="flex items-start gap-3">
+            <span className="inline-flex items-center justify-center w-10 h-10 rounded-lg bg-gradient-to-br from-secondary to-primary shrink-0">
+              <Globe className="w-5 h-5 text-white" />
+            </span>
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <p className="font-medium">Connexion via Postiz</p>
+                <span className="text-xs px-2 py-0.5 rounded-full bg-secondary/10 text-secondary">
+                  Planification 30+ réseaux
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1 max-w-md">
+                Reliez vos réseaux via Postiz (publication + planification). Cliquez
+                sur un réseau pour l'autoriser dans une fenêtre sécurisée.
+              </p>
+              {postiz?.error && (
+                <p className="text-xs text-destructive mt-2">Postiz: {postiz.error}</p>
+              )}
+              <div className="mt-3 flex flex-wrap gap-2">
+                {(["instagram", "facebook", "linkedin", "twitter", "tiktok", "youtube"] as const).map(
+                  (p) => {
+                    const connected = postiz?.platforms?.includes(p);
+                    return (
+                      <Button
+                        key={p}
+                        size="sm"
+                        variant="outline"
+                        disabled={postizLoading}
+                        onClick={() => handlePostizConnect(p)}
+                        className="glass-card capitalize"
+                      >
+                        {connected && <Check className="w-3 h-3 mr-1 text-green-500" />}
+                        {p}
+                      </Button>
+                    );
+                  },
+                )}
+              </div>
             </div>
           </div>
         </Card>

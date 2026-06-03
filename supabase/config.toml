@@ -63,3 +63,20 @@ verify_jwt = false
 
 [functions.ayrshare-status]
 verify_jwt = false
+
+# Postiz: social scheduling platform (the reference video's tool).
+# postiz-connect returns a hosted OAuth URL; postiz-status lists channels.
+# Both validate the user JWT in-function.
+[functions.postiz-connect]
+verify_jwt = false
+
+[functions.postiz-status]
+verify_jwt = false
+
+# Engagement: comment inbox sync + AI auto-reply. sync-comments runs from
+# cron (CRON_SECRET) or a logged-in user; comment-reply requires a user JWT.
+[functions.sync-comments]
+verify_jwt = false
+
+[functions.comment-reply]
+verify_jwt = false

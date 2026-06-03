@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Calendar, TrendingUp, CheckCircle, Clock, Edit2, Sparkles, Settings, Share2, Calendar as CalendarIcon, Trash2, User, BarChart3, Send, ImageIcon, Loader2 } from "lucide-react";
+import { Calendar, TrendingUp, CheckCircle, Clock, Edit2, Sparkles, Settings, Share2, Calendar as CalendarIcon, Trash2, User, BarChart3, Send, ImageIcon, Loader2, MessageSquare } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -405,6 +405,10 @@ export default function Dashboard() {
     navigate('/statistics');
   };
 
+  const handleComments = () => {
+    navigate('/comments');
+  };
+
   const handleProfile = () => {
     navigate('/profile');
   };
@@ -476,6 +480,10 @@ export default function Dashboard() {
               <Button onClick={handleCalendar} variant="outline" size="sm" className="glass-card">
                 <CalendarIcon className="w-4 h-4 mr-2" />
                 Calendrier
+              </Button>
+              <Button onClick={handleComments} variant="outline" size="sm" className="glass-card">
+                <MessageSquare className="w-4 h-4 mr-2" />
+                Commentaires
               </Button>
               <Button onClick={handleProfile} variant="outline" size="sm" className="glass-card">
                 <User className="w-4 h-4 mr-2" />

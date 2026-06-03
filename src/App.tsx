@@ -22,6 +22,7 @@ const Privacy = lazy(() => import("./pages/Privacy"));
 const Terms = lazy(() => import("./pages/Terms"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const ValidatePost = lazy(() => import("./pages/ValidatePost"));
+const Comments = lazy(() => import("./pages/Comments"));
 
 const queryClient = new QueryClient();
 
@@ -83,6 +84,14 @@ const App = () => (
               element={
                 <ProtectedRoute>
                   <Statistics />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/comments"
+              element={
+                <ProtectedRoute>
+                  <Comments />
                 </ProtectedRoute>
               }
             />

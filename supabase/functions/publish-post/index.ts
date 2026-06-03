@@ -15,6 +15,12 @@
 //
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
+import {
+  postizCreatePost,
+  postizListIntegrations,
+  postizUploadFromUrl,
+  toPostizIdentifier,
+} from "../_shared/postiz.ts";
 
 const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "*")
   .split(",")
@@ -459,6 +465,58 @@ async function publishViaAyrshare(
   }
 }
 
+// Postiz publish: fan out to every connected Postiz channel whose
+// identifier matches a requested platform. Postiz holds the social tokens,
+// so a single API call covers all of them.
+async function publishViaPostiz(
+  platforms: string[],
+  content: string,
+  imageUrl: string | null,
+): Promise<{ results: PublishResult[]; providerPostId: string | null }> {
+  const results: PublishResult[] = [];
+  try {
+    const integrations = await postizListIntegrations();
+    const chosen: { id: string; platform: string }[] = [];
+    for (const raw of platforms) {
+      const platform = normalisePlatform(raw);
+      const ident = toPostizIdentifier(platform);
+      const match = integrations.find(
+        (i) => (i.identifier || "").toLowerCase() === ident && !i.disabled,
+      );
+      if (match) chosen.push({ id: match.id, platform });
+      else results.push({ platform, status: "not_connected" });
+    }
+    if (chosen.length === 0) return { results, providerPostId: null };
+
+    // Best-effort image upload; degrades to text-only on failure.
+    let imageId: string | null = null;
+    if (imageUrl) imageId = await postizUploadFromUrl(imageUrl);
+
+    const res = await postizCreatePost({
+      integrationIds: chosen.map((c) => c.id),
+      content,
+      imageId,
+    });
+    for (const c of chosen) {
+      results.push(
+        res.ok
+          ? { platform: c.platform, status: "ok", externalId: res.id }
+          : { platform: c.platform, status: "error", message: res.error },
+      );
+    }
+    return { results, providerPostId: res.ok ? (res.id ?? null) : null };
+  } catch (err) {
+    return {
+      results: platforms.map((p) => ({
+        platform: normalisePlatform(p),
+        status: "error" as const,
+        message: err instanceof Error ? err.message : String(err),
+      })),
+      providerPostId: null,
+    };
+  }
+}
+
 async function publishPost(
   supabase: ReturnType<typeof createClient>,
   postId: string,
@@ -491,9 +549,11 @@ async function publishPost(
     .select("*")
     .eq("user_id", post.user_id);
 
-  // If the user has an Ayrshare umbrella connection, prefer that over
-  // direct OAuth. Ayrshare publishes to every platform in one call and
-  // dispenses with managing tokens ourselves.
+  // Provider precedence: Postiz (the video's platform) → Ayrshare →
+  // direct OAuth. The first umbrella connection found wins.
+  const postiz = (connections || []).find(
+    (c: { provider?: string }) => c.provider === "postiz",
+  ) as { id: string } | undefined;
   const ayrshare = (connections || []).find(
     (c: { provider?: string }) => c.provider === "ayrshare",
   ) as { profile_key: string | null } | undefined;
@@ -517,7 +577,12 @@ async function publishPost(
     }
   }
 
-  if (ayrshare) {
+  if (postiz) {
+    // Publish via Postiz — one call fans out to every matching channel.
+    const pz = await publishViaPostiz(platforms, post.content, stableImageUrl);
+    results.push(...pz.results);
+    providerPostId = pz.providerPostId;
+  } else if (ayrshare) {
     // One-shot publish via Ayrshare for every requested platform.
     const ayr = await publishViaAyrshare(
       ayrshare.profile_key,
