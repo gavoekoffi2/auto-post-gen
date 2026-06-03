@@ -391,14 +391,17 @@ async function publishViaAyrshare(
   content: string,
   imageUrl: string | null,
   platforms: string[],
-): Promise<PublishResult[]> {
+): Promise<{ results: PublishResult[]; providerPostId: string | null }> {
   const apiKey = Deno.env.get("AYRSHARE_API_KEY");
   if (!apiKey) {
-    return platforms.map((p) => ({
-      platform: p,
-      status: "error" as const,
-      message: "AYRSHARE_API_KEY not configured",
-    }));
+    return {
+      results: platforms.map((p) => ({
+        platform: p,
+        status: "error" as const,
+        message: "AYRSHARE_API_KEY not configured",
+      })),
+      providerPostId: null,
+    };
   }
   try {
     const ayrPlatforms = platforms.map(normalisePlatform);
@@ -418,16 +421,19 @@ async function publishViaAyrshare(
     });
     if (!resp.ok) {
       const text = await resp.text();
-      return ayrPlatforms.map((p) => ({
-        platform: p,
-        status: "error" as const,
-        message: `Ayrshare ${resp.status}: ${text.slice(0, 200)}`,
-      }));
+      return {
+        results: ayrPlatforms.map((p) => ({
+          platform: p,
+          status: "error" as const,
+          message: `Ayrshare ${resp.status}: ${text.slice(0, 200)}`,
+        })),
+        providerPostId: null,
+      };
     }
     const data = await resp.json();
     const postIds = data?.postIds || {};
     const errors = data?.errors || [];
-    return ayrPlatforms.map((p) => {
+    const results = ayrPlatforms.map((p) => {
       const err = errors.find((e: any) => e.platform === p);
       if (err) {
         return { platform: p, status: "error" as const, message: err.message || "Ayrshare error" };
@@ -438,12 +444,18 @@ async function publishViaAyrshare(
         externalId: postIds[p] || data?.id,
       };
     });
+    // data.id is Ayrshare's umbrella post id — the handle the Comments API
+    // (GET/POST /api/comments/:id) expects to read & reply to engagement.
+    return { results, providerPostId: data?.id ?? null };
   } catch (err) {
-    return platforms.map((p) => ({
-      platform: p,
-      status: "error" as const,
-      message: err instanceof Error ? err.message : String(err),
-    }));
+    return {
+      results: platforms.map((p) => ({
+        platform: p,
+        status: "error" as const,
+        message: err instanceof Error ? err.message : String(err),
+      })),
+      providerPostId: null,
+    };
   }
 }
 
@@ -488,6 +500,10 @@ async function publishPost(
 
   const platforms: string[] = post.platforms || [];
   const results: PublishResult[] = [];
+  // The provider-level post id (e.g. Ayrshare's umbrella id) lets the
+  // engagement sync later fetch comments for this post. Per-platform ids
+  // are collected into external_post_ids below.
+  let providerPostId: string | null = null;
 
   // For platforms that require a long-lived public image URL (Instagram,
   // Facebook URL-link posting), rehost the image on our own storage.
@@ -503,13 +519,14 @@ async function publishPost(
 
   if (ayrshare) {
     // One-shot publish via Ayrshare for every requested platform.
-    const ayrResults = await publishViaAyrshare(
+    const ayr = await publishViaAyrshare(
       ayrshare.profile_key,
       post.content,
       stableImageUrl,
       platforms,
     );
-    results.push(...ayrResults);
+    results.push(...ayr.results);
+    providerPostId = ayr.providerPostId;
   } else {
     // Direct-OAuth fallback: one API call per platform, one connection
     // row required per platform.
@@ -543,12 +560,21 @@ async function publishPost(
   // after connecting an account.
   const finalStatus = anyOk ? "published" : allErrors ? "failed" : "validated";
 
+  // Persist external post ids so the engagement/comments sync can later
+  // map a published post back to its per-platform social post.
+  const externalPostIds: Record<string, string> = {};
+  for (const r of results) {
+    if (r.status === "ok" && r.externalId) externalPostIds[r.platform] = r.externalId;
+  }
+
   await supabase
     .from("posts")
     .update({
       status: finalStatus,
       published_at: anyOk ? new Date().toISOString() : null,
       publish_error: allErrors || finalStatus === "validated" ? JSON.stringify(results) : null,
+      provider_post_id: providerPostId,
+      external_post_ids: externalPostIds,
     })
     .eq("id", postId);
 
