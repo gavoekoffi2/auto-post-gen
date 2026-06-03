@@ -1,4 +1,4 @@
-project_id = "prdpzatcevbqeqnaocdl"
+project_id = "ixinojsmymqovekgkbdg"
 
 # generate-content is called by authenticated clients. We verify the user
 # JWT inside the function (so the function can use the service role key
