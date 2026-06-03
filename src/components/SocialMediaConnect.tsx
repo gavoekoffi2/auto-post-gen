@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { Check, ExternalLink, Globe, Sparkles, X, Zap } from "lucide-react";
+import { Check, ExternalLink, Globe, Link2, Sparkles, X, Zap } from "lucide-react";
 
 type SocialMediaConnectProps = {
   isOpen: boolean;
@@ -133,6 +133,8 @@ export function SocialMediaConnect({
   const [ayrLoading, setAyrLoading] = useState(false);
   const [postiz, setPostiz] = useState<{ provisioned: boolean; platforms: string[]; error?: string } | null>(null);
   const [postizLoading, setPostizLoading] = useState(false);
+  const [zernio, setZernio] = useState<{ provisioned: boolean; platforms: string[]; error?: string } | null>(null);
+  const [zernioLoading, setZernioLoading] = useState(false);
 
   const connectionsByPlatform = useMemo(() => {
     const map: Partial<Record<PlatformId, SocialConnectionRow>> = {};
@@ -189,11 +191,30 @@ export function SocialMediaConnect({
     }
   };
 
+  const refreshZernio = async () => {
+    try {
+      const { data, error } = await supabase.functions.invoke("zernio-status", {});
+      if (error) {
+        setZernio({ provisioned: false, platforms: [] });
+        return;
+      }
+      setZernio({
+        provisioned: !!data?.provisioned,
+        platforms: data?.platforms || [],
+        error: data?.error,
+      });
+    } catch (err) {
+      console.error("zernio-status threw:", err);
+      setZernio({ provisioned: false, platforms: [] });
+    }
+  };
+
   useEffect(() => {
     if (!isOpen) return;
     refreshConnections();
     refreshAyrshare();
     refreshPostiz();
+    refreshZernio();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, userProfile?.id]);
 
@@ -262,6 +283,41 @@ export function SocialMediaConnect({
       console.error(err);
     } finally {
       setAyrLoading(false);
+    }
+  };
+
+  const handleZernioConnect = async (platform: string) => {
+    setZernioLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("zernio-connect", {
+        body: { platform },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      if (!data?.connectUrl) throw new Error("Zernio n'a pas retourné de lien.");
+
+      const popup = window.open(data.connectUrl, "zernio_connect", "width=720,height=820");
+      if (!popup) {
+        toast.error("Le navigateur a bloqué la fenêtre. Autorisez les popups.");
+        return;
+      }
+      toast.info(`Autorisez ${platform} dans la fenêtre Zernio. La liste se rafraîchira automatiquement.`);
+
+      const interval = window.setInterval(() => {
+        try {
+          if (popup.closed) {
+            window.clearInterval(interval);
+            window.setTimeout(() => refreshZernio(), 1000);
+          }
+        } catch (_) {
+          window.clearInterval(interval);
+        }
+      }, 500);
+      window.setTimeout(() => window.clearInterval(interval), 10 * 60 * 1000);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erreur Zernio");
+    } finally {
+      setZernioLoading(false);
     }
   };
 
@@ -389,7 +445,62 @@ export function SocialMediaConnect({
           </DialogDescription>
         </DialogHeader>
 
-        {/* Ayrshare quick-connect (recommended for MVP) */}
+        {/* Zernio quick-connect (active backend — LinkedIn + Facebook) */}
+        <Card className="glass-card p-4 mt-4 border-primary/50">
+          <div className="flex items-start gap-3">
+            <span className="inline-flex items-center justify-center w-10 h-10 rounded-lg bg-gradient-to-br from-primary to-secondary shrink-0">
+              <Link2 className="w-5 h-5 text-white" />
+            </span>
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <p className="font-medium">Connexion via Zernio</p>
+                <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary">
+                  Recommandé
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1 max-w-md">
+                Reliez vos comptes en 1 clic. Cliquez sur un réseau pour l'autoriser
+                dans une fenêtre sécurisée Zernio.
+              </p>
+              {zernio?.error && (
+                <p className="text-xs text-destructive mt-2">Zernio: {zernio.error}</p>
+              )}
+              <div className="mt-3 flex flex-wrap gap-2">
+                {(["linkedin", "facebook"] as const).map((p) => {
+                  const connected = zernio?.platforms?.includes(p);
+                  return (
+                    <Button
+                      key={p}
+                      size="sm"
+                      variant="outline"
+                      disabled={zernioLoading}
+                      onClick={() => handleZernioConnect(p)}
+                      className="glass-card"
+                    >
+                      {connected && <Check className="w-3 h-3 mr-1 text-green-500" />}
+                      {p === "linkedin" ? "LinkedIn" : "Facebook"}
+                    </Button>
+                  );
+                })}
+              </div>
+              {zernio?.provisioned && zernio.platforms.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {zernio.platforms.map((p) => (
+                    <span
+                      key={p}
+                      className="text-xs px-2 py-0.5 rounded-full bg-green-500/10 text-green-500 inline-flex items-center gap-1 capitalize"
+                    >
+                      <Check className="w-3 h-3" />
+                      {p}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </Card>
+
+        {/* Ayrshare quick-connect (alternative) */}
         <Card className="glass-card p-4 mt-4 border-primary/40">
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-start gap-3">
@@ -399,8 +510,8 @@ export function SocialMediaConnect({
               <div className="flex-1">
                 <div className="flex items-center gap-2">
                   <p className="font-medium">Connexion rapide (Ayrshare)</p>
-                  <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary">
-                    Recommandé
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
+                    Alternative
                   </span>
                 </div>
                 <p className="text-xs text-muted-foreground mt-1 max-w-md">

@@ -21,6 +21,7 @@ import {
   postizUploadFromUrl,
   toPostizIdentifier,
 } from "../_shared/postiz.ts";
+import { zernioCreatePost, zernioListAccounts } from "../_shared/zernio.ts";
 
 const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "*")
   .split(",")
@@ -517,6 +518,50 @@ async function publishViaPostiz(
   }
 }
 
+// Zernio publish: map requested platforms to the accounts connected under
+// the user's Zernio profile, then publish to all of them in one call.
+async function publishViaZernio(
+  profileKey: string | null,
+  platforms: string[],
+  content: string,
+  imageUrl: string | null,
+  requestId: string,
+): Promise<{ results: PublishResult[]; providerPostId: string | null }> {
+  const results: PublishResult[] = [];
+  try {
+    const accounts = await zernioListAccounts(profileKey);
+    const targets: Array<{ platform: string; accountId: string }> = [];
+    for (const raw of platforms) {
+      const platform = normalisePlatform(raw);
+      const match = accounts.find(
+        (a) => (a.platform || "").toLowerCase() === platform && a.isActive !== false,
+      );
+      if (match) targets.push({ platform, accountId: match._id });
+      else results.push({ platform, status: "not_connected" });
+    }
+    if (targets.length === 0) return { results, providerPostId: null };
+
+    const res = await zernioCreatePost({ content, imageUrl, platforms: targets, requestId });
+    for (const t of targets) {
+      results.push(
+        res.ok
+          ? { platform: t.platform, status: "ok", externalId: res.id }
+          : { platform: t.platform, status: "error", message: res.error },
+      );
+    }
+    return { results, providerPostId: res.ok ? (res.id ?? null) : null };
+  } catch (err) {
+    return {
+      results: platforms.map((p) => ({
+        platform: normalisePlatform(p),
+        status: "error" as const,
+        message: err instanceof Error ? err.message : String(err),
+      })),
+      providerPostId: null,
+    };
+  }
+}
+
 async function publishPost(
   supabase: ReturnType<typeof createClient>,
   postId: string,
@@ -549,8 +594,11 @@ async function publishPost(
     .select("*")
     .eq("user_id", post.user_id);
 
-  // Provider precedence: Postiz (the video's platform) → Ayrshare →
-  // direct OAuth. The first umbrella connection found wins.
+  // Provider precedence: Zernio → Postiz → Ayrshare → direct OAuth.
+  // The first umbrella connection found wins.
+  const zernio = (connections || []).find(
+    (c: { provider?: string }) => c.provider === "zernio",
+  ) as { profile_key: string | null } | undefined;
   const postiz = (connections || []).find(
     (c: { provider?: string }) => c.provider === "postiz",
   ) as { id: string } | undefined;
@@ -577,7 +625,18 @@ async function publishPost(
     }
   }
 
-  if (postiz) {
+  if (zernio) {
+    // Publish via Zernio (the chosen backend) to the user's connected accounts.
+    const zr = await publishViaZernio(
+      zernio.profile_key,
+      platforms,
+      post.content,
+      stableImageUrl,
+      post.id,
+    );
+    results.push(...zr.results);
+    providerPostId = zr.providerPostId;
+  } else if (postiz) {
     // Publish via Postiz — one call fans out to every matching channel.
     const pz = await publishViaPostiz(platforms, post.content, stableImageUrl);
     results.push(...pz.results);
