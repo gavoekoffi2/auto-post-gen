@@ -22,10 +22,12 @@ export function getTextModel(): string {
 export function getImageModels(): string[] {
   const configured = Deno.env.get("OPENROUTER_IMAGE_MODEL");
   // We always try a chain so a single model failure doesn't kill image gen.
+  // These are current OpenRouter image-OUTPUT models — the older
+  // "-image-preview" id and the non-image "gemini-2.5-flash" now 404.
   const chain = [
     configured,
-    "google/gemini-2.5-flash-image-preview",
-    "google/gemini-2.5-flash",
+    "google/gemini-2.5-flash-image",
+    "google/gemini-3.1-flash-image-preview",
   ].filter(Boolean) as string[];
   // De-dupe while preserving order.
   return Array.from(new Set(chain));
