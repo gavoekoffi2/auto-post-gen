@@ -1,4 +1,4 @@
-project_id = "prdpzatcevbqeqnaocdl"
+project_id = "ixinojsmymqovekgkbdg"
 
 # generate-content is called by authenticated clients. We verify the user
 # JWT inside the function (so the function can use the service role key
@@ -62,4 +62,30 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.ayrshare-status]
+verify_jwt = false
+
+# Postiz: social scheduling platform (the reference video's tool).
+# postiz-connect returns a hosted OAuth URL; postiz-status lists channels.
+# Both validate the user JWT in-function.
+[functions.postiz-connect]
+verify_jwt = false
+
+[functions.postiz-status]
+verify_jwt = false
+
+# Zernio: social API (connect + publish for LinkedIn, Facebook, +13).
+# zernio-connect returns a hosted OAuth URL; zernio-status lists the
+# accounts connected under the user's Zernio profile. JWT checked in-function.
+[functions.zernio-connect]
+verify_jwt = false
+
+[functions.zernio-status]
+verify_jwt = false
+
+# Engagement: comment inbox sync + AI auto-reply. sync-comments runs from
+# cron (CRON_SECRET) or a logged-in user; comment-reply requires a user JWT.
+[functions.sync-comments]
+verify_jwt = false
+
+[functions.comment-reply]
 verify_jwt = false

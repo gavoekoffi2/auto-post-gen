@@ -1,0 +1,11 @@
+# Netlify hosting config (replaces Lovable hosting).
+# SPA: every route falls back to index.html so React Router deep links
+# (/dashboard, /comments, /calendar...) don't 404 on refresh.
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

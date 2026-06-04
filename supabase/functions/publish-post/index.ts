@@ -15,6 +15,13 @@
 //
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
+import {
+  postizCreatePost,
+  postizListIntegrations,
+  postizUploadFromUrl,
+  toPostizIdentifier,
+} from "../_shared/postiz.ts";
+import { zernioCreatePost, zernioListAccounts } from "../_shared/zernio.ts";
 
 const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "*")
   .split(",")
@@ -391,14 +398,17 @@ async function publishViaAyrshare(
   content: string,
   imageUrl: string | null,
   platforms: string[],
-): Promise<PublishResult[]> {
+): Promise<{ results: PublishResult[]; providerPostId: string | null }> {
   const apiKey = Deno.env.get("AYRSHARE_API_KEY");
   if (!apiKey) {
-    return platforms.map((p) => ({
-      platform: p,
-      status: "error" as const,
-      message: "AYRSHARE_API_KEY not configured",
-    }));
+    return {
+      results: platforms.map((p) => ({
+        platform: p,
+        status: "error" as const,
+        message: "AYRSHARE_API_KEY not configured",
+      })),
+      providerPostId: null,
+    };
   }
   try {
     const ayrPlatforms = platforms.map(normalisePlatform);
@@ -418,16 +428,19 @@ async function publishViaAyrshare(
     });
     if (!resp.ok) {
       const text = await resp.text();
-      return ayrPlatforms.map((p) => ({
-        platform: p,
-        status: "error" as const,
-        message: `Ayrshare ${resp.status}: ${text.slice(0, 200)}`,
-      }));
+      return {
+        results: ayrPlatforms.map((p) => ({
+          platform: p,
+          status: "error" as const,
+          message: `Ayrshare ${resp.status}: ${text.slice(0, 200)}`,
+        })),
+        providerPostId: null,
+      };
     }
     const data = await resp.json();
     const postIds = data?.postIds || {};
     const errors = data?.errors || [];
-    return ayrPlatforms.map((p) => {
+    const results = ayrPlatforms.map((p) => {
       const err = errors.find((e: any) => e.platform === p);
       if (err) {
         return { platform: p, status: "error" as const, message: err.message || "Ayrshare error" };
@@ -438,12 +451,114 @@ async function publishViaAyrshare(
         externalId: postIds[p] || data?.id,
       };
     });
+    // data.id is Ayrshare's umbrella post id — the handle the Comments API
+    // (GET/POST /api/comments/:id) expects to read & reply to engagement.
+    return { results, providerPostId: data?.id ?? null };
   } catch (err) {
-    return platforms.map((p) => ({
-      platform: p,
-      status: "error" as const,
-      message: err instanceof Error ? err.message : String(err),
-    }));
+    return {
+      results: platforms.map((p) => ({
+        platform: p,
+        status: "error" as const,
+        message: err instanceof Error ? err.message : String(err),
+      })),
+      providerPostId: null,
+    };
+  }
+}
+
+// Postiz publish: fan out to every connected Postiz channel whose
+// identifier matches a requested platform. Postiz holds the social tokens,
+// so a single API call covers all of them.
+async function publishViaPostiz(
+  platforms: string[],
+  content: string,
+  imageUrl: string | null,
+): Promise<{ results: PublishResult[]; providerPostId: string | null }> {
+  const results: PublishResult[] = [];
+  try {
+    const integrations = await postizListIntegrations();
+    const chosen: { id: string; platform: string }[] = [];
+    for (const raw of platforms) {
+      const platform = normalisePlatform(raw);
+      const ident = toPostizIdentifier(platform);
+      const match = integrations.find(
+        (i) => (i.identifier || "").toLowerCase() === ident && !i.disabled,
+      );
+      if (match) chosen.push({ id: match.id, platform });
+      else results.push({ platform, status: "not_connected" });
+    }
+    if (chosen.length === 0) return { results, providerPostId: null };
+
+    // Best-effort image upload; degrades to text-only on failure.
+    let imageId: string | null = null;
+    if (imageUrl) imageId = await postizUploadFromUrl(imageUrl);
+
+    const res = await postizCreatePost({
+      integrationIds: chosen.map((c) => c.id),
+      content,
+      imageId,
+    });
+    for (const c of chosen) {
+      results.push(
+        res.ok
+          ? { platform: c.platform, status: "ok", externalId: res.id }
+          : { platform: c.platform, status: "error", message: res.error },
+      );
+    }
+    return { results, providerPostId: res.ok ? (res.id ?? null) : null };
+  } catch (err) {
+    return {
+      results: platforms.map((p) => ({
+        platform: normalisePlatform(p),
+        status: "error" as const,
+        message: err instanceof Error ? err.message : String(err),
+      })),
+      providerPostId: null,
+    };
+  }
+}
+
+// Zernio publish: map requested platforms to the accounts connected under
+// the user's Zernio profile, then publish to all of them in one call.
+async function publishViaZernio(
+  profileKey: string | null,
+  platforms: string[],
+  content: string,
+  imageUrl: string | null,
+  requestId: string,
+): Promise<{ results: PublishResult[]; providerPostId: string | null }> {
+  const results: PublishResult[] = [];
+  try {
+    const accounts = await zernioListAccounts(profileKey);
+    const targets: Array<{ platform: string; accountId: string }> = [];
+    for (const raw of platforms) {
+      const platform = normalisePlatform(raw);
+      const match = accounts.find(
+        (a) => (a.platform || "").toLowerCase() === platform && a.isActive !== false,
+      );
+      if (match) targets.push({ platform, accountId: match._id });
+      else results.push({ platform, status: "not_connected" });
+    }
+    if (targets.length === 0) return { results, providerPostId: null };
+
+    const res = await zernioCreatePost({ content, imageUrl, platforms: targets, requestId });
+    for (const t of targets) {
+      results.push(
+        res.ok
+          ? { platform: t.platform, status: "ok", externalId: res.id }
+          : { platform: t.platform, status: "error", message: res.error },
+      );
+    }
+    return { results, providerPostId: res.ok ? (res.id ?? null) : null };
+  } catch (err) {
+    return {
+      results: platforms.map((p) => ({
+        platform: normalisePlatform(p),
+        status: "error" as const,
+        message: err instanceof Error ? err.message : String(err),
+      })),
+      providerPostId: null,
+    };
   }
 }
 
@@ -479,15 +594,24 @@ async function publishPost(
     .select("*")
     .eq("user_id", post.user_id);
 
-  // If the user has an Ayrshare umbrella connection, prefer that over
-  // direct OAuth. Ayrshare publishes to every platform in one call and
-  // dispenses with managing tokens ourselves.
+  // Provider precedence: Zernio → Postiz → Ayrshare → direct OAuth.
+  // The first umbrella connection found wins.
+  const zernio = (connections || []).find(
+    (c: { provider?: string }) => c.provider === "zernio",
+  ) as { profile_key: string | null } | undefined;
+  const postiz = (connections || []).find(
+    (c: { provider?: string }) => c.provider === "postiz",
+  ) as { id: string } | undefined;
   const ayrshare = (connections || []).find(
     (c: { provider?: string }) => c.provider === "ayrshare",
   ) as { profile_key: string | null } | undefined;
 
   const platforms: string[] = post.platforms || [];
   const results: PublishResult[] = [];
+  // The provider-level post id (e.g. Ayrshare's umbrella id) lets the
+  // engagement sync later fetch comments for this post. Per-platform ids
+  // are collected into external_post_ids below.
+  let providerPostId: string | null = null;
 
   // For platforms that require a long-lived public image URL (Instagram,
   // Facebook URL-link posting), rehost the image on our own storage.
@@ -501,15 +625,32 @@ async function publishPost(
     }
   }
 
-  if (ayrshare) {
+  if (zernio) {
+    // Publish via Zernio (the chosen backend) to the user's connected accounts.
+    const zr = await publishViaZernio(
+      zernio.profile_key,
+      platforms,
+      post.content,
+      stableImageUrl,
+      post.id,
+    );
+    results.push(...zr.results);
+    providerPostId = zr.providerPostId;
+  } else if (postiz) {
+    // Publish via Postiz — one call fans out to every matching channel.
+    const pz = await publishViaPostiz(platforms, post.content, stableImageUrl);
+    results.push(...pz.results);
+    providerPostId = pz.providerPostId;
+  } else if (ayrshare) {
     // One-shot publish via Ayrshare for every requested platform.
-    const ayrResults = await publishViaAyrshare(
+    const ayr = await publishViaAyrshare(
       ayrshare.profile_key,
       post.content,
       stableImageUrl,
       platforms,
     );
-    results.push(...ayrResults);
+    results.push(...ayr.results);
+    providerPostId = ayr.providerPostId;
   } else {
     // Direct-OAuth fallback: one API call per platform, one connection
     // row required per platform.
@@ -543,12 +684,21 @@ async function publishPost(
   // after connecting an account.
   const finalStatus = anyOk ? "published" : allErrors ? "failed" : "validated";
 
+  // Persist external post ids so the engagement/comments sync can later
+  // map a published post back to its per-platform social post.
+  const externalPostIds: Record<string, string> = {};
+  for (const r of results) {
+    if (r.status === "ok" && r.externalId) externalPostIds[r.platform] = r.externalId;
+  }
+
   await supabase
     .from("posts")
     .update({
       status: finalStatus,
       published_at: anyOk ? new Date().toISOString() : null,
       publish_error: allErrors || finalStatus === "validated" ? JSON.stringify(results) : null,
+      provider_post_id: providerPostId,
+      external_post_ids: externalPostIds,
     })
     .eq("id", postId);
 
