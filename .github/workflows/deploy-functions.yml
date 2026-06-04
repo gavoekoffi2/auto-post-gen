@@ -33,4 +33,10 @@ jobs:
           version: latest
 
       - name: Deploy all edge functions
-        run: supabase functions deploy --project-ref "$PROJECT_REF"
+        run: |
+          if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then
+            echo "SUPABASE_ACCESS_TOKEN not set — skipping auto-deploy."
+            echo "Add it in repo Settings -> Secrets and variables -> Actions to enable."
+            exit 0
+          fi
+          supabase functions deploy --project-ref "$PROJECT_REF"
