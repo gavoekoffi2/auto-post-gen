@@ -16,13 +16,11 @@ export type Database = {
     Tables: {
       posts: {
         Row: {
-          auto_publish_attempted_at: string | null
           content: string
           created_at: string | null
           id: string
           image_url: string | null
           platforms: string[]
-          publish_error: string | null
           published_at: string | null
           scheduled_for: string | null
           status: string
@@ -31,18 +29,14 @@ export type Database = {
           user_id: string
           validation_status: string | null
           validation_token: string | null
-          validation_token_created_at: string | null
-          validation_token_used_at: string | null
           week_number: number | null
         }
         Insert: {
-          auto_publish_attempted_at?: string | null
           content: string
           created_at?: string | null
           id?: string
           image_url?: string | null
           platforms?: string[]
-          publish_error?: string | null
           published_at?: string | null
           scheduled_for?: string | null
           status?: string
@@ -51,18 +45,14 @@ export type Database = {
           user_id: string
           validation_status?: string | null
           validation_token?: string | null
-          validation_token_created_at?: string | null
-          validation_token_used_at?: string | null
           week_number?: number | null
         }
         Update: {
-          auto_publish_attempted_at?: string | null
           content?: string
           created_at?: string | null
           id?: string
           image_url?: string | null
           platforms?: string[]
-          publish_error?: string | null
           published_at?: string | null
           scheduled_for?: string | null
           status?: string
@@ -71,101 +61,13 @@ export type Database = {
           user_id?: string
           validation_status?: string | null
           validation_token?: string | null
-          validation_token_created_at?: string | null
-          validation_token_used_at?: string | null
           week_number?: number | null
-        }
-        Relationships: []
-      }
-      social_connections: {
-        Row: {
-          access_token: string
-          account_id: string
-          account_name: string | null
-          account_username: string | null
-          created_at: string | null
-          id: string
-          meta: Json | null
-          platform: string
-          profile_key: string | null
-          provider: string | null
-          refresh_token: string | null
-          scopes: string[] | null
-          token_expires_at: string | null
-          updated_at: string | null
-          user_id: string
-        }
-        Insert: {
-          access_token: string
-          account_id: string
-          account_name?: string | null
-          account_username?: string | null
-          created_at?: string | null
-          id?: string
-          meta?: Json | null
-          platform: string
-          profile_key?: string | null
-          provider?: string | null
-          refresh_token?: string | null
-          scopes?: string[] | null
-          token_expires_at?: string | null
-          updated_at?: string | null
-          user_id: string
-        }
-        Update: {
-          access_token?: string
-          account_id?: string
-          account_name?: string | null
-          account_username?: string | null
-          created_at?: string | null
-          id?: string
-          meta?: Json | null
-          platform?: string
-          profile_key?: string | null
-          provider?: string | null
-          refresh_token?: string | null
-          scopes?: string[] | null
-          token_expires_at?: string | null
-          updated_at?: string | null
-          user_id?: string
-        }
-        Relationships: []
-      }
-      generation_usage: {
-        Row: {
-          created_at: string | null
-          error: string | null
-          function_name: string
-          id: string
-          status: string
-          user_id: string
-        }
-        Insert: {
-          created_at?: string | null
-          error?: string | null
-          function_name: string
-          id?: string
-          status?: string
-          user_id: string
-        }
-        Update: {
-          created_at?: string | null
-          error?: string | null
-          function_name?: string
-          id?: string
-          status?: string
-          user_id?: string
         }
         Relationships: []
       }
       profiles: {
         Row: {
-          activity_keywords: string[] | null
           auto_publish: boolean | null
-          brand_accent_color: string | null
-          brand_font: string | null
-          brand_primary_color: string | null
-          brand_secondary_color: string | null
           company_name: string | null
           connected_platforms: string[] | null
           content_types: string[]
@@ -176,7 +78,6 @@ export type Database = {
           facebook_username: string | null
           id: string
           image_people_type: string | null
-          image_style: string | null
           instagram_username: string | null
           linkedin_username: string | null
           logo_url: string | null
@@ -185,7 +86,6 @@ export type Database = {
           preferred_days: string[] | null
           sector: string
           style_example: string | null
-          style_examples: Json | null
           tiktok_username: string | null
           tone: string
           twitter_username: string | null
@@ -193,12 +93,7 @@ export type Database = {
           use_custom_images: boolean | null
         }
         Insert: {
-          activity_keywords?: string[] | null
           auto_publish?: boolean | null
-          brand_accent_color?: string | null
-          brand_font?: string | null
-          brand_primary_color?: string | null
-          brand_secondary_color?: string | null
           company_name?: string | null
           connected_platforms?: string[] | null
           content_types: string[]
@@ -209,7 +104,6 @@ export type Database = {
           facebook_username?: string | null
           id: string
           image_people_type?: string | null
-          image_style?: string | null
           instagram_username?: string | null
           linkedin_username?: string | null
           logo_url?: string | null
@@ -218,7 +112,6 @@ export type Database = {
           preferred_days?: string[] | null
           sector: string
           style_example?: string | null
-          style_examples?: Json | null
           tiktok_username?: string | null
           tone: string
           twitter_username?: string | null
@@ -226,12 +119,7 @@ export type Database = {
           use_custom_images?: boolean | null
         }
         Update: {
-          activity_keywords?: string[] | null
           auto_publish?: boolean | null
-          brand_accent_color?: string | null
-          brand_font?: string | null
-          brand_primary_color?: string | null
-          brand_secondary_color?: string | null
           company_name?: string | null
           connected_platforms?: string[] | null
           content_types?: string[]
@@ -242,7 +130,6 @@ export type Database = {
           facebook_username?: string | null
           id?: string
           image_people_type?: string | null
-          image_style?: string | null
           instagram_username?: string | null
           linkedin_username?: string | null
           logo_url?: string | null
@@ -251,7 +138,6 @@ export type Database = {
           preferred_days?: string[] | null
           sector?: string
           style_example?: string | null
-          style_examples?: Json | null
           tiktok_username?: string | null
           tone?: string
           twitter_username?: string | null
