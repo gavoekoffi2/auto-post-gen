@@ -110,6 +110,60 @@ export async function chatText(opts: ChatCompletionOptions): Promise<string> {
   return (data?.choices?.[0]?.message?.content || "").trim();
 }
 
+function isImageUrl(value: unknown): value is string {
+  return typeof value === "string" && (
+    value.startsWith("data:image/") ||
+    /^https?:\/\/\S+\.(png|jpe?g|webp|gif)(\?\S*)?$/i.test(value) ||
+    /^https?:\/\/\S+/i.test(value)
+  );
+}
+
+function extractImageUrlFromUnknown(value: unknown): string | null {
+  if (!value) return null;
+  if (isImageUrl(value)) return value;
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = extractImageUrlFromUnknown(item);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  if (typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    // Common OpenAI/OpenRouter style shapes:
+    // - { image_url: { url: "..." } }
+    // - { image_url: "..." }
+    // - { url: "..." }
+    // - { b64_json: "..." }
+    // - { data: "..." }
+    const direct =
+      extractImageUrlFromUnknown(obj.image_url) ||
+      extractImageUrlFromUnknown(obj.url) ||
+      extractImageUrlFromUnknown(obj.data) ||
+      extractImageUrlFromUnknown(obj.output) ||
+      extractImageUrlFromUnknown(obj.images) ||
+      extractImageUrlFromUnknown(obj.content);
+    if (direct) return direct;
+
+    if (typeof obj.b64_json === "string" && obj.b64_json.length > 100) {
+      return `data:image/png;base64,${obj.b64_json}`;
+    }
+    return null;
+  }
+
+  if (typeof value === "string") {
+    // Some providers return markdown/text containing a URL or inline data URL.
+    const dataMatch = value.match(/data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/);
+    if (dataMatch?.[0]) return dataMatch[0];
+    const urlMatch = value.match(/https?:\/\/[^\s)"']+/);
+    if (urlMatch?.[0]) return urlMatch[0];
+  }
+
+  return null;
+}
+
 // Tries each model in the chain until one returns an image URL or data: URL.
 export async function generateImageUrl(
   promptText: string,
@@ -125,16 +179,20 @@ export async function generateImageUrl(
         modalities: ["image", "text"],
       });
       if (!resp.ok) {
-        lastError = `${model} ${resp.status}: ${(await resp.text()).slice(0, 200)}`;
+        lastError = `${model} ${resp.status}: ${(await resp.text()).slice(0, 500)}`;
         continue;
       }
       const data = await resp.json();
+      const message = data?.choices?.[0]?.message;
       const candidate =
-        data?.choices?.[0]?.message?.images?.[0]?.image_url?.url ||
-        data?.choices?.[0]?.message?.image_url?.url ||
-        null;
+        extractImageUrlFromUnknown(message?.images) ||
+        extractImageUrlFromUnknown(message?.image_url) ||
+        extractImageUrlFromUnknown(message?.content) ||
+        extractImageUrlFromUnknown(data?.images) ||
+        extractImageUrlFromUnknown(data?.data) ||
+        extractImageUrlFromUnknown(data);
       if (candidate) return { imageUrl: candidate, lastError: null };
-      lastError = `${model} returned no image`;
+      lastError = `${model} returned no image. Response keys: ${Object.keys(data || {}).join(", ")}`;
     } catch (err) {
       lastError = `${model} threw: ${err instanceof Error ? err.message : String(err)}`;
     }

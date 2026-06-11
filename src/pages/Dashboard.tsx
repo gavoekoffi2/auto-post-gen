@@ -332,7 +332,7 @@ export default function Dashboard() {
                 p.id === savedPost.id ? { ...p, image_url: imgData.imageUrl } : p,
               ),
             );
-            toast.success("Image ajoutée au post");
+            toast.success(imgData.fallback ? "Visuel de secours ajouté au post" : "Image IA ajoutée au post");
           }
         } catch (imgErr) {
           console.error('Image gen failed:', imgErr);
@@ -375,7 +375,7 @@ export default function Dashboard() {
         setPosts((prev) =>
           prev.map((p) => (p.id === post.id ? { ...p, image_url: data.imageUrl } : p)),
         );
-        toast.success("Image générée");
+        toast.success(data.fallback ? "Visuel de secours généré" : "Image IA générée");
       } else {
         toast.error("Image non générée");
       }

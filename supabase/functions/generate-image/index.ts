@@ -29,6 +29,43 @@ function buildCorsHeaders(origin: string | null) {
 
 const MAX_PAYLOAD_BYTES = 64 * 1024;
 
+function safeColor(value: string, fallback: string): string {
+  return /^#[0-9a-f]{6}$/i.test(value) ? value : fallback;
+}
+
+function fallbackSvgDataUrl(primary: string, secondary: string, accent: string, style: string): string {
+  const p = safeColor(primary, "#8B5CF6");
+  const s = safeColor(secondary, "#3B82F6");
+  const a = safeColor(accent, "#F59E0B");
+  const isMinimal = style === "minimalist" || style === "flat_design";
+  const svg = `
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1200" viewBox="0 0 1200 1200">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="${p}"/>
+      <stop offset="55%" stop-color="${s}"/>
+      <stop offset="100%" stop-color="${a}"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="65%" cy="35%" r="55%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.62"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="34"/>
+    </filter>
+  </defs>
+  <rect width="1200" height="1200" fill="url(#bg)"/>
+  <circle cx="790" cy="320" r="420" fill="url(#glow)"/>
+  <circle cx="180" cy="980" r="330" fill="#000000" opacity="0.12" filter="url(#soft)"/>
+  <path d="M180 760 C330 575 500 560 650 690 C805 825 965 820 1080 650 L1080 1080 L180 1080 Z" fill="#ffffff" opacity="${isMinimal ? "0.22" : "0.18"}"/>
+  <path d="M80 260 C250 120 470 110 620 250 C760 380 900 405 1120 260" fill="none" stroke="#ffffff" stroke-width="36" stroke-linecap="round" opacity="0.28"/>
+  <circle cx="355" cy="405" r="90" fill="#ffffff" opacity="0.22"/>
+  <circle cx="905" cy="750" r="130" fill="#ffffff" opacity="0.16"/>
+  <rect x="230" y="230" width="740" height="740" rx="96" fill="none" stroke="#ffffff" stroke-width="5" opacity="0.35"/>
+</svg>`.trim();
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
 serve(async (req) => {
   const corsHeaders = buildCorsHeaders(req.headers.get("origin"));
   if (req.method === "OPTIONS") {
@@ -162,11 +199,11 @@ RÈGLES CRITIQUES:
     const { imageUrl: rawImageUrl, lastError } = await generateImageUrl(imagePrompt);
     let imageUrl: string | null = rawImageUrl;
 
+    let usedFallback = false;
     if (!imageUrl) {
-      return new Response(
-        JSON.stringify({ error: lastError || "Image generation failed" }),
-        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+      console.error("AI image generation failed, using branded fallback:", lastError);
+      imageUrl = fallbackSvgDataUrl(primary, secondary, accent, imageStyle);
+      usedFallback = true;
     }
 
     // Re-host to user-assets/ so the URL is permanent.
@@ -222,7 +259,7 @@ RÈGLES CRITIQUES:
     }
 
     return new Response(
-      JSON.stringify({ imageUrl }),
+      JSON.stringify({ imageUrl, fallback: usedFallback, warning: usedFallback ? lastError : undefined }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err) {

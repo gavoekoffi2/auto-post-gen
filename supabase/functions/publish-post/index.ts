@@ -594,23 +594,16 @@ async function publishPost(
     .select("*")
     .eq("user_id", post.user_id);
 
-  // Provider precedence: Zernio → Postiz → Ayrshare → direct OAuth.
-  // The first umbrella connection found wins.
+  // Zernio-only mode: legacy Lovable/direct OAuth, Postiz and Ayrshare
+  // connections are intentionally ignored. The product now has a single
+  // social backend to avoid confusing first users and to keep publishing
+  // behavior predictable.
   const zernio = (connections || []).find(
     (c: { provider?: string }) => c.provider === "zernio",
-  ) as { profile_key: string | null } | undefined;
-  const postiz = (connections || []).find(
-    (c: { provider?: string }) => c.provider === "postiz",
-  ) as { id: string } | undefined;
-  const ayrshare = (connections || []).find(
-    (c: { provider?: string }) => c.provider === "ayrshare",
   ) as { profile_key: string | null } | undefined;
 
   const platforms: string[] = post.platforms || [];
   const results: PublishResult[] = [];
-  // The provider-level post id (e.g. Ayrshare's umbrella id) lets the
-  // engagement sync later fetch comments for this post. Per-platform ids
-  // are collected into external_post_ids below.
   let providerPostId: string | null = null;
 
   // For platforms that require a long-lived public image URL (Instagram,
@@ -626,7 +619,6 @@ async function publishPost(
   }
 
   if (zernio) {
-    // Publish via Zernio (the chosen backend) to the user's connected accounts.
     const zr = await publishViaZernio(
       zernio.profile_key,
       platforms,
@@ -636,41 +628,13 @@ async function publishPost(
     );
     results.push(...zr.results);
     providerPostId = zr.providerPostId;
-  } else if (postiz) {
-    // Publish via Postiz — one call fans out to every matching channel.
-    const pz = await publishViaPostiz(platforms, post.content, stableImageUrl);
-    results.push(...pz.results);
-    providerPostId = pz.providerPostId;
-  } else if (ayrshare) {
-    // One-shot publish via Ayrshare for every requested platform.
-    const ayr = await publishViaAyrshare(
-      ayrshare.profile_key,
-      post.content,
-      stableImageUrl,
-      platforms,
-    );
-    results.push(...ayr.results);
-    providerPostId = ayr.providerPostId;
   } else {
-    // Direct-OAuth fallback: one API call per platform, one connection
-    // row required per platform.
     for (const rawPlatform of platforms) {
-      const platform = normalisePlatform(rawPlatform);
-      const publisher = PUBLISHERS[platform];
-      if (!publisher) {
-        results.push({ platform, status: "error", message: "Unknown platform" });
-        continue;
-      }
-      const connection = (connections || []).find(
-        (c: { platform: string; provider?: string }) =>
-          c.platform === platform && (c.provider ?? "direct") === "direct",
-      ) as SocialConnection | undefined;
-      if (!connection) {
-        results.push({ platform, status: "not_connected" });
-        continue;
-      }
-      const result = await publisher(connection, post.content, stableImageUrl);
-      results.push(result);
+      results.push({
+        platform: normalisePlatform(rawPlatform),
+        status: "not_connected",
+        message: "Zernio account not connected",
+      });
     }
   }
 
