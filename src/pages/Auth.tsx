@@ -21,7 +21,7 @@ export default function Auth() {
     setLoading(true);
 
     try {
-      const { error } = await supabase.auth.signUp({
+      const { data, error } = await supabase.auth.signUp({
         email,
         password,
         options: {
@@ -31,8 +31,18 @@ export default function Auth() {
 
       if (error) throw error;
 
-      toast.success("Compte créé ! Vérifiez votre email.");
-      navigate("/onboarding");
+      if (data.session) {
+        // Email confirmation is disabled: the user is signed in right away.
+        toast.success("Compte créé !");
+        navigate("/onboarding");
+      } else {
+        // Email confirmation is enabled: there is no session yet, so we
+        // must NOT navigate to a protected route (it would bounce back to
+        // /auth). Ask the user to confirm via email first.
+        toast.success(
+          "Compte créé ! Vérifiez votre email pour confirmer votre inscription.",
+        );
+      }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Erreur lors de l'inscription";
       toast.error(message);

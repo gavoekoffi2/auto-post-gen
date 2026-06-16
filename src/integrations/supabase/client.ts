@@ -5,6 +5,15 @@ import type { Database } from './types';
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
+// Fail fast with a clear message instead of letting createClient throw a
+// cryptic error (or white-screen the whole app) when the env is missing.
+if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
+  throw new Error(
+    "Configuration Supabase manquante : définissez VITE_SUPABASE_URL et " +
+      "VITE_SUPABASE_PUBLISHABLE_KEY (voir .env.example).",
+  );
+}
+
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
 
@@ -13,5 +22,8 @@ export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABL
     storage: localStorage,
     persistSession: true,
     autoRefreshToken: true,
+    // Auto-process recovery / email-confirmation links so the session is
+    // ready by the time pages mount (kept explicit; it is the default).
+    detectSessionInUrl: true,
   }
 });

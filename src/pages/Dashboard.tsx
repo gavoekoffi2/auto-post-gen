@@ -28,14 +28,34 @@ type Post = {
   content: string;
   image_url?: string;
   status: PostStatus;
+  publish_error?: string | null;
 };
 
 type UserProfile = {
   id?: string;
   description?: string | null;
+  company_name?: string | null;
   platforms?: string[] | null;
   [key: string]: unknown;
 };
+
+// publish-post stores the per-platform outcome as a JSON array in
+// posts.publish_error. Turn it into a short, human-readable reason.
+function formatPublishError(raw?: string | null): string | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      const msgs = parsed
+        .filter((r) => r && r.status && r.status !== "ok")
+        .map((r) => `${r.platform}: ${r.message || r.status}`);
+      return msgs.length ? msgs.join(" · ") : null;
+    }
+  } catch {
+    // Not JSON (legacy plain string) — fall through.
+  }
+  return String(raw).slice(0, 200);
+}
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -52,9 +72,11 @@ export default function Dashboard() {
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
   const [generatingImageIds, setGeneratingImageIds] = useState<Set<string>>(new Set());
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [hasConnection, setHasConnection] = useState<boolean | null>(null);
 
   useEffect(() => {
     checkAuthAndLoadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const checkAuthAndLoadData = async () => {
@@ -73,6 +95,16 @@ export default function Dashboard() {
         .maybeSingle();
       
       setUserProfile(profile);
+
+      // Does the user have a social account connected? Drives the
+      // "connect a network" first-run nudge. Only non-secret columns are
+      // readable here (tokens are locked down at the DB level).
+      const { count: connCount } = await supabase
+        .from('social_connections')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', session.user.id)
+        .eq('provider', 'zernio');
+      setHasConnection((connCount ?? 0) > 0);
 
       // Load posts
       const { data: postsData, error } = await supabase
@@ -125,7 +157,7 @@ export default function Dashboard() {
 
       if (error) throw error;
 
-      setPosts(posts.map(post =>
+      setPosts((prev) => prev.map(post =>
         post.id === postId ? { ...post, status: "validated" as const } : post
       ));
       toast.success("Post validé !");
@@ -231,7 +263,7 @@ export default function Dashboard() {
 
       if (error) throw error;
 
-      setPosts(posts.map(post =>
+      setPosts((prev) => prev.map(post =>
         post.id === editingPost.id ? editingPost : post
       ));
       setIsEditDialogOpen(false);
@@ -424,7 +456,7 @@ export default function Dashboard() {
 
       if (error) throw error;
 
-      setPosts(posts.filter(post => post.id !== postId));
+      setPosts((prev) => prev.filter(post => post.id !== postId));
       toast.success("Post supprimé !");
     } catch (_error) {
       toast.error('Erreur lors de la suppression');
@@ -502,6 +534,28 @@ export default function Dashboard() {
       </header>
 
       <div className="container mx-auto max-w-7xl px-4 py-8">
+        {/* First-run nudge: no social account connected yet. */}
+        {hasConnection === false && (
+          <Card className="glass-card p-4 mb-6 border-primary/40">
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <div className="flex items-center gap-3">
+                <Share2 className="w-5 h-5 text-primary shrink-0" />
+                <p className="text-sm">
+                  Connectez un réseau social pour pouvoir publier vos posts validés.
+                </p>
+              </div>
+              <Button
+                size="sm"
+                className="bg-gradient-to-r from-primary to-secondary"
+                onClick={handleSocialMedia}
+              >
+                <Share2 className="w-4 h-4 mr-2" />
+                Connecter un réseau
+              </Button>
+            </div>
+          </Card>
+        )}
+
         {/* Stats */}
         <div className="grid md:grid-cols-4 gap-6 mb-8">
           <Card className="glass-card p-6 animate-fade-in">
@@ -633,6 +687,11 @@ export default function Dashboard() {
                            <span className="text-xs">Générer l'image</span>
                          </Button>
                        </div>
+                     )}
+                     {post.status === "failed" && formatPublishError(post.publish_error) && (
+                       <p className="text-xs text-destructive mb-3 break-words">
+                         Raison de l'échec : {formatPublishError(post.publish_error)}
+                       </p>
                      )}
                      <p className="text-sm text-muted-foreground mb-4 line-clamp-2">{post.content}</p>
                      <div className="flex gap-2 flex-wrap">
@@ -773,11 +832,11 @@ export default function Dashboard() {
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 bg-gradient-to-r from-primary to-secondary rounded-full flex items-center justify-center">
                         <span className="text-sm font-bold text-white">
-                          {userProfile?.description?.substring(0, 2).toUpperCase() || "AI"}
+                          {(userProfile?.company_name || "AI").substring(0, 2).toUpperCase()}
                         </span>
                       </div>
                       <div>
-                        <p className="font-semibold text-sm">{userProfile?.description?.split('.')[0] || "Mon Entreprise"}</p>
+                        <p className="font-semibold text-sm">{userProfile?.company_name || "Mon Entreprise"}</p>
                         <p className="text-xs text-muted-foreground">Il y a quelques instants</p>
                       </div>
                     </div>

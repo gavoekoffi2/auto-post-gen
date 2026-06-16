@@ -169,7 +169,9 @@ serve(async (req) => {
           platform: "all",
           account_id: accountIdForRow,
           account_name: mode === "business" ? "Ayrshare profile" : "Ayrshare (shared)",
-          access_token: apiKey, // we need *something* non-null; the publisher uses AYRSHARE_API_KEY from env anyway
+          // NEVER persist the master AYRSHARE_API_KEY here: the publisher reads it
+          // from env. Store a non-secret placeholder to satisfy the NOT NULL column.
+          access_token: "managed-by-ayrshare",
           profile_key: profileKey,
           meta: { mode },
         },

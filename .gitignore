@@ -12,6 +12,12 @@ dist
 dist-ssr
 *.local
 
+# Local env files (anon keys are public, but never track them — and this
+# stops a server secret from ever being committed by mistake).
+.env
+.env.*
+!.env.example
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

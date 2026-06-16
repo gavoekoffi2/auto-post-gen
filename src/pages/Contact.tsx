@@ -7,6 +7,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { ArrowLeft, Mail, MessageSquare, Send } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
+
+const SUPPORT_EMAIL = "contact@prosocialai.com";
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function Contact() {
   const navigate = useNavigate();
@@ -16,24 +20,45 @@ export default function Contact() {
     email: "",
     subject: "",
     message: "",
+    company: "", // honeypot — must stay empty
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!formData.name || !formData.email || !formData.message) {
       toast.error("Veuillez remplir tous les champs obligatoires");
       return;
     }
+    if (!EMAIL_RE.test(formData.email)) {
+      toast.error("Veuillez saisir une adresse email valide");
+      return;
+    }
 
     setLoading(true);
-    
-    // Simulate sending (would connect to email service in production)
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    toast.success("Message envoyé avec succès ! Nous vous répondrons rapidement.");
-    setFormData({ name: "", email: "", subject: "", message: "" });
-    setLoading(false);
+    try {
+      const { data, error } = await supabase.functions.invoke("send-contact", {
+        body: formData,
+      });
+      // supabase.functions.invoke throws on non-2xx; data.error covers the
+      // "configured but rejected" case.
+      if (error || (data && data.error)) {
+        const code = (data && data.code) || "";
+        if (code === "not_configured") {
+          toast.error(`Messagerie indisponible. Écrivez-nous à ${SUPPORT_EMAIL}.`);
+        } else {
+          toast.error((data && data.error) || "Échec de l'envoi. Réessayez plus tard.");
+        }
+        return;
+      }
+
+      toast.success("Message envoyé avec succès ! Nous vous répondrons rapidement.");
+      setFormData({ name: "", email: "", subject: "", message: "", company: "" });
+    } catch (_err) {
+      toast.error(`Échec de l'envoi. Écrivez-nous directement à ${SUPPORT_EMAIL}.`);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -89,6 +114,17 @@ export default function Contact() {
           {/* Contact Form */}
           <Card className="glass-card p-6">
             <form onSubmit={handleSubmit} className="space-y-4">
+              {/* Honeypot: hidden from humans, catches naive bots. */}
+              <input
+                type="text"
+                name="company"
+                tabIndex={-1}
+                autoComplete="off"
+                aria-hidden="true"
+                value={formData.company}
+                onChange={(e) => setFormData({ ...formData, company: e.target.value })}
+                style={{ position: "absolute", left: "-9999px", width: 1, height: 1, opacity: 0 }}
+              />
               <div>
                 <Label htmlFor="name">Nom *</Label>
                 <Input

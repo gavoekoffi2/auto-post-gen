@@ -42,9 +42,13 @@ const Comments = () => {
   const [savingSettings, setSavingSettings] = useState(false);
 
   const loadComments = async () => {
+    const { data: userData } = await supabase.auth.getUser();
+    if (!userData?.user) return;
+    // Scope by user_id explicitly (defense-in-depth on top of RLS).
     const { data, error } = await supabase
       .from("social_comments")
       .select("*")
+      .eq("user_id", userData.user.id)
       .order("comment_created_at", { ascending: false, nullsFirst: false })
       .order("created_at", { ascending: false })
       .limit(200);

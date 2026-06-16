@@ -82,6 +82,11 @@ verify_jwt = false
 [functions.zernio-status]
 verify_jwt = false
 
+# send-contact: public contact form → operator inbox via Resend. No JWT
+# (anonymous visitors), validated + honeypot-protected in-function.
+[functions.send-contact]
+verify_jwt = false
+
 # Engagement: comment inbox sync + AI auto-reply. sync-comments runs from
 # cron (CRON_SECRET) or a logged-in user; comment-reply requires a user JWT.
 [functions.sync-comments]

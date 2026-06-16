@@ -35,8 +35,8 @@ jobs:
       - name: Deploy all edge functions
         run: |
           if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then
-            echo "SUPABASE_ACCESS_TOKEN not set — skipping auto-deploy."
-            echo "Add it in repo Settings -> Secrets and variables -> Actions to enable."
-            exit 0
+            echo "::error::SUPABASE_ACCESS_TOKEN is not set — edge functions were NOT deployed."
+            echo "Add it in repo Settings -> Secrets and variables -> Actions to enable deploys."
+            exit 1
           fi
           supabase functions deploy --project-ref "$PROJECT_REF"

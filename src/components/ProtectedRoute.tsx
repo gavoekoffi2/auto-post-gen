@@ -61,9 +61,12 @@ export const ProtectedRoute = ({ children, requiresProfile = true }: ProtectedRo
       if (event === 'SIGNED_OUT') {
         setIsAuthenticated(false);
         setHasProfile(false);
-      } else if (session) {
+      } else if (event === 'SIGNED_IN' && session) {
         setIsAuthenticated(true);
-        // Re-check profile when the session changes.
+        // Re-check profile only on an actual sign-in. We deliberately
+        // ignore TOKEN_REFRESHED / USER_UPDATED (fired by autoRefresh and
+        // password changes) to avoid redundant profile checks and the
+        // redirect churn they cause.
         checkAuth();
       }
     });

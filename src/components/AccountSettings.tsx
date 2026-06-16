@@ -29,6 +29,8 @@ export function AccountSettings({ userEmail }: AccountSettingsProps) {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [changingPassword, setChangingPassword] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [confirmText, setConfirmText] = useState("");
+  const CONFIRM_WORD = "SUPPRIMER";
 
   const handlePasswordChange = async () => {
     if (newPassword.length < 6) {
@@ -146,7 +148,7 @@ export function AccountSettings({ userEmail }: AccountSettingsProps) {
           posts et paramètres seront définitivement effacés.
         </p>
 
-        <AlertDialog>
+        <AlertDialog onOpenChange={(open) => !open && setConfirmText("")}>
           <AlertDialogTrigger asChild>
             <Button variant="destructive" disabled={deleting}>
               <Trash2 className="w-4 h-4 mr-2" />
@@ -157,14 +159,23 @@ export function AccountSettings({ userEmail }: AccountSettingsProps) {
             <AlertDialogHeader>
               <AlertDialogTitle>Êtes-vous sûr ?</AlertDialogTitle>
               <AlertDialogDescription>
-                Cette action est irréversible. Votre compte et toutes vos données 
-                seront définitivement supprimés.
+                Cette action est irréversible. Votre compte et toutes vos données
+                seront définitivement supprimés. Pour confirmer, tapez{" "}
+                <strong>{CONFIRM_WORD}</strong> ci-dessous.
               </AlertDialogDescription>
             </AlertDialogHeader>
+            <Input
+              value={confirmText}
+              onChange={(e) => setConfirmText(e.target.value)}
+              placeholder={CONFIRM_WORD}
+              aria-label="Confirmation de suppression"
+              className="glass-card"
+            />
             <AlertDialogFooter>
               <AlertDialogCancel>Annuler</AlertDialogCancel>
               <AlertDialogAction
                 onClick={handleDeleteAccount}
+                disabled={deleting || confirmText !== CONFIRM_WORD}
                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               >
                 {deleting ? "Suppression..." : "Supprimer définitivement"}

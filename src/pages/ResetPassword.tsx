@@ -17,21 +17,36 @@ export default function ResetPassword() {
   const [isRecovery, setIsRecovery] = useState(false);
 
   useEffect(() => {
-    // Check for recovery token in URL hash
-    const hashParams = new URLSearchParams(window.location.hash.substring(1));
-    const type = hashParams.get("type");
-    if (type === "recovery") {
-      setIsRecovery(true);
-    }
+    let active = true;
 
-    // Listen for PASSWORD_RECOVERY event
+    // supabase-js (detectSessionInUrl + PKCE) automatically exchanges the
+    // recovery link — either the legacy implicit hash (#type=recovery) or
+    // the modern PKCE query (?code=...) — into a session on load. That can
+    // happen before this component mounts, so the PASSWORD_RECOVERY event
+    // is easy to miss. We therefore also treat an existing session on this
+    // page as recovery-eligible: a normal visitor never lands here logged in.
+    const detectRecovery = async () => {
+      const hashType = new URLSearchParams(window.location.hash.substring(1)).get("type");
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!active) return;
+      if (session || hashType === "recovery") {
+        setIsRecovery(true);
+      }
+    };
+    detectRecovery();
+
+    // Listen for the recovery / sign-in events too (covers the race where
+    // the URL is processed just after mount).
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === "PASSWORD_RECOVERY") {
+      if (event === "PASSWORD_RECOVERY" || event === "SIGNED_IN") {
         setIsRecovery(true);
       }
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {

@@ -53,9 +53,12 @@ export const HeroNew = () => {
                 <ArrowRight className="ml-2 w-5 h-5 group-hover:translate-x-1 transition-transform" />
               </Button>
             </Link>
-            <Button 
-              size="lg" 
-              variant="outline" 
+            <Button
+              size="lg"
+              variant="outline"
+              onClick={() =>
+                document.getElementById("demo")?.scrollIntoView({ behavior: "smooth", block: "start" })
+              }
               className="h-14 px-8 text-base font-semibold glass-card border-2 border-primary/20 hover:border-primary/40 hover:bg-primary/5 rounded-2xl"
             >
               <Play className="mr-2 w-5 h-5 text-primary" />
@@ -82,7 +85,7 @@ export const HeroNew = () => {
         </div>
         
         {/* Dashboard preview */}
-        <div className="opacity-0 animate-fade-in-up" style={{ animationDelay: '0.6s', animationFillMode: 'forwards' }}>
+        <div id="demo" className="scroll-mt-24 opacity-0 animate-fade-in-up" style={{ animationDelay: '0.6s', animationFillMode: 'forwards' }}>
           <DashboardPreview />
         </div>
         
