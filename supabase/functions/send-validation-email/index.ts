@@ -66,17 +66,24 @@ serve(async (req) => {
   }
 
   // Cron-triggered or internal function: protect with a shared secret.
+  // Fail CLOSED: with verify_jwt = false this endpoint is otherwise public, so a
+  // missing/empty CRON_SECRET must deny every request rather than allow them.
   const expectedSecret = Deno.env.get("CRON_SECRET");
-  if (expectedSecret) {
-    const provided =
-      req.headers.get("x-cron-secret") ||
-      req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
-    if (provided !== expectedSecret) {
-      return new Response(
-        JSON.stringify({ error: "Unauthorized" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    }
+  if (!expectedSecret) {
+    console.error("CRON_SECRET is not configured; refusing to run.");
+    return new Response(
+      JSON.stringify({ error: "Server not configured" }),
+      { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+  const provided =
+    req.headers.get("x-cron-secret") ||
+    req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+  if (provided !== expectedSecret) {
+    return new Response(
+      JSON.stringify({ error: "Unauthorized" }),
+      { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
   }
 
   try {

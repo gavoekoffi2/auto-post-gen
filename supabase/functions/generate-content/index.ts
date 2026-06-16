@@ -17,6 +17,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { AIQuotaError, chatCompletion, getOpenRouterKey, getTextModel } from "../_shared/ai.ts";
+import { buildInspirationBlock, researchInspiration } from "../_shared/research.ts";
 
 const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "*")
   .split(",")
@@ -75,358 +76,6 @@ interface UserPreferences {
   custom_image_urls?: string[];
 }
 
-interface WebResult {
-  title: string;
-  snippet: string;
-  url: string;
-  source: string;
-}
-
-// User-Agent that identifies us politely. Required by several free
-// services (Wikipedia, some news endpoints reject empty UAs).
-const HTTP_UA = "ProSocialAI/1.0 (+https://prosocial.ai)";
-
-// Strip HTML tags and decode the most common entities so RSS/HTML
-// snippets are clean enough to feed into the LLM.
-function htmlToText(html: string): string {
-  return html
-    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function pickTag(block: string, tag: string): string {
-  const re = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`, "i");
-  const m = block.match(re);
-  return m ? htmlToText(m[1]) : "";
-}
-
-// --- FREE SOURCES (no API key needed) ----------------------------
-
-// Google News RSS: officially provided by Google, no auth, fresh news
-// filtered by language/region. Best free source for sector trends.
-async function googleNewsRssSearch(
-  query: string,
-  lang = "fr",
-  region = "FR",
-): Promise<WebResult[]> {
-  try {
-    const url = new URL("https://news.google.com/rss/search");
-    url.searchParams.set("q", query);
-    url.searchParams.set("hl", lang);
-    url.searchParams.set("gl", region);
-    url.searchParams.set("ceid", `${region}:${lang}`);
-    const resp = await fetch(url.toString(), {
-      headers: { "User-Agent": HTTP_UA, Accept: "application/rss+xml" },
-    });
-    if (!resp.ok) {
-      console.error("Google News RSS:", resp.status);
-      return [];
-    }
-    const xml = await resp.text();
-    const items = xml.match(/<item>[\s\S]*?<\/item>/g) || [];
-    return items.slice(0, 5).map((block) => ({
-      title: pickTag(block, "title"),
-      snippet: pickTag(block, "description").slice(0, 400),
-      url: pickTag(block, "link"),
-      source: "google-news",
-    }));
-  } catch (err) {
-    console.error("Google News RSS threw:", err);
-    return [];
-  }
-}
-
-// Wikipedia REST API: free, no key, no rate-limit, reliable from any
-// IP including datacenter IPs (unlike DuckDuckGo). Great for the
-// foundational context of any topic. Multilingual via subdomain.
-async function wikipediaSearch(query: string, lang = "fr"): Promise<WebResult[]> {
-  try {
-    // 1. opensearch for matching article titles
-    const searchUrl = new URL(`https://${lang}.wikipedia.org/w/api.php`);
-    searchUrl.searchParams.set("action", "opensearch");
-    searchUrl.searchParams.set("search", query);
-    searchUrl.searchParams.set("limit", "5");
-    searchUrl.searchParams.set("format", "json");
-    const searchResp = await fetch(searchUrl.toString(), {
-      headers: { "User-Agent": HTTP_UA },
-    });
-    if (!searchResp.ok) {
-      console.error("Wikipedia search:", searchResp.status);
-      return [];
-    }
-    const data = await searchResp.json();
-    // opensearch returns [query, [titles], [descriptions], [urls]]
-    const titles: string[] = data[1] || [];
-    const descriptions: string[] = data[2] || [];
-    const urls: string[] = data[3] || [];
-
-    const results: WebResult[] = [];
-    for (let i = 0; i < titles.length && results.length < 4; i++) {
-      // Fetch the summary for richer snippet (descriptions array is
-      // often empty in opensearch).
-      try {
-        const sumUrl = `https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(titles[i])}`;
-        const sumResp = await fetch(sumUrl, { headers: { "User-Agent": HTTP_UA } });
-        let snippet = descriptions[i] || "";
-        if (sumResp.ok) {
-          const sumData = await sumResp.json();
-          snippet = sumData.extract || snippet;
-        }
-        results.push({
-          title: titles[i],
-          snippet: snippet.slice(0, 400),
-          url: urls[i] || "",
-          source: "wikipedia",
-        });
-      } catch (_) {
-        // Skip this article on error.
-      }
-    }
-    return results;
-  } catch (err) {
-    console.error("Wikipedia threw:", err);
-    return [];
-  }
-}
-
-// DuckDuckGo HTML — best-effort additional source. DDG aggressively
-// blocks datacenter IPs (HTTP 503) so we don't rely on it but try it
-// anyway; if it works on a given runtime, we get free extra results.
-async function duckduckgoHtmlSearch(query: string): Promise<WebResult[]> {
-  try {
-    const resp = await fetch("https://html.duckduckgo.com/html/", {
-      method: "POST",
-      headers: {
-        "User-Agent": HTTP_UA,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: new URLSearchParams({ q: query }).toString(),
-    });
-    if (!resp.ok) return []; // silent failure; DDG often rejects from datacenter IPs
-    const html = await resp.text();
-    const results: WebResult[] = [];
-    const blocks = html.match(/<div class="result[^"]*"[\s\S]*?<\/div>\s*<\/div>/g) || [];
-    for (const block of blocks.slice(0, 8)) {
-      const titleMatch = block.match(/<a[^>]*class="result__a"[^>]*>([\s\S]*?)<\/a>/i);
-      const snippetMatch = block.match(/<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/i);
-      const urlMatch = block.match(/<a[^>]*class="result__a"[^>]*href="([^"]+)"/i);
-      if (titleMatch) {
-        results.push({
-          title: htmlToText(titleMatch[1]),
-          snippet: htmlToText(snippetMatch?.[1] || "").slice(0, 400),
-          url: urlMatch?.[1] || "",
-          source: "duckduckgo",
-        });
-      }
-      if (results.length >= 4) break;
-    }
-    return results;
-  } catch (_) {
-    return [];
-  }
-}
-
-// --- PREMIUM SOURCES (API key, better quality) -------------------
-
-async function tavilySearch(query: string): Promise<WebResult[]> {
-  const apiKey = Deno.env.get("TAVILY_API_KEY");
-  if (!apiKey) return [];
-  try {
-    const resp = await fetch("https://api.tavily.com/search", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        api_key: apiKey,
-        query,
-        max_results: 5,
-        search_depth: "basic",
-        include_answer: false,
-      }),
-    });
-    if (!resp.ok) {
-      console.error("Tavily error:", resp.status);
-      return [];
-    }
-    const data = await resp.json();
-    return (data.results || [])
-      .slice(0, 5)
-      .map((r: any) => ({
-        title: String(r.title || "").slice(0, 200),
-        snippet: String(r.content || "").slice(0, 400),
-        url: String(r.url || ""),
-        source: "tavily",
-      }));
-  } catch (err) {
-    console.error("Tavily threw:", err);
-    return [];
-  }
-}
-
-async function braveSearch(query: string): Promise<WebResult[]> {
-  const apiKey = Deno.env.get("BRAVE_SEARCH_API_KEY");
-  if (!apiKey) return [];
-  try {
-    const url = new URL("https://api.search.brave.com/res/v1/web/search");
-    url.searchParams.set("q", query);
-    url.searchParams.set("count", "5");
-    const resp = await fetch(url.toString(), {
-      headers: {
-        Accept: "application/json",
-        "X-Subscription-Token": apiKey,
-      },
-    });
-    if (!resp.ok) {
-      console.error("Brave error:", resp.status);
-      return [];
-    }
-    const data = await resp.json();
-    const items = data?.web?.results || [];
-    return items.slice(0, 5).map((r: any) => ({
-      title: String(r.title || "").slice(0, 200),
-      snippet: String(r.description || "").slice(0, 400),
-      url: String(r.url || ""),
-      source: "brave",
-    }));
-  } catch (err) {
-    console.error("Brave threw:", err);
-    return [];
-  }
-}
-
-// Pull the meaningful nouns out of a free-form description so we can
-// build targeted search queries. We strip stopwords, punctuation and
-// short tokens. This keeps the queries focused on the actual activity
-// (e.g. "boulangerie artisanale Paris bio") rather than the generic
-// sector label (e.g. just "food").
-const FR_STOPWORDS = new Set([
-  "je", "tu", "il", "elle", "on", "nous", "vous", "ils", "elles",
-  "le", "la", "les", "un", "une", "des", "de", "du", "au", "aux",
-  "et", "ou", "mais", "donc", "or", "ni", "car", "que", "qui", "quoi",
-  "dont", "ce", "cet", "cette", "ces", "mon", "ma", "mes", "ton", "ta",
-  "tes", "son", "sa", "ses", "notre", "votre", "leur", "leurs", "se",
-  "pour", "par", "avec", "sans", "sur", "sous", "dans", "chez", "vers",
-  "est", "sont", "suis", "es", "ai", "as", "ont", "avons", "avez",
-  "été", "étant", "fait", "faire", "fais", "très", "plus", "moins",
-  "aussi", "encore", "déjà", "ne", "pas", "non", "oui", "si", "alors",
-  "comme", "mêmes", "mais", "the", "and", "for", "with",
-]);
-
-function extractKeywords(text: string, max = 6): string[] {
-  if (!text) return [];
-  const tokens = text
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "") // strip accents for stopword match
-    .replace(/[^a-z0-9àâäéèêëîïôöùûüç \-]/gi, " ")
-    .split(/\s+/)
-    .filter((t) => t.length >= 3 && !FR_STOPWORDS.has(t));
-  // Frequency count, but for short descriptions we just keep order.
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const t of tokens) {
-    if (!seen.has(t)) {
-      seen.add(t);
-      out.push(t);
-    }
-    if (out.length >= max) break;
-  }
-  return out;
-}
-
-async function researchInspiration(
-  sector: string,
-  companyName: string,
-  description: string,
-): Promise<WebResult[]> {
-  const year = new Date().getFullYear();
-  const keywords = extractKeywords(description, 6);
-  const keywordPhrase = keywords.slice(0, 4).join(" ");
-
-  // Build queries ordered from MOST SPECIFIC to least specific so the
-  // top results come from the user's actual activity, not their broad
-  // sector. The LLM is told to ignore irrelevant snippets, so over-
-  // fetching is safer than under-fetching.
-  const queries: string[] = [];
-  if (keywordPhrase) {
-    queries.push(`${keywordPhrase} ${year}`);
-    queries.push(`${keywordPhrase} conseils`);
-    queries.push(`actualité ${keywordPhrase}`);
-  }
-  if (companyName && companyName !== "notre entreprise") {
-    queries.push(`${companyName} ${sector}`);
-  }
-  queries.push(`tendances ${sector} ${year}`);
-  queries.push(`actualité ${sector}`);
-
-  // Strategy: always try the free sources first. Google News RSS is
-  // the most reliable (fresh news, multilingual). Wikipedia gives us
-  // foundational context. DuckDuckGo is best-effort. Tavily/Brave are
-  // optional upgrades. Results from all sources are merged so the
-  // LLM gets the richest pool of inspiration possible.
-  const results: WebResult[] = [];
-
-  // 1. Google News RSS — fresh, multilingual, reliable
-  for (const q of queries) {
-    if (results.length >= 5) break;
-    const news = await googleNewsRssSearch(q);
-    for (const r of news) {
-      if (results.length >= 5) break;
-      results.push(r);
-    }
-  }
-
-  // 2. Wikipedia — encyclopedic context, very reliable from any IP.
-  //    Search for the most specific term we can derive (a key noun
-  //    from the description) before falling back to the broad sector.
-  if (results.length < 4) {
-    const wikiQueries = keywords.length > 0 ? [keywords[0], sector] : [sector];
-    for (const wq of wikiQueries) {
-      if (results.length >= 6) break;
-      const wiki = await wikipediaSearch(wq);
-      for (const r of wiki) {
-        if (results.length >= 6) break;
-        results.push(r);
-      }
-    }
-  }
-
-  // 3. DuckDuckGo — best-effort additional source
-  if (results.length < 4) {
-    const ddg = await duckduckgoHtmlSearch(queries[0]);
-    for (const r of ddg) {
-      if (results.length >= 6) break;
-      results.push(r);
-    }
-  }
-
-  // Upgrade tier: Tavily / Brave. Only spent if their keys are
-  // configured. We append rather than replace so we keep the breadth.
-  if (Deno.env.get("TAVILY_API_KEY")) {
-    const tav = await tavilySearch(queries[0]);
-    for (const r of tav) {
-      if (results.length >= 8) break;
-      results.push(r);
-    }
-  }
-  if (Deno.env.get("BRAVE_SEARCH_API_KEY") && results.length < 8) {
-    const br = await braveSearch(queries[0]);
-    for (const r of br) {
-      if (results.length >= 8) break;
-      results.push(r);
-    }
-  }
-
-  return results;
-}
 
 serve(async (req) => {
   const corsHeaders = buildCorsHeaders(req.headers.get("origin"));
@@ -570,21 +219,7 @@ serve(async (req) => {
     // handle them: filter for relevance, ignore irrelevant ones, and
     // if nothing is relevant fall back to its own expertise about
     // this specific business.
-    const inspiration = webResults.length
-      ? `\nMATIÈRE BRUTE TROUVÉE EN LIGNE (à FILTRER selon la pertinence pour "${description.slice(0, 120) || sector}"):
-${webResults
-  .slice(0, 6)
-  .map((r, i) => `${i + 1}. [${r.source}] ${r.title}${r.snippet ? " — " + r.snippet : ""}`)
-  .join("\n")}
-
-INSTRUCTION DE FILTRAGE:
-- N'utilise QUE les éléments qui ont un lien clair avec l'activité spécifique du client ci-dessus
-- Ignore tout snippet qui ne concerne pas ce métier précis, MÊME s'il évoque le secteur en général
-- Si aucun snippet n'est pertinent, IGNORE TOUTE CETTE LISTE et génère depuis ton expertise du métier
-- Ne recopie JAMAIS un snippet mot pour mot, sers-t'en uniquement comme inspiration
-`
-      : `\n(Aucune matière web trouvée — génère depuis ton expertise du métier décrit ci-dessous.)
-`;
+    const inspiration = buildInspirationBlock(webResults, description.slice(0, 120) || sector);
 
     const systemPrompt = `Tu es un expert en création de contenu pour les réseaux sociaux, spécialisé dans le métier décrit ci-dessous. Tu DOIS rester strictement dans le domaine d'activité du client — pas généraliser, pas dériver vers d'autres sujets.
 
@@ -704,15 +339,19 @@ Réponds UNIQUEMENT avec le texte du post, sans titre ni explication, sans guill
     );
   } catch (error) {
     console.error("Error in generate-content:", error);
-    await supabase
-      .from("generation_usage")
-      .insert({
-        user_id: userId,
-        function_name: "generate-content",
-        status: "error",
-        error: error instanceof Error ? error.message : String(error),
-      })
-      .catch(() => {});
+    try {
+      // Best-effort failure logging; never let it mask the real error.
+      await supabase
+        .from("generation_usage")
+        .insert({
+          user_id: userId,
+          function_name: "generate-content",
+          status: "error",
+          error: error instanceof Error ? error.message : String(error),
+        });
+    } catch (_) {
+      // ignore logging failure
+    }
     return new Response(
       JSON.stringify({
         error: error instanceof Error ? error.message : "Unknown error",

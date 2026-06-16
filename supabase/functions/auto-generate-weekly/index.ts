@@ -2,6 +2,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { chatText, getOpenRouterKey, getTextModel } from "../_shared/ai.ts";
+import { buildInspirationBlock, researchInspiration } from "../_shared/research.ts";
 
 const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "*")
   .split(",")
@@ -41,6 +42,16 @@ const DAY_MAPPING: Record<string, number> = {
 // runaway configs and platform spam limits.
 const HARD_MAX_POSTS_PER_RUN = 20;
 
+// Rotated so the week's posts don't all share the same shape.
+const AUTO_ANGLES = [
+  "Astuce concrète applicable tout de suite",
+  "Erreur courante à éviter dans ce métier",
+  "Statistique ou tendance récente, avec ton interprétation",
+  "Mini-checklist en 3-5 points",
+  "Idée reçue à démonter",
+  "Coulisses ou leçon tirée du terrain",
+];
+
 serve(async (req) => {
   const corsHeaders = buildCorsHeaders(req.headers.get("origin"));
 
@@ -49,17 +60,24 @@ serve(async (req) => {
   }
 
   // Authorize the cron caller via a shared secret (set CRON_SECRET in Supabase).
+  // Fail CLOSED: with verify_jwt = false this endpoint is otherwise public, so a
+  // missing/empty CRON_SECRET must deny every request rather than allow them.
   const expectedSecret = Deno.env.get("CRON_SECRET");
-  if (expectedSecret) {
-    const provided =
-      req.headers.get("x-cron-secret") ||
-      req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
-    if (provided !== expectedSecret) {
-      return new Response(
-        JSON.stringify({ error: "Unauthorized" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    }
+  if (!expectedSecret) {
+    console.error("CRON_SECRET is not configured; refusing to run.");
+    return new Response(
+      JSON.stringify({ error: "Server not configured" }),
+      { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+  const provided =
+    req.headers.get("x-cron-secret") ||
+    req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+  if (provided !== expectedSecret) {
+    return new Response(
+      JSON.stringify({ error: "Unauthorized" }),
+      { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
   }
 
   try {
@@ -119,24 +137,55 @@ serve(async (req) => {
           ? profile.platforms
           : ["Instagram"];
 
+        // Research the business ONCE per user and reuse the inspiration for
+        // every post generated this week. This grounds automatic posts in
+        // real, current, sector-specific facts (the same enrichment the
+        // manual generator uses) while keeping the cron fast.
+        const companyName = profile.company_name || "notre entreprise";
+        const sector = profile.sector || "Business";
+        const description = profile.description || "";
+        let inspirationBlock = "";
+        try {
+          const webResults = await researchInspiration(sector, companyName, description, {
+            deadlineMs: 9000,
+          });
+          inspirationBlock = buildInspirationBlock(
+            webResults,
+            description.slice(0, 120) || sector,
+          );
+        } catch (researchErr) {
+          console.error(`Research failed for ${profile.id}:`, researchErr);
+        }
+
+        const generatedThisRun: string[] = [];
         let generated = 0;
 
         for (let i = 0; i < postsToGenerate; i++) {
-          const contentPrompt = `Tu es un expert en création de contenu pour les réseaux sociaux.
+          const angle = AUTO_ANGLES[(i + weekNumber) % AUTO_ANGLES.length];
+          const avoidBlock = generatedThisRun.length
+            ? `\nNE répète NI le sujet NI l'accroche de ces posts déjà générés cette semaine:\n${
+                generatedThisRun.map((c, k) => `${k + 1}. ${c.slice(0, 150)}`).join("\n")
+              }\n`
+            : "";
 
-Génère un post engageant en français pour une entreprise avec ces caractéristiques:
-- Secteur: ${profile.sector || "Business"}
+          const contentPrompt = `Tu es un expert en création de contenu pour les réseaux sociaux, spécialisé dans le métier décrit ci-dessous. Reste STRICTEMENT dans ce domaine d'activité, ne généralise pas vers d'autres sujets.
+
+PROFIL DU CLIENT:
+- Nom de l'entreprise: ${companyName}
+- Secteur: ${sector}
+${description ? `- Description de l'activité: ${description}` : ""}
 - Ton: ${profile.tone || "Professionnel"}
-- Description: ${profile.description || "Entreprise innovante"}
-- Nom: ${profile.company_name || "Notre entreprise"}
 
-Le post doit:
-- Être en français uniquement
-- Faire 60-100 mots maximum
-- Inclure 2-3 émojis pertinents
-- Apporter de la valeur (conseil, astuce, information)
-- Être engageant et professionnel
-
+ANGLE IMPOSÉ POUR CE POST: ${angle}
+${inspirationBlock}
+RÈGLES:
+- 100% en français
+- 60-100 mots
+- 2-3 émojis pertinents
+- Apporte une valeur CONCRÈTE et SPÉCIFIQUE à ce métier (un conseil, un chiffre ou un fait qu'un vrai connaisseur donnerait) — surtout pas du générique applicable à n'importe quelle entreprise
+- Écris "${companyName}" tel quel, jamais entre crochets ni en placeholder
+- Termine par une question engageante ou un appel à l'action
+${avoidBlock}
 Génère uniquement le texte du post, sans titre ni explication.`;
 
           let generatedContent = "";
@@ -157,6 +206,8 @@ Génère uniquement le texte du post, sans titre ni explication.`;
             console.error(`Empty content returned for ${profile.id}`);
             continue;
           }
+          // Track for intra-run de-duplication.
+          generatedThisRun.push(generatedContent.trim());
 
           const targetDay = preferredDays[i % preferredDays.length];
           const targetDayNumber = DAY_MAPPING[targetDay] ?? 1;

@@ -17,7 +17,7 @@ export const DashboardPreview = () => {
           </div>
           <div className="flex-1 flex justify-center">
             <div className="px-4 py-1 rounded-full bg-muted/50 text-xs text-muted-foreground">
-              app.autopublish.ai/dashboard
+              app.prosocialai.com/dashboard
             </div>
           </div>
         </div>
