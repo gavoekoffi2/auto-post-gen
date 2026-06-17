@@ -164,7 +164,7 @@ export function SocialMediaConnect({
         <DialogHeader>
           <DialogTitle>Gérer vos réseaux sociaux</DialogTitle>
           <DialogDescription>
-            Connexion unique via Zernio. Les anciennes options Lovable / Postiz / Ayrshare / OAuth direct ont été retirées pour éviter la confusion.
+            Connexion unique via Zernio. Les anciennes options alternatives ont été retirées pour éviter la confusion.
           </DialogDescription>
         </DialogHeader>
 
@@ -263,7 +263,7 @@ export function SocialMediaConnect({
             l'utilisateur autorise ses comptes dans la fenêtre sécurisée Zernio. La plateforme stocke seulement une référence de profil Zernio dans Supabase, puis utilise Zernio pour publier les posts validés.
           </p>
           <p className="text-xs text-muted-foreground">
-            Les anciennes connexions directes Lovable/OAuth, Postiz et Ayrshare ont été retirées de l'interface. La publication garde Zernio comme fournisseur prioritaire.
+            Les anciennes connexions directes et alternatives ont été retirées de l'interface. La publication garde Zernio comme fournisseur prioritaire.
           </p>
         </div>
       </DialogContent>

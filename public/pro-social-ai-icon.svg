@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Pro Social AI">
+  <defs>
+    <linearGradient id="bg" x1="64" y1="32" x2="448" y2="480" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8B5CF6"/>
+      <stop offset="0.55" stop-color="#3B82F6"/>
+      <stop offset="1" stop-color="#06B6D4"/>
+    </linearGradient>
+    <linearGradient id="spark" x1="142" y1="116" x2="370" y2="396" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E0F2FE"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <circle cx="378" cy="132" r="62" fill="#FFFFFF" opacity="0.18"/>
+  <circle cx="126" cy="388" r="86" fill="#000000" opacity="0.10"/>
+  <path d="M256 82l35.5 104.5L402 222l-110.5 35.5L256 430l-35.5-172.5L110 222l110.5-35.5L256 82z" fill="url(#spark)"/>
+  <circle cx="256" cy="256" r="50" fill="#111827" opacity="0.12"/>
+  <path d="M171 342c43-38 127-38 170 0" fill="none" stroke="#FFFFFF" stroke-width="28" stroke-linecap="round" opacity="0.88"/>
+</svg>
