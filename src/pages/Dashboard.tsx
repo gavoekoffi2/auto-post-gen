@@ -364,7 +364,12 @@ export default function Dashboard() {
                 p.id === savedPost.id ? { ...p, image_url: imgData.imageUrl } : p,
               ),
             );
-            toast.success(imgData.fallback ? "Visuel de secours ajouté au post" : "Image IA ajoutée au post");
+            if (imgData.fallback) {
+              if (imgData.warning) console.warn("Image fallback reason:", imgData.warning);
+              toast.warning("Image IA indisponible — visuel de secours utilisé. Réessayez via 'Régénérer'.");
+            } else {
+              toast.success("Image IA ajoutée au post");
+            }
           }
         } catch (imgErr) {
           console.error('Image gen failed:', imgErr);
@@ -407,7 +412,12 @@ export default function Dashboard() {
         setPosts((prev) =>
           prev.map((p) => (p.id === post.id ? { ...p, image_url: data.imageUrl } : p)),
         );
-        toast.success(data.fallback ? "Visuel de secours généré" : "Image IA générée");
+        if (data.fallback) {
+          if (data.warning) console.warn("Image fallback reason:", data.warning);
+          toast.warning("Image IA indisponible — visuel de secours généré.");
+        } else {
+          toast.success("Image IA générée");
+        }
       } else {
         toast.error("Image non générée");
       }

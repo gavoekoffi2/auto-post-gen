@@ -2,7 +2,7 @@
 // configured via Supabase secrets:
 //   OPENROUTER_API_KEY        — required
 //   OPENROUTER_TEXT_MODEL     — optional, defaults to google/gemini-2.5-flash
-//   OPENROUTER_IMAGE_MODEL    — optional, defaults to google/gemini-2.5-flash-image-preview
+//   OPENROUTER_IMAGE_MODEL    — optional, defaults to google/gemini-2.5-flash-image
 //   APP_PUBLIC_URL / APP_NAME — optional, sent as HTTP-Referer and X-Title
 //                               so OpenRouter's dashboard shows your usage cleanly
 //
@@ -21,11 +21,16 @@ export function getTextModel(): string {
 
 export function getImageModels(): string[] {
   const configured = Deno.env.get("OPENROUTER_IMAGE_MODEL");
-  // We always try a chain so a single model failure doesn't kill image gen.
+  // Chain of image-OUTPUT-capable models (verified against OpenRouter's
+  // catalogue). A single model failure (capacity, deprecation) falls
+  // through to the next. We must NEVER list a text-only model here — it
+  // can't return an image, so it would silently turn every generation
+  // into a fallback. The previous default ("…-image-preview") was removed
+  // from OpenRouter, which is why image generation stopped working.
   const chain = [
     configured,
-    "google/gemini-2.5-flash-image-preview",
-    "google/gemini-2.5-flash",
+    "google/gemini-2.5-flash-image",
+    "google/gemini-3.1-flash-image-preview",
   ].filter(Boolean) as string[];
   // De-dupe while preserving order.
   return Array.from(new Set(chain));
