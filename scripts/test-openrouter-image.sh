@@ -6,12 +6,12 @@
 #
 # Usage:
 #   OPENROUTER_API_KEY=sk-or-... ./scripts/test-openrouter-image.sh
-#   OPENROUTER_API_KEY=sk-or-... MODEL=google/gemini-3.1-flash-image-preview ./scripts/test-openrouter-image.sh
+#   OPENROUTER_API_KEY=*** MODEL=openai/gpt-5.4-image-2 ./scripts/test-openrouter-image.sh
 #
 set -uo pipefail
 
 KEY="${OPENROUTER_API_KEY:-}"
-MODEL="${MODEL:-google/gemini-2.5-flash-image}"
+MODEL="${MODEL:-openai/gpt-5.4-image-2}"
 
 if [ -z "$KEY" ]; then echo "❌ Renseigne OPENROUTER_API_KEY (secret OpenRouter)."; exit 1; fi
 

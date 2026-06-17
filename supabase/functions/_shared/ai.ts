@@ -2,7 +2,7 @@
 // configured via Supabase secrets:
 //   OPENROUTER_API_KEY        — required
 //   OPENROUTER_TEXT_MODEL     — optional, defaults to google/gemini-2.5-flash
-//   OPENROUTER_IMAGE_MODEL    — optional, defaults to google/gemini-2.5-flash-image
+//   OPENROUTER_IMAGE_MODEL    — optional, defaults to openai/gpt-5.4-image-2
 //   APP_PUBLIC_URL / APP_NAME — optional, sent as HTTP-Referer and X-Title
 //                               so OpenRouter's dashboard shows your usage cleanly
 //
@@ -25,10 +25,12 @@ export function getImageModels(): string[] {
   // catalogue). A single model failure (capacity, deprecation) falls through
   // to the next. Do not put text-only models here: they cannot return images
   // and would silently turn every generation into a branded fallback.
-  // Root cause fixed: the previous default `google/gemini-2.5-flash-image-preview`
-  // no longer exists on OpenRouter, and `google/gemini-2.5-flash` is text-only.
+  // Primary model requested for production: GPT Image 2 on OpenRouter.
+  // Gemini image models remain as fallbacks so one provider outage does not
+  // break first users.
   const chain = [
     configured,
+    "openai/gpt-5.4-image-2",
     "google/gemini-2.5-flash-image",
     "google/gemini-3.1-flash-image-preview",
   ].filter(Boolean) as string[];
