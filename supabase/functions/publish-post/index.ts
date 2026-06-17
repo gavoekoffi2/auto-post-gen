@@ -14,7 +14,7 @@
 // invocations can't double-publish.
 //
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
+import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import {
   postizCreatePost,
   postizListIntegrations,
@@ -51,6 +51,23 @@ interface SocialConnection {
   refresh_token: string | null;
   token_expires_at: string | null;
   meta: any;
+}
+
+type DbClient = SupabaseClient<any, "public", any>;
+
+interface PostRow {
+  id: string;
+  user_id: string;
+  content: string;
+  platforms: string[] | null;
+  image_url: string | null;
+}
+
+interface SocialConnectionRow {
+  id?: string;
+  user_id?: string;
+  provider?: string | null;
+  profile_key?: string | null;
 }
 
 interface PublishResult {
@@ -231,7 +248,7 @@ async function publishToFacebook(
 }
 
 async function ensurePublicImage(
-  supabase: ReturnType<typeof createClient>,
+  supabase: DbClient,
   imageUrl: string,
   userId: string,
 ): Promise<string> {
@@ -563,7 +580,7 @@ async function publishViaZernio(
 }
 
 async function publishPost(
-  supabase: ReturnType<typeof createClient>,
+  supabase: DbClient,
   postId: string,
 ): Promise<{ post_id: string; results: PublishResult[]; skipped?: string }> {
   // Atomically claim the post: only succeed if it is still in the
@@ -587,20 +604,19 @@ async function publishPost(
     return { post_id: postId, results: [], skipped: "not_in_validated_state" };
   }
 
-  const post = claimed;
+  const post = claimed as PostRow;
 
-  const { data: connections } = await supabase
+  const { data: connectionsRaw } = await supabase
     .from("social_connections")
     .select("*")
     .eq("user_id", post.user_id);
+  const connections = (connectionsRaw || []) as SocialConnectionRow[];
 
   // Zernio-only mode: legacy Lovable/direct OAuth, Postiz and Ayrshare
   // connections are intentionally ignored. The product now has a single
   // social backend to avoid confusing first users and to keep publishing
   // behavior predictable.
-  const zernio = (connections || []).find(
-    (c: { provider?: string }) => c.provider === "zernio",
-  ) as { profile_key: string | null } | undefined;
+  const zernio = connections.find((c) => c.provider === "zernio");
 
   const platforms: string[] = post.platforms || [];
   const results: PublishResult[] = [];
@@ -618,7 +634,7 @@ async function publishPost(
     }
   }
 
-  if (zernio) {
+  if (zernio?.profile_key) {
     const zr = await publishViaZernio(
       zernio.profile_key,
       platforms,
@@ -633,7 +649,9 @@ async function publishPost(
       results.push({
         platform: normalisePlatform(rawPlatform),
         status: "not_connected",
-        message: "Zernio account not connected",
+        message: zernio
+          ? "Zernio account connected but missing profile key"
+          : "Zernio account not connected",
       });
     }
   }

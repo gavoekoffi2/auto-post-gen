@@ -277,7 +277,7 @@ export default function Dashboard() {
   const handleGenerate = async () => {
     if (generating) return;
     setGenerating(true);
-    const loadingToast = toast.loading("Génération du texte en cours...");
+    const loadingToast = toast.loading("Recherche web + génération IA en cours...");
     try {
       const { data, error } = await supabase.functions.invoke('generate-content', {
         body: {
@@ -339,7 +339,7 @@ export default function Dashboard() {
       };
 
       setPosts((prev) => [transformedPost, ...prev]);
-      toast.success("Texte généré. L'image est en cours...");
+      toast.success("Post enrichi par recherche web généré. L'image est en cours...");
 
       // 2. Kick off image generation asynchronously. Don't block the UI.
       //    Mark the post as generating-image so the card can show a
@@ -364,7 +364,12 @@ export default function Dashboard() {
                 p.id === savedPost.id ? { ...p, image_url: imgData.imageUrl } : p,
               ),
             );
-            toast.success(imgData.fallback ? "Visuel de secours ajouté au post" : "Image IA ajoutée au post");
+            if (imgData.fallback) {
+              if (imgData.warning) console.warn("Image fallback reason:", imgData.warning);
+              toast.warning("Image IA indisponible — visuel de secours utilisé. Réessayez via 'Régénérer'.");
+            } else {
+              toast.success("Image IA ajoutée au post");
+            }
           }
         } catch (imgErr) {
           console.error('Image gen failed:', imgErr);
@@ -407,7 +412,12 @@ export default function Dashboard() {
         setPosts((prev) =>
           prev.map((p) => (p.id === post.id ? { ...p, image_url: data.imageUrl } : p)),
         );
-        toast.success(data.fallback ? "Visuel de secours généré" : "Image IA générée");
+        if (data.fallback) {
+          if (data.warning) console.warn("Image fallback reason:", data.warning);
+          toast.warning("Image IA indisponible — visuel de secours généré.");
+        } else {
+          toast.success("Image IA générée");
+        }
       } else {
         toast.error("Image non générée");
       }
@@ -555,6 +565,20 @@ export default function Dashboard() {
             </div>
           </Card>
         )}
+
+        {/* Web research signal: reassure first users that content is grounded. */}
+        <Card className="glass-card p-4 mb-6 border-secondary/30 bg-secondary/5">
+          <div className="flex items-start gap-3">
+            <Sparkles className="w-5 h-5 text-secondary shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-medium">Génération enrichie par recherche web</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Les posts utilisent des tendances et faits récents issus de Google News, Wikipedia et sources web gratuites,
+                puis l’IA filtre ce qui est pertinent pour votre activité.
+              </p>
+            </div>
+          </div>
+        </Card>
 
         {/* Stats */}
         <div className="grid md:grid-cols-4 gap-6 mb-8">
