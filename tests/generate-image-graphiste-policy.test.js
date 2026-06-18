@@ -12,6 +12,7 @@ test('generate-image uses Graphiste GPT posters, not generic OpenRouter/Gemini i
   assert.equal(source.includes('getOpenRouterKey'), false, 'must not require OpenRouter for image generation');
   assert.equal(/Gemini|gemini|OPENROUTER/.test(source), false, 'must not reference Gemini/OpenRouter in poster function');
   assert.match(source, /provider:\s*usedFallback \? "branded-fallback" : "graphiste-gpt"/);
+  assert.match(source, /ALLOW_BRANDED_IMAGE_FALLBACK/);
   assert.match(source, /quality:\s*"premium"/);
   assert.equal(source.includes('mode: "fast"'), false, 'must not use fast mode because it routes to the quick model');
   assert.equal(source.includes('quality: "fast"'), false, 'must not use fast quality because it routes to the quick model');
@@ -27,6 +28,9 @@ test('generate-image uses Graphiste GPT posters, not generic OpenRouter/Gemini i
   assert.match(source, /return "formation";/);
   assert.match(source, /pas comme contrainte stricte/);
   assert.match(source, /créer librement une affiche adaptée au message/);
+  assert.match(source, /pollGraphisteGptJob/);
+  assert.match(source, /extractGraphisteJobId/);
+  assert.match(source, /statusUrl/);
 });
 
 test('Graphiste GPT response extractor accepts common final poster URL shapes', () => {

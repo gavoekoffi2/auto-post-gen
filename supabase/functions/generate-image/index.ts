@@ -84,6 +84,80 @@ function absoluteGraphisteUrl(value: string): string {
   return value;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function extractGraphisteJobId(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+  const obj = value as Record<string, unknown>;
+  const direct = obj.job_id || obj.jobId || obj.request_id || obj.requestId || obj.id || obj.task_id || obj.taskId;
+  if (typeof direct === "string" && direct.trim()) return direct.trim();
+  for (const key of ["data", "result", "job", "request", "generation"]) {
+    const nested = extractGraphisteJobId(obj[key]);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+function extractGraphisteStatusUrl(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+  const obj = value as Record<string, unknown>;
+  const direct = obj.statusUrl || obj.status_url || obj.pollUrl || obj.poll_url || obj.checkUrl || obj.check_url;
+  if (typeof direct === "string" && direct.trim()) return direct.trim();
+  for (const key of ["data", "result", "job", "request", "generation"]) {
+    const nested = extractGraphisteStatusUrl(obj[key]);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+function graphisteStatusCandidates(endpoint: string, statusUrl: string | null, jobId: string | null): string[] {
+  const out: string[] = [];
+  if (statusUrl) out.push(statusUrl.startsWith("http") ? statusUrl : new URL(statusUrl, endpoint).toString());
+  if (jobId) {
+    const u = new URL(endpoint);
+    const base = `${u.origin}${u.pathname.replace(/\/generate\/?$/, "")}`;
+    out.push(`${base}/${encodeURIComponent(jobId)}`);
+    out.push(`${base}/status/${encodeURIComponent(jobId)}`);
+    out.push(`${base}/jobs/${encodeURIComponent(jobId)}`);
+    out.push(`${u.origin}/functions/v1/api-v1/v1/jobs/${encodeURIComponent(jobId)}`);
+  }
+  return [...new Set(out)];
+}
+
+async function pollGraphisteGptJob(endpoint: string, key: string, firstData: unknown, signal: AbortSignal): Promise<string | null> {
+  const jobId = extractGraphisteJobId(firstData);
+  const statusUrl = extractGraphisteStatusUrl(firstData);
+  const candidates = graphisteStatusCandidates(endpoint, statusUrl, jobId);
+  if (candidates.length === 0) return null;
+
+  const started = Date.now();
+  let delay = 4000;
+  while (Date.now() - started < 210_000) {
+    await sleep(delay);
+    for (const url of candidates) {
+      try {
+        const resp = await fetch(url, {
+          method: "GET",
+          headers: { Authorization: `Bearer ${key}` },
+          signal,
+        });
+        if (!resp.ok) continue;
+        const text = await resp.text();
+        let data: unknown;
+        try { data = JSON.parse(text); } catch { data = text; }
+        const imageUrl = extractGraphisteImageUrl(data, false);
+        if (imageUrl) return imageUrl;
+      } catch (_err) {
+        // Try next candidate / next poll tick.
+      }
+    }
+    delay = Math.min(delay + 3000, 12000);
+  }
+  return null;
+}
+
 function extractGraphisteImageUrl(value: unknown, allowTemplateImage = false): string | null {
   if (!value) return null;
   if (isImageUrl(value)) return absoluteGraphisteUrl(value);
@@ -244,9 +318,11 @@ async function tryGraphisteGptPoster(params: {
     }
     const imageUrl = extractGraphisteImageUrl(data, false);
     if (imageUrl) return { imageUrl, warning: null };
+    const polledImageUrl = await pollGraphisteGptJob(endpoint, key, data, controller.signal);
+    if (polledImageUrl) return { imageUrl: polledImageUrl, warning: null };
     return {
       imageUrl: null,
-      warning: "Graphiste GPT did not return a final image URL yet; response only contains metadata/template data.",
+      warning: `Graphiste GPT did not return a final image URL after polling; response only contains metadata/template data: ${JSON.stringify(data).slice(0, 500)}`,
     };
   } catch (err) {
     return { imageUrl: null, warning: `Graphiste GPT threw: ${err instanceof Error ? err.message : String(err)}` };
@@ -348,7 +424,19 @@ serve(async (req) => {
 
     let usedFallback = false;
     if (!imageUrl) {
-      console.error("Graphiste GPT poster generation failed, using branded non-AI fallback:", lastError);
+      console.error("Graphiste GPT poster generation failed:", lastError);
+      const allowFallback = Deno.env.get("ALLOW_BRANDED_IMAGE_FALLBACK") === "true";
+      if (!allowFallback) {
+        return new Response(
+          JSON.stringify({
+            error: "Graphiste GPT n'a pas retourné une vraie image finale. Génération annulée pour éviter le même SVG vide.",
+            warning: lastError,
+            fallback: false,
+            provider: "graphiste-gpt",
+          }),
+          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
       imageUrl = fallbackSvgDataUrl(primary, secondary, accent, imageStyle);
       usedFallback = true;
     }
