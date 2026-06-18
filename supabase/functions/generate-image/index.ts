@@ -145,17 +145,18 @@ function extractGraphisteImageUrl(value: unknown, allowTemplateImage = false): s
   return null;
 }
 
-function graphisteDomain(sector: string, description: string): string {
-  const haystack = `${sector} ${description}`.toLowerCase();
-  if (/restaurant|food|cuisine|bar|burger|pizza|menu|boisson/.test(haystack)) return "restaurant";
+function graphisteDomain(sector: string, description: string, postContent = ""): string {
+  const haystack = `${sector} ${description} ${postContent}`.toLowerCase();
+  if (/restaurant|food|cuisine|bar|burger|pizza|menu|boisson|plat|midi|réservez|reservez/.test(haystack)) return "restaurant";
   if (/église|eglise|church|pasteur|minist/.test(haystack)) return "church";
-  if (/formation|cours|école|ecole|academy|coaching|webinar/.test(haystack)) return "formation";
+  if (/formation|cours|école|ecole|academy|coaching|webinar|atelier|apprendre/.test(haystack)) return "formation";
   if (/event|événement|evenement|concert|conférence|conference|festival/.test(haystack)) return "event";
-  if (/ecommerce|commerce|boutique|produit|shop|vente/.test(haystack)) return "ecommerce";
+  if (/ecommerce|commerce|boutique|produit|shop|vente|promo|promotion|offre/.test(haystack)) return "ecommerce";
   if (/mode|fashion|vêtement|vetement|beauté|beaute/.test(haystack)) return "fashion";
   if (/immobilier|real.?estate|maison|terrain|appartement/.test(haystack)) return "realestate";
   if (/santé|sante|health|clinique|médical|medical|pharma/.test(haystack)) return "health";
-  return "service";
+  // Avoid Graphiste GPT's broken "service" references; formation has reliable templates and still works for generic business posts.
+  return "formation";
 }
 
 function buildGraphistePosterPrompt(params: {
@@ -185,7 +186,8 @@ EXIGENCE PRINCIPALE:
 - L'affiche doit contenir une vraie composition complète: titre principal lisible, visuel fort, blocs graphiques, hiérarchie claire, contraste premium.
 - Ajouter 2 à 5 mots-clés courts issus du message, mais éviter les longs paragraphes.
 - Prévoir un espace CTA visuel du type "Contactez-nous", "Réservez", "Découvrez", ou équivalent selon le message.
-- Utiliser les affiches/templates internes Graphiste GPT comme référence de structure, mais adapter le design au message ci-dessus.
+- Utiliser les affiches/templates internes Graphiste GPT comme inspiration professionnelle de structure, pas comme contrainte stricte.
+- Si le message ne correspond pas parfaitement au domaine fourni, créer librement une affiche adaptée au message en appliquant les bonnes pratiques Graphiste GPT: hiérarchie forte, mise en page remplie, contraste, CTA, visuel central, équilibre typographique.
 
 STYLE:
 - Qualité premium, rendu publicitaire professionnel, moderne, non vide.
@@ -222,7 +224,7 @@ async function tryGraphisteGptPoster(params: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        domain: graphisteDomain(params.sector, params.description),
+        domain: graphisteDomain(params.sector, params.description, params.postContent),
         subject,
         prompt,
         usageType: "social",

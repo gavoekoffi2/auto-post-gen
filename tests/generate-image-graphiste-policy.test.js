@@ -21,7 +21,12 @@ test('generate-image uses Graphiste GPT posters, not generic OpenRouter/Gemini i
   assert.match(source, /prompt,\n\s*usageType: "social"/);
   assert.match(source, /Ne pas générer une image vide/);
   assert.match(source, /titre principal lisible/);
-  assert.match(source, /quality:\s*"premium"/);
+  assert.match(source, /graphisteDomain\(params\.sector, params\.description, params\.postContent\)/);
+  assert.match(source, /postContent = ""/);
+  assert.equal(source.includes('return "service";'), false, 'broken Graphiste service references must not be the default');
+  assert.match(source, /return "formation";/);
+  assert.match(source, /pas comme contrainte stricte/);
+  assert.match(source, /créer librement une affiche adaptée au message/);
 });
 
 test('Graphiste GPT response extractor accepts common final poster URL shapes', () => {
