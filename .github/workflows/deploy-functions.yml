@@ -1,8 +1,9 @@
 name: Deploy Supabase Edge Functions
 
 # Replaces Lovable's backend deployment. On every push to main that touches
-# the functions, this deploys ALL edge functions to your own Supabase
-# project. It NEVER runs migrations (your schema is managed separately).
+# the functions, this deploys the image-generation edge function used by
+# Pro Social AI. Other functions should be deployed explicitly when changed
+# to avoid unrelated CDN/import failures blocking urgent hotfixes.
 #
 # One-time setup (GitHub → repo → Settings → Secrets and variables →
 # Actions → New repository secret):
@@ -32,11 +33,11 @@ jobs:
         with:
           version: latest
 
-      - name: Deploy all edge functions
+      - name: Deploy generate-image edge function
         run: |
           if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then
             echo "::error::SUPABASE_ACCESS_TOKEN is not set — edge functions were NOT deployed."
             echo "Add it in repo Settings -> Secrets and variables -> Actions to enable deploys."
             exit 1
           fi
-          supabase functions deploy --project-ref "$PROJECT_REF"
+          supabase functions deploy generate-image --project-ref "$PROJECT_REF"
