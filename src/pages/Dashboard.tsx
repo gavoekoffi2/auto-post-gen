@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Calendar, TrendingUp, CheckCircle, Clock, Edit2, Sparkles, Settings, Share2, Calendar as CalendarIcon, Trash2, User, BarChart3, Send, ImageIcon, Loader2, MessageSquare } from "lucide-react";
+import { Calendar, TrendingUp, CheckCircle, Clock, Edit2, Sparkles, Settings, Share2, Calendar as CalendarIcon, Trash2, User, BarChart3, Send, ImageIcon, Loader2, MessageSquare, RefreshCw } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -71,6 +71,7 @@ export default function Dashboard() {
   const [publishingId, setPublishingId] = useState<string | null>(null);
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
   const [generatingImageIds, setGeneratingImageIds] = useState<Set<string>>(new Set());
+  const [regeneratingContentIds, setRegeneratingContentIds] = useState<Set<string>>(new Set());
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [hasConnection, setHasConnection] = useState<boolean | null>(null);
 
@@ -412,9 +413,12 @@ export default function Dashboard() {
         setPosts((prev) =>
           prev.map((p) => (p.id === post.id ? { ...p, image_url: data.imageUrl } : p)),
         );
+        setEditingPost((current) =>
+          current?.id === post.id ? { ...current, image_url: data.imageUrl } : current,
+        );
         if (data.fallback) {
           if (data.warning) console.warn("Image fallback reason:", data.warning);
-          toast.warning("Image IA indisponible — visuel de secours généré.");
+          toast.warning("Graphiste GPT trop lent — affiche professionnelle de secours générée.");
         } else {
           toast.success("Image IA générée");
         }
@@ -427,6 +431,53 @@ export default function Dashboard() {
       toast.error(message);
     } finally {
       setGeneratingImageIds((prev) => {
+        const next = new Set(prev);
+        next.delete(post.id);
+        return next;
+      });
+    }
+  };
+
+  const handleRegenerateContent = async (post: Post) => {
+    if (regeneratingContentIds.has(post.id)) return;
+    setRegeneratingContentIds((prev) => new Set(prev).add(post.id));
+    const loadingToast = toast.loading("Régénération du contenu...");
+    try {
+      const { data, error } = await supabase.functions.invoke('generate-content', {
+        body: {
+          prompt: `Régénère une nouvelle version professionnelle de ce post, claire, vendeuse et prête à publier. Garde le même objectif mais propose une formulation différente. Ancien post:\n${post.content}`,
+          userPreferences: userProfile,
+        },
+      });
+      if (error) throw error;
+      if (!data?.content) throw new Error("Aucun contenu reçu");
+
+      const updatedPost: Post = {
+        ...post,
+        title: "Contenu régénéré",
+        content: data.content,
+        image_url: undefined,
+      };
+
+      const { error: updateError } = await supabase
+        .from('posts')
+        .update({ title: updatedPost.title, content: updatedPost.content, image_url: null })
+        .eq('id', post.id);
+      if (updateError) throw updateError;
+
+      setPosts((prev) => prev.map((p) => (p.id === post.id ? updatedPost : p)));
+      if (editingPost?.id === post.id) {
+        setEditingPost(updatedPost);
+      }
+      toast.dismiss(loadingToast);
+      toast.success("Contenu régénéré. Nouvelle affiche en cours...");
+      await handleRegenerateImage(updatedPost);
+    } catch (err) {
+      toast.dismiss(loadingToast);
+      const message = err instanceof Error ? err.message : "Erreur de régénération du contenu";
+      toast.error(message);
+    } finally {
+      setRegeneratingContentIds((prev) => {
         const next = new Set(prev);
         next.delete(post.id);
         return next;
@@ -736,6 +787,34 @@ export default function Dashboard() {
                         <Edit2 className="w-4 h-4 mr-1" />
                         Modifier
                       </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="glass-card flex-1"
+                        onClick={() => handleRegenerateImage(post)}
+                        disabled={generatingImageIds.has(post.id)}
+                      >
+                        {generatingImageIds.has(post.id) ? (
+                          <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                        ) : (
+                          <ImageIcon className="w-4 h-4 mr-1" />
+                        )}
+                        Régénérer l’affiche
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="glass-card flex-1"
+                        onClick={() => handleRegenerateContent(post)}
+                        disabled={regeneratingContentIds.has(post.id)}
+                      >
+                        {regeneratingContentIds.has(post.id) ? (
+                          <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                        ) : (
+                          <RefreshCw className="w-4 h-4 mr-1" />
+                        )}
+                        Régénérer le contenu
+                      </Button>
                       {post.status === "pending" && (
                         <Button
                           size="sm"
@@ -929,119 +1008,158 @@ export default function Dashboard() {
 
       {/* Edit Dialog */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-        <DialogContent className="glass-card">
+        <DialogContent className="glass-card max-w-5xl max-h-[92vh] overflow-hidden">
           <DialogHeader>
             <DialogTitle>Modifier le post</DialogTitle>
             <DialogDescription>
-              Modifiez le contenu de votre publication avant de la valider.
+              Relisez tout le texte, modifiez-le, puis régénérez le contenu ou l’affiche si nécessaire.
             </DialogDescription>
           </DialogHeader>
           {editingPost && (
-            <div className="space-y-4">
-              <div>
-                <Label htmlFor="title">Titre</Label>
-                <Input
-                  id="title"
-                  value={editingPost.title}
-                  onChange={(e) => setEditingPost({ ...editingPost, title: e.target.value })}
-                  className="glass-card"
-                />
-              </div>
-              <div>
-                <Label htmlFor="content">Contenu</Label>
-                <Textarea
-                  id="content"
-                  value={editingPost.content || ""}
-                  onChange={(e) => setEditingPost({ ...editingPost, content: e.target.value })}
-                  className="glass-card min-h-[100px]"
-                />
-              </div>
-              {editingPost.image_url && (
-                <div>
-                  <Label>Image générée</Label>
-                  <img
-                    src={editingPost.image_url}
-                    alt="Post"
-                    className="w-full rounded-lg mt-2"
-                    onError={(e) => {
-                      const img = e.currentTarget;
-                      img.style.display = "none";
-                      const wrap = img.parentElement;
-                      if (wrap) {
-                        wrap.insertAdjacentHTML(
-                          "beforeend",
-                          '<p class="text-xs text-muted-foreground mt-2">Image indisponible</p>',
-                        );
-                      }
-                    }}
-                  />
-                </div>
-              )}
-              <div>
-                <Label className="mb-3 block">Plateformes de publication</Label>
-                <div className="space-y-3">
-                  {['Instagram', 'Facebook', 'Twitter', 'LinkedIn', 'TikTok'].map((platform) => (
-                    <div key={platform} className="flex items-center space-x-2">
-                      <Checkbox
-                        id={platform}
-                        checked={editingPost.platforms?.includes(platform) || false}
-                        onCheckedChange={(checked) => {
-                          const currentPlatforms = editingPost.platforms || [];
-                          const newPlatforms = checked
-                            ? [...currentPlatforms, platform]
-                            : currentPlatforms.filter(p => p !== platform);
-                          setEditingPost({ 
-                            ...editingPost, 
-                            platforms: newPlatforms,
-                            platform: newPlatforms[0] || 'Instagram'
-                          });
-                        }}
-                      />
-                      <label htmlFor={platform} className="text-sm cursor-pointer">
-                        {platform}
-                      </label>
+            <ScrollArea className="max-h-[74vh] pr-4">
+              <div className="grid lg:grid-cols-[1.3fr_0.9fr] gap-6 pb-2">
+                <div className="space-y-4">
+                  <div>
+                    <Label htmlFor="title">Titre</Label>
+                    <Input
+                      id="title"
+                      value={editingPost.title}
+                      onChange={(e) => setEditingPost({ ...editingPost, title: e.target.value })}
+                      className="glass-card text-base"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="content">Contenu complet</Label>
+                    <Textarea
+                      id="content"
+                      value={editingPost.content || ""}
+                      onChange={(e) => setEditingPost({ ...editingPost, content: e.target.value })}
+                      className="glass-card min-h-[320px] text-base leading-relaxed text-foreground placeholder:text-muted-foreground"
+                    />
+                    <p className="text-xs text-muted-foreground mt-2">
+                      Zone agrandie : vous pouvez scroller et relire tout le texte avant validation.
+                    </p>
+                  </div>
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    <Button
+                      variant="outline"
+                      className="glass-card"
+                      onClick={() => handleRegenerateContent(editingPost)}
+                      disabled={regeneratingContentIds.has(editingPost.id)}
+                    >
+                      {regeneratingContentIds.has(editingPost.id) ? (
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      ) : (
+                        <RefreshCw className="w-4 h-4 mr-2" />
+                      )}
+                      Régénérer le contenu
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="glass-card"
+                      onClick={() => handleRegenerateImage(editingPost)}
+                      disabled={generatingImageIds.has(editingPost.id)}
+                    >
+                      {generatingImageIds.has(editingPost.id) ? (
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      ) : (
+                        <ImageIcon className="w-4 h-4 mr-2" />
+                      )}
+                      Régénérer l’affiche
+                    </Button>
+                  </div>
+                  <div>
+                    <Label className="mb-3 block">Plateformes de publication</Label>
+                    <div className="grid sm:grid-cols-2 gap-3">
+                      {['Instagram', 'Facebook', 'Twitter', 'LinkedIn', 'TikTok'].map((platform) => (
+                        <div key={platform} className="flex items-center space-x-2 rounded-lg border border-border/50 p-3 bg-card/40">
+                          <Checkbox
+                            id={platform}
+                            checked={editingPost.platforms?.includes(platform) || false}
+                            onCheckedChange={(checked) => {
+                              const currentPlatforms = editingPost.platforms || [];
+                              const newPlatforms = checked
+                                ? [...currentPlatforms, platform]
+                                : currentPlatforms.filter(p => p !== platform);
+                              setEditingPost({
+                                ...editingPost,
+                                platforms: newPlatforms,
+                                platform: newPlatforms[0] || 'Instagram'
+                              });
+                            }}
+                          />
+                          <label htmlFor={platform} className="text-sm cursor-pointer">
+                            {platform}
+                          </label>
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor="date">Date</Label>
+                      <Input
+                        id="date"
+                        type="date"
+                        value={editingPost.date || ''}
+                        onChange={(e) => setEditingPost({ ...editingPost, date: e.target.value })}
+                        className="glass-card"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="time">Heure</Label>
+                      <Input
+                        id="time"
+                        type="time"
+                        value={editingPost.time || ''}
+                        onChange={(e) => setEditingPost({ ...editingPost, time: e.target.value })}
+                        className="glass-card"
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div className="space-y-3">
+                  <Label>Aperçu affiche</Label>
+                  {editingPost.image_url ? (
+                    <img
+                      src={editingPost.image_url}
+                      alt="Post"
+                      className="w-full rounded-xl border border-border/60 bg-muted object-cover max-h-[560px]"
+                      onError={(e) => {
+                        const img = e.currentTarget;
+                        img.style.display = "none";
+                        const wrap = img.parentElement;
+                        if (wrap) {
+                          wrap.insertAdjacentHTML(
+                            "beforeend",
+                            '<p class="text-xs text-muted-foreground mt-2">Image indisponible</p>',
+                          );
+                        }
+                      }}
+                    />
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-border h-64 flex items-center justify-center text-sm text-muted-foreground bg-muted/40">
+                      Aucune affiche pour le moment
+                    </div>
+                  )}
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="date">Date</Label>
-                  <Input
-                    id="date"
-                    type="date"
-                    value={editingPost.date || ''}
-                    onChange={(e) => setEditingPost({ ...editingPost, date: e.target.value })}
-                    className="glass-card"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="time">Heure</Label>
-                  <Input
-                    id="time"
-                    type="time"
-                    value={editingPost.time || ''}
-                    onChange={(e) => setEditingPost({ ...editingPost, time: e.target.value })}
-                    className="glass-card"
-                  />
-                </div>
-              </div>
-              <div className="flex gap-2">
-                <Button 
-                  variant="outline" 
+              <div className="flex gap-2 pt-4 sticky bottom-0 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/75">
+                <Button
+                  variant="outline"
                   onClick={() => setIsEditDialogOpen(false)}
                   className="glass-card flex-1"
                 >
                   Annuler
                 </Button>
-                <Button 
+                <Button
                   onClick={handleSaveEdit}
                   className="bg-gradient-to-r from-primary to-secondary flex-1"
                 >
                   Enregistrer
                 </Button>
               </div>
-            </div>
+            </ScrollArea>
           )}
         </DialogContent>
       </Dialog>

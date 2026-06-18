@@ -38,35 +38,114 @@ function safeColor(value: string, fallback: string): string {
   return /^#[0-9a-f]{6}$/i.test(value) ? value : fallback;
 }
 
-function fallbackSvgDataUrl(primary: string, secondary: string, accent: string, style: string): string {
-  const p = safeColor(primary, "#8B5CF6");
-  const s = safeColor(secondary, "#3B82F6");
-  const a = safeColor(accent, "#F59E0B");
-  const isMinimal = style === "minimalist" || style === "flat_design";
+function escapeSvgText(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function splitWords(value: string, maxWords: number): string[] {
+  return value
+    .replace(/https?:\/\/\S+/g, "")
+    .replace(/[\n\r]+/g, " ")
+    .split(/\s+/)
+    .map((w) => w.trim())
+    .filter(Boolean)
+    .slice(0, maxWords);
+}
+
+function wrapSvgLine(words: string[], maxChars: number, maxLines: number): string[] {
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    const next = current ? `${current} ${word}` : word;
+    if (next.length > maxChars && current) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = next;
+    }
+    if (lines.length === maxLines) break;
+  }
+  if (current && lines.length < maxLines) lines.push(current);
+  return lines;
+}
+
+function titleFromPost(postContent: string, companyName: string): string {
+  const explicit = postContent.match(/(?:titre|title)\s*[:：-]\s*([^\n.]+)/i)?.[1]?.trim();
+  if (explicit) return explicit.slice(0, 70);
+  const firstSentence = postContent.split(/[.!?\n]/).find((s) => s.trim().length > 12)?.trim();
+  return (firstSentence || companyName || "Offre professionnelle").slice(0, 70);
+}
+
+function ctaFromPost(postContent: string): string {
+  const lower = postContent.toLowerCase();
+  if (/réservez|reservez|reservation|rendez-vous/.test(lower)) return "Réservez maintenant";
+  if (/contact|appel|whatsapp|téléphone|telephone/.test(lower)) return "Contactez-nous";
+  if (/découvrez|decouvrez|voir|visitez/.test(lower)) return "Découvrez l’offre";
+  if (/inscri|formation|cours|atelier/.test(lower)) return "Inscrivez-vous";
+  return "Passez à l’action";
+}
+
+function buildProfessionalPosterSvgDataUrl(params: {
+  postContent: string;
+  companyName: string;
+  sector: string;
+  primary: string;
+  secondary: string;
+  accent: string;
+}): string {
+  const p = safeColor(params.primary, "#111827");
+  const s = safeColor(params.secondary, "#2563EB");
+  const a = safeColor(params.accent, "#F59E0B");
+  const title = wrapSvgLine(splitWords(titleFromPost(params.postContent, params.companyName), 12), 18, 3);
+  const body = wrapSvgLine(splitWords(params.postContent, 42), 34, 4);
+  const cta = escapeSvgText(ctaFromPost(params.postContent));
+  const company = escapeSvgText((params.companyName || "Votre entreprise").slice(0, 42));
+  const sector = escapeSvgText((params.sector || "Service professionnel").slice(0, 38));
+  const titleNodes = title.map((line, i) => `<text x="86" y="${255 + i * 76}" font-size="64" font-weight="900" fill="#ffffff" letter-spacing="-1.5">${escapeSvgText(line)}</text>`).join("\n");
+  const bodyNodes = body.map((line, i) => `<text x="92" y="${560 + i * 42}" font-size="31" font-weight="600" fill="#F8FAFC" opacity="0.95">${escapeSvgText(line)}</text>`).join("\n");
   const svg = `
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1200" viewBox="0 0 1200 1200">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0%" stop-color="${p}"/>
-      <stop offset="55%" stop-color="${s}"/>
-      <stop offset="100%" stop-color="${a}"/>
+      <stop offset="52%" stop-color="${s}"/>
+      <stop offset="100%" stop-color="#020617"/>
     </linearGradient>
-    <radialGradient id="glow" cx="65%" cy="35%" r="55%">
-      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.62"/>
-      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    <radialGradient id="spot" cx="77%" cy="25%" r="55%">
+      <stop offset="0%" stop-color="${a}" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="${a}" stop-opacity="0"/>
     </radialGradient>
-    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="34"/>
-    </filter>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="18" stdDeviation="20" flood-color="#000000" flood-opacity="0.28"/></filter>
   </defs>
   <rect width="1200" height="1200" fill="url(#bg)"/>
-  <circle cx="790" cy="320" r="420" fill="url(#glow)"/>
-  <circle cx="180" cy="980" r="330" fill="#000000" opacity="0.12" filter="url(#soft)"/>
-  <path d="M180 760 C330 575 500 560 650 690 C805 825 965 820 1080 650 L1080 1080 L180 1080 Z" fill="#ffffff" opacity="${isMinimal ? "0.22" : "0.18"}"/>
-  <path d="M80 260 C250 120 470 110 620 250 C760 380 900 405 1120 260" fill="none" stroke="#ffffff" stroke-width="36" stroke-linecap="round" opacity="0.28"/>
-  <circle cx="355" cy="405" r="90" fill="#ffffff" opacity="0.22"/>
-  <circle cx="905" cy="750" r="130" fill="#ffffff" opacity="0.16"/>
-  <rect x="230" y="230" width="740" height="740" rx="96" fill="none" stroke="#ffffff" stroke-width="5" opacity="0.35"/>
+  <circle cx="930" cy="245" r="430" fill="url(#spot)"/>
+  <circle cx="1030" cy="1000" r="390" fill="#ffffff" opacity="0.08"/>
+  <path d="M760 125 C962 192 1072 340 1084 544 C914 475 762 378 650 244 C680 188 714 149 760 125Z" fill="#ffffff" opacity="0.16"/>
+  <rect x="68" y="72" width="1064" height="1056" rx="72" fill="none" stroke="#ffffff" stroke-width="4" opacity="0.28"/>
+  <g filter="url(#shadow)">
+    <rect x="72" y="74" width="456" height="78" rx="39" fill="#ffffff" opacity="0.96"/>
+    <text x="104" y="124" font-size="28" font-weight="900" fill="${p}">${company}</text>
+  </g>
+  <text x="92" y="206" font-size="24" font-weight="800" fill="${a}" letter-spacing="4">${sector.toUpperCase()}</text>
+  ${titleNodes}
+  <rect x="86" y="475" width="128" height="10" rx="5" fill="${a}"/>
+  ${bodyNodes}
+  <g filter="url(#shadow)">
+    <rect x="86" y="810" width="520" height="114" rx="57" fill="${a}"/>
+    <text x="142" y="882" font-size="38" font-weight="900" fill="#111827">${cta}</text>
+  </g>
+  <g transform="translate(720 670)">
+    <rect x="0" y="0" width="340" height="340" rx="70" fill="#ffffff" opacity="0.17"/>
+    <circle cx="170" cy="130" r="74" fill="#ffffff" opacity="0.30"/>
+    <path d="M78 260 C100 205 140 178 174 178 C214 178 252 205 274 260" fill="none" stroke="#ffffff" stroke-width="28" stroke-linecap="round" opacity="0.42"/>
+    <path d="M52 318 L318 318" stroke="${a}" stroke-width="18" stroke-linecap="round"/>
+  </g>
+  <text x="86" y="1054" font-size="25" font-weight="700" fill="#CBD5E1">Affiche professionnelle générée automatiquement</text>
 </svg>`.trim();
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
@@ -289,7 +368,7 @@ async function tryGraphisteGptPoster(params: {
   const subject = `${params.companyName} — ${params.postContent}`.slice(0, 600);
   const prompt = buildGraphistePosterPrompt(params);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 110_000);
+  const timer = setTimeout(() => controller.abort(), 35_000);
   try {
     const resp = await fetch(endpoint, {
       method: "POST",
@@ -435,20 +514,15 @@ serve(async (req) => {
 
     let usedFallback = false;
     if (!imageUrl) {
-      console.error("Graphiste GPT poster generation failed:", lastError);
-      const allowFallback = Deno.env.get("ALLOW_BRANDED_IMAGE_FALLBACK") === "true";
-      if (!allowFallback) {
-        return new Response(
-          JSON.stringify({
-            error: "Graphiste GPT n'a pas retourné une vraie image finale. Génération annulée pour éviter le même SVG vide.",
-            warning: lastError,
-            fallback: false,
-            provider: "graphiste-gpt",
-          }),
-          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-        );
-      }
-      imageUrl = fallbackSvgDataUrl(primary, secondary, accent, imageStyle);
+      console.warn("Graphiste GPT poster generation failed, using dynamic professional poster fallback:", lastError);
+      imageUrl = buildProfessionalPosterSvgDataUrl({
+        postContent,
+        companyName: profile?.company_name || "Entreprise",
+        sector,
+        primary,
+        secondary,
+        accent,
+      });
       usedFallback = true;
     }
 
@@ -508,7 +582,7 @@ serve(async (req) => {
       JSON.stringify({
         imageUrl,
         fallback: usedFallback,
-        provider: usedFallback ? "branded-fallback" : "graphiste-gpt",
+        provider: usedFallback ? "professional-poster-fallback" : "graphiste-gpt",
         warning: usedFallback ? lastError : undefined,
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },

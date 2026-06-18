@@ -11,8 +11,9 @@ test('generate-image uses Graphiste GPT posters, not generic OpenRouter/Gemini i
   assert.equal(source.includes('generateImageUrl('), false, 'must not call generic image generator');
   assert.equal(source.includes('getOpenRouterKey'), false, 'must not require OpenRouter for image generation');
   assert.equal(/Gemini|gemini|OPENROUTER/.test(source), false, 'must not reference Gemini/OpenRouter in poster function');
-  assert.match(source, /provider:\s*usedFallback \? "branded-fallback" : "graphiste-gpt"/);
-  assert.match(source, /ALLOW_BRANDED_IMAGE_FALLBACK/);
+  assert.match(source, /provider:\s*usedFallback \? "professional-poster-fallback" : "graphiste-gpt"/);
+  assert.match(source, /buildProfessionalPosterSvgDataUrl/);
+  assert.equal(source.includes('ALLOW_BRANDED_IMAGE_FALLBACK'), false, 'must not refuse generation behind a fallback flag');
   assert.match(source, /quality:\s*"premium"/);
   assert.equal(source.includes('mode: "fast"'), false, 'must not use fast mode because it routes to the quick model');
   assert.equal(source.includes('quality: "fast"'), false, 'must not use fast quality because it routes to the quick model');
