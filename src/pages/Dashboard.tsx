@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { getSocialImageSpec } from "@/lib/socialImageSpecs";
 import { useNavigate } from "react-router-dom";
 import SettingsDialog from "@/components/SettingsDialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -364,6 +365,7 @@ export default function Dashboard() {
       setGeneratingImageIds((prev) => new Set(prev).add(savedPost.id));
       void (async () => {
         try {
+          const imageSpec = getSocialImageSpec(defaultPlatforms);
           const { data: imgData, error: imgError } = await supabase.functions.invoke(
             'generate-image',
             {
@@ -371,6 +373,7 @@ export default function Dashboard() {
                 postContent: data.content,
                 peopleType: userProfile?.image_people_type || 'african',
                 postId: savedPost.id,
+                platforms: defaultPlatforms,
               },
             },
           );
@@ -385,7 +388,7 @@ export default function Dashboard() {
               if (imgData.warning) console.warn("Image fallback reason:", imgData.warning);
               toast.warning("Image IA indisponible — visuel de secours utilisé. Réessayez via 'Régénérer'.");
             } else {
-              toast.success("Image IA ajoutée au post");
+              toast.success(`Image IA ajoutée (${imageSpec.label} ${imageSpec.width}×${imageSpec.height})`);
             }
           }
         } catch (imgErr) {
@@ -416,11 +419,14 @@ export default function Dashboard() {
     setGeneratingImageIds((prev) => new Set(prev).add(post.id));
     const loadingToast = toast.loading("Génération d'image...");
     try {
+      const regenPlatforms = post.platforms || (post.platform ? [post.platform] : []);
+      const imageSpec = getSocialImageSpec(regenPlatforms);
       const { data, error } = await supabase.functions.invoke('generate-image', {
         body: {
           postContent: post.content,
           peopleType: userProfile?.image_people_type || 'african',
           postId: post.id,
+          platforms: regenPlatforms,
         },
       });
       toast.dismiss(loadingToast);
@@ -436,7 +442,7 @@ export default function Dashboard() {
           if (data.warning) console.warn("Image fallback reason:", data.warning);
           toast.warning("Graphiste GPT trop lent — affiche professionnelle de secours générée.");
         } else {
-          toast.success("Image IA générée");
+          toast.success(`Image IA générée (${imageSpec.label} ${imageSpec.width}×${imageSpec.height})`);
         }
       } else {
         toast.error("Image non générée");

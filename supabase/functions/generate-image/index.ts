@@ -7,9 +7,12 @@
 //
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
+import { getSocialImageSpec, type SocialImageSpec } from "../_shared/socialImageSpecs.ts";
 // Image generation for Pro Social AI must produce real poster layouts.
 // Keep this endpoint dedicated to Graphiste GPT poster output rather than
-// generic image providers.
+// generic image providers. The chosen output format always follows the post's
+// target platforms (see _shared/socialImageSpecs.ts) so a LinkedIn post never
+// comes back as a TikTok-shaped image and vice-versa.
 
 const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "*")
   .split(",")
@@ -90,6 +93,62 @@ function ctaFromPost(postContent: string): string {
   return "Passez à l’action";
 }
 
+// The sub-message under the headline: the post text with any "Titre:" label and
+// the headline itself removed, so the poster never prints the title twice.
+function bodyFromPost(postContent: string, title: string): string {
+  let text = postContent.replace(/(?:titre|title)\s*[:：-]\s*/i, " ");
+  if (title) text = text.split(title).join(" ");
+  return text.replace(/\s+/g, " ").replace(/^[\s.,;:!?–-]+/, "").trim();
+}
+
+interface PosterLayout {
+  pad: number;
+  eyebrow: number;
+  title: number;
+  titleLines: number;
+  body: number;
+  bodyLines: number;
+  bodyWords: number;
+  cta: number;
+  badge: number;
+  footer: number;
+}
+
+// Every font size is clamped to a readable minimum (>= 20px on the output
+// canvas) so the fallback poster never degrades into the tiny, illegible text
+// that AI image models tend to produce. Sizes scale with the canvas width and
+// adapt per orientation so the same renderer fills a 1200x627 LinkedIn banner
+// and a 1080x1920 TikTok story without overflowing.
+function posterLayout(spec: SocialImageSpec): PosterLayout {
+  const w = spec.width;
+  const px = (factor: number, min: number) => Math.max(Math.round(w * factor), min);
+  switch (spec.orientation) {
+    case "story":
+      return { pad: px(0.075, 60), eyebrow: px(0.030, 26), title: px(0.094, 60), titleLines: 4, body: px(0.036, 26), bodyLines: 3, bodyWords: 26, cta: px(0.042, 32), badge: px(0.027, 22), footer: px(0.022, 20) };
+    case "portrait":
+      return { pad: px(0.072, 56), eyebrow: px(0.028, 26), title: px(0.086, 56), titleLines: 4, body: px(0.034, 24), bodyLines: 3, bodyWords: 24, cta: px(0.040, 30), badge: px(0.026, 22), footer: px(0.021, 20) };
+    case "landscape":
+      return { pad: px(0.050, 40), eyebrow: px(0.023, 22), title: px(0.052, 44), titleLines: 2, body: px(0.024, 20), bodyLines: 1, bodyWords: 14, cta: px(0.030, 28), badge: px(0.022, 22), footer: px(0.019, 20) };
+    default: // square
+      return { pad: px(0.070, 56), eyebrow: px(0.028, 26), title: px(0.080, 54), titleLines: 3, body: px(0.032, 24), bodyLines: 3, bodyWords: 22, cta: px(0.038, 30), badge: px(0.026, 22), footer: px(0.021, 20) };
+  }
+}
+
+function orientationLabel(orientation: string): string {
+  switch (orientation) {
+    case "story": return "vertical plein écran 9:16";
+    case "portrait": return "portrait 4:5";
+    case "landscape": return "paysage";
+    default: return "carré 1:1";
+  }
+}
+
+// Premium, dimension-aware poster used both as the robust fallback when the AI
+// poster service is unavailable and as a guaranteed correctly-sized output. It
+// renders a real marketing composition: brand gradient, depth lighting, a
+// company badge, a platform/format badge, an eyebrow, a large readable
+// headline, an accent rule, a short readable sub-message and a CTA pill. Text
+// is drawn by us (never by an image model) so it stays sharp and legible.
 function buildProfessionalPosterSvgDataUrl(params: {
   postContent: string;
   companyName: string;
@@ -97,55 +156,112 @@ function buildProfessionalPosterSvgDataUrl(params: {
   primary: string;
   secondary: string;
   accent: string;
+  spec: SocialImageSpec;
 }): string {
   const p = safeColor(params.primary, "#111827");
   const s = safeColor(params.secondary, "#2563EB");
   const a = safeColor(params.accent, "#F59E0B");
-  const title = wrapSvgLine(splitWords(titleFromPost(params.postContent, params.companyName), 12), 18, 3);
-  const body = wrapSvgLine(splitWords(params.postContent, 42), 34, 4);
+  const { spec } = params;
+  const W = spec.width;
+  const H = spec.height;
+  const L = posterLayout(spec);
+  const tall = spec.orientation === "story" || spec.orientation === "portrait";
+
+  const contentW = W - L.pad * 2;
+  const charsPerLine = (fontSize: number) =>
+    Math.max(8, Math.floor(contentW / (fontSize * 0.56)));
+
+  const titleText = titleFromPost(params.postContent, params.companyName);
+  const title = wrapSvgLine(splitWords(titleText, 14), charsPerLine(L.title), L.titleLines);
+  const body = wrapSvgLine(
+    splitWords(bodyFromPost(params.postContent, titleText), L.bodyWords),
+    charsPerLine(L.body),
+    L.bodyLines,
+  );
   const cta = escapeSvgText(ctaFromPost(params.postContent));
-  const company = escapeSvgText((params.companyName || "Votre entreprise").slice(0, 42));
-  const sector = escapeSvgText((params.sector || "Service professionnel").slice(0, 38));
-  const titleNodes = title.map((line, i) => `<text x="86" y="${255 + i * 76}" font-size="64" font-weight="900" fill="#ffffff" letter-spacing="-1.5">${escapeSvgText(line)}</text>`).join("\n");
-  const bodyNodes = body.map((line, i) => `<text x="92" y="${560 + i * 42}" font-size="31" font-weight="600" fill="#F8FAFC" opacity="0.95">${escapeSvgText(line)}</text>`).join("\n");
+  const company = escapeSvgText((params.companyName || "Votre entreprise").slice(0, 38).toUpperCase());
+  const sector = escapeSvgText((params.sector || "Service professionnel").slice(0, 34));
+  const formatBadge = escapeSvgText(`${spec.label} · ${W}×${H}`);
+
+  // Collision-free top-down flow: each block sits below the previous one, then
+  // the CTA + footer are pinned near the bottom without ever overlapping the
+  // body. Works for a short 1200x627 banner and a tall 1080x1920 story alike.
+  const badgeH = Math.round(L.badge * 2.0);
+  const eyebrowY = L.pad + badgeH + Math.round(H * 0.045) + L.eyebrow;
+  const titleLineH = Math.round(L.title * 1.08);
+  const titleTop = eyebrowY + Math.round(L.eyebrow * 0.8) + L.title;
+  const titleNodes = title
+    .map((line, i) => `<text x="${L.pad}" y="${titleTop + i * titleLineH}" font-size="${L.title}" font-weight="900" fill="#ffffff" letter-spacing="-1.5">${escapeSvgText(line)}</text>`)
+    .join("\n  ");
+  const titleBottom = titleTop + (title.length - 1) * titleLineH;
+  const ruleY = titleBottom + Math.round(L.title * 0.42);
+  const ruleH = Math.max(8, Math.round(L.title * 0.13));
+  const bodyLineH = Math.round(L.body * 1.34);
+  const bodyTop = ruleY + ruleH + Math.round(L.body * 1.3) + L.body;
+  const bodyNodes = body
+    .map((line, i) => `<text x="${L.pad}" y="${bodyTop + i * bodyLineH}" font-size="${L.body}" font-weight="600" fill="#F1F5F9" opacity="0.94">${escapeSvgText(line)}</text>`)
+    .join("\n  ");
+  const bodyBottom = bodyTop + Math.max(0, body.length - 1) * bodyLineH;
+
+  const footerBaseline = H - Math.round(L.pad * 0.8);
+  const ctaH = Math.round(L.cta * 2.0);
+  const ctaW = Math.min(contentW, Math.round(cta.length * L.cta * 0.66) + L.cta * 2.6);
+  // Keep the CTA below the body, drop it toward the lower third on tall canvases,
+  // and never let it run into the footer line.
+  const maxCtaTop = footerBaseline - L.footer - Math.round(L.footer) - ctaH;
+  const ctaTop = Math.min(
+    maxCtaTop,
+    Math.max(bodyBottom + Math.round(L.cta), tall ? Math.round(H * 0.76) : 0),
+  );
+  const ctaTextY = ctaTop + Math.round(ctaH * 0.64);
+
+  // Decorative geometry scaled to the canvas.
+  const spotR = Math.round(Math.max(W, H) * 0.42);
+  const orbR = Math.round(W * 0.36);
+  const ringR = Math.round(W * 0.13);
+  const ringCx = W - L.pad - ringR;
+  const ringCy = Math.round(H * 0.5);
+
   const svg = `
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1200" viewBox="0 0 1200 1200">
+<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0%" stop-color="${p}"/>
       <stop offset="52%" stop-color="${s}"/>
       <stop offset="100%" stop-color="#020617"/>
     </linearGradient>
-    <radialGradient id="spot" cx="77%" cy="25%" r="55%">
+    <radialGradient id="spot" cx="78%" cy="22%" r="60%">
       <stop offset="0%" stop-color="${a}" stop-opacity="0.95"/>
       <stop offset="100%" stop-color="${a}" stop-opacity="0"/>
     </radialGradient>
-    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="18" stdDeviation="20" flood-color="#000000" flood-opacity="0.28"/></filter>
+    <linearGradient id="scrim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#020617" stop-opacity="0"/>
+      <stop offset="58%" stop-color="#020617" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#020617" stop-opacity="0.66"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="${Math.round(L.cta * 0.4)}" stdDeviation="${Math.round(L.cta * 0.5)}" flood-color="#000000" flood-opacity="0.30"/></filter>
   </defs>
-  <rect width="1200" height="1200" fill="url(#bg)"/>
-  <circle cx="930" cy="245" r="430" fill="url(#spot)"/>
-  <circle cx="1030" cy="1000" r="390" fill="#ffffff" opacity="0.08"/>
-  <path d="M760 125 C962 192 1072 340 1084 544 C914 475 762 378 650 244 C680 188 714 149 760 125Z" fill="#ffffff" opacity="0.16"/>
-  <rect x="68" y="72" width="1064" height="1056" rx="72" fill="none" stroke="#ffffff" stroke-width="4" opacity="0.28"/>
+  <rect width="${W}" height="${H}" fill="url(#bg)"/>
+  <circle cx="${W - Math.round(W * 0.1)}" cy="${Math.round(H * 0.16)}" r="${spotR}" fill="url(#spot)"/>
+  <circle cx="${Math.round(W * 0.92)}" cy="${Math.round(H * 0.9)}" r="${orbR}" fill="#ffffff" opacity="0.07"/>
+  <circle cx="${ringCx}" cy="${ringCy}" r="${ringR}" fill="none" stroke="#ffffff" stroke-width="${Math.round(L.badge * 0.5)}" opacity="0.16"/>
+  <rect width="${W}" height="${H}" fill="url(#scrim)"/>
+  <rect x="${Math.round(L.pad * 0.55)}" y="${Math.round(L.pad * 0.55)}" width="${W - Math.round(L.pad * 1.1)}" height="${H - Math.round(L.pad * 1.1)}" rx="${Math.round(L.pad * 0.7)}" fill="none" stroke="#ffffff" stroke-width="3" opacity="0.22"/>
   <g filter="url(#shadow)">
-    <rect x="72" y="74" width="456" height="78" rx="39" fill="#ffffff" opacity="0.96"/>
-    <text x="104" y="124" font-size="28" font-weight="900" fill="${p}">${company}</text>
+    <rect x="${L.pad}" y="${L.pad}" width="${Math.min(contentW, Math.round(company.length * L.badge * 0.62) + L.badge * 2)}" height="${badgeH}" rx="${Math.round(badgeH / 2)}" fill="#ffffff" opacity="0.97"/>
+    <text x="${L.pad + Math.round(L.badge * 0.9)}" y="${L.pad + Math.round(badgeH * 0.64)}" font-size="${L.badge}" font-weight="900" fill="${p}" letter-spacing="0.5">${company}</text>
   </g>
-  <text x="92" y="206" font-size="24" font-weight="800" fill="${a}" letter-spacing="4">${sector.toUpperCase()}</text>
+  <rect x="${W - L.pad - (Math.round(formatBadge.length * L.badge * 0.56) + L.badge * 1.6)}" y="${L.pad}" width="${Math.round(formatBadge.length * L.badge * 0.56) + L.badge * 1.6}" height="${badgeH}" rx="${Math.round(badgeH / 2)}" fill="${a}" opacity="0.95"/>
+  <text x="${W - L.pad - Math.round(L.badge * 0.8)}" y="${L.pad + Math.round(badgeH * 0.64)}" font-size="${Math.round(L.badge * 0.82)}" font-weight="800" fill="#111827" text-anchor="end">${formatBadge}</text>
+  <text x="${L.pad}" y="${eyebrowY}" font-size="${L.eyebrow}" font-weight="800" fill="${a}" letter-spacing="${Math.round(L.eyebrow * 0.18)}">${sector.toUpperCase()}</text>
   ${titleNodes}
-  <rect x="86" y="475" width="128" height="10" rx="5" fill="${a}"/>
+  <rect x="${L.pad}" y="${ruleY}" width="${Math.round(W * 0.12)}" height="${ruleH}" rx="${Math.max(4, Math.round(L.title * 0.065))}" fill="${a}"/>
   ${bodyNodes}
   <g filter="url(#shadow)">
-    <rect x="86" y="810" width="520" height="114" rx="57" fill="${a}"/>
-    <text x="142" y="882" font-size="38" font-weight="900" fill="#111827">${cta}</text>
+    <rect x="${L.pad}" y="${ctaTop}" width="${ctaW}" height="${ctaH}" rx="${Math.round(ctaH / 2)}" fill="${a}"/>
+    <text x="${L.pad + Math.round(ctaW / 2)}" y="${ctaTextY}" font-size="${L.cta}" font-weight="900" fill="#111827" text-anchor="middle">${cta}</text>
   </g>
-  <g transform="translate(720 670)">
-    <rect x="0" y="0" width="340" height="340" rx="70" fill="#ffffff" opacity="0.17"/>
-    <circle cx="170" cy="130" r="74" fill="#ffffff" opacity="0.30"/>
-    <path d="M78 260 C100 205 140 178 174 178 C214 178 252 205 274 260" fill="none" stroke="#ffffff" stroke-width="28" stroke-linecap="round" opacity="0.42"/>
-    <path d="M52 318 L318 318" stroke="${a}" stroke-width="18" stroke-linecap="round"/>
-  </g>
-  <text x="86" y="1054" font-size="25" font-weight="700" fill="#CBD5E1">Affiche professionnelle générée automatiquement</text>
+  <text x="${L.pad}" y="${footerBaseline}" font-size="${L.footer}" font-weight="700" fill="#CBD5E1" opacity="0.85">${orientationLabel(spec.orientation)} · ${escapeSvgText((params.companyName || "Pro Social AI").slice(0, 30))}</text>
 </svg>`.trim();
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
@@ -320,6 +436,7 @@ function buildGraphistePosterPrompt(params: {
   primary: string;
   secondary: string;
   accent: string;
+  spec: SocialImageSpec;
 }): string {
   const businessContext = [
     `Entreprise: ${params.companyName || "Entreprise"}`,
@@ -327,9 +444,14 @@ function buildGraphistePosterPrompt(params: {
     params.description ? `Activité: ${params.description.slice(0, 260)}` : null,
   ].filter(Boolean).join("\n");
 
+  const { spec } = params;
+  const formatLine = `FORMAT CIBLE (obligatoire): ${spec.label} — ${spec.width}×${spec.height} px, orientation ${orientationLabel(spec.orientation)}. Composer toute l'affiche exactement dans ce cadrage, sans bandes vides ni recadrage.`;
+
   return `Créer une AFFICHE PUBLICITAIRE PROFESSIONNELLE complète en français pour les réseaux sociaux.
 
 ${businessContext}
+
+${formatLine}
 
 MESSAGE À TRANSFORMER EN AFFICHE:
 ${params.postContent.slice(0, 900)}
@@ -337,6 +459,8 @@ ${params.postContent.slice(0, 900)}
 EXIGENCE PRINCIPALE:
 - Ne pas générer une image vide, un simple fond, ou une affiche sans contenu.
 - L'affiche doit contenir une vraie composition complète: titre principal lisible, visuel fort, blocs graphiques, hiérarchie claire, contraste premium.
+- Qualité affiche de campagne premium: éclairage cinématographique, profondeur, hiérarchie visuelle forte, mise en page moderne et épurée.
+- Le titre et le CTA doivent être GRANDS et parfaitement lisibles. Aucun petit texte illisible, aucune lettre aléatoire, aucun faux texte, aucun watermark, aucun élément d'interface.
 - Ajouter 2 à 5 mots-clés courts issus du message, mais éviter les longs paragraphes.
 - Prévoir un espace CTA visuel du type "Contactez-nous", "Réservez", "Découvrez", ou équivalent selon le message.
 - Utiliser les affiches/templates internes Graphiste GPT comme inspiration professionnelle de structure, pas comme contrainte stricte.
@@ -344,12 +468,14 @@ EXIGENCE PRINCIPALE:
 
 STYLE:
 - Qualité premium, rendu publicitaire professionnel, moderne, non vide.
-- Format social/poster vertical ou carré avec une composition remplie.
+- Respecter strictement le format cible ci-dessus (${spec.width}×${spec.height} px) avec une composition remplie de bord à bord.
 - Couleurs de marque à intégrer visiblement: primaire ${params.primary}, secondaire ${params.secondary}, accent ${params.accent}.
 - Si des personnes sont représentées, privilégier des personnes africaines/noires professionnelles et crédibles.
 
+DIRECTION (EN): Premium social media poster, high-end marketing campaign style, cinematic lighting, professional composition, strong visual hierarchy, modern clean layout, brand-consistent colors, large readable headline, clear CTA, no tiny unreadable text, no random letters, no watermark, no UI elements.
+
 SORTIE ATTENDUE:
-Une affiche finale complète, prête à publier, pas une image standard et pas un template vide.`;
+Une affiche finale complète, prête à publier, au format ${spec.width}×${spec.height} px, pas une image standard et pas un template vide.`;
 }
 
 async function tryGraphisteGptPoster(params: {
@@ -360,12 +486,13 @@ async function tryGraphisteGptPoster(params: {
   primary: string;
   secondary: string;
   accent: string;
+  spec: SocialImageSpec;
 }): Promise<{ imageUrl: string | null; warning: string | null }> {
   const key = Deno.env.get("GRAPHISTE_GPT_API_KEY");
   if (!key) return { imageUrl: null, warning: "GRAPHISTE_GPT_API_KEY not configured" };
 
   const endpoint = Deno.env.get("GRAPHISTE_GPT_API_URL") || GRAPHISTE_GPT_DEFAULT_URL;
-  const subject = `${params.companyName} — ${params.postContent}`.slice(0, 600);
+  const subject = `${params.companyName} — ${params.postContent} [Format ${params.spec.label} ${params.spec.width}x${params.spec.height}]`.slice(0, 600);
   const prompt = buildGraphistePosterPrompt(params);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 35_000);
@@ -472,6 +599,9 @@ serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const postContent: string = (body?.postContent || "").toString().slice(0, 2000);
     const postId: string | null = body?.postId || null;
+    let platforms: string[] = Array.isArray(body?.platforms)
+      ? body.platforms.map((x: unknown) => String(x)).filter(Boolean).slice(0, 12)
+      : [];
 
     if (!postContent) {
       return new Response(
@@ -479,6 +609,24 @@ serve(async (req) => {
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
+
+    // If the caller didn't pass platforms but referenced an existing post,
+    // read them from the row so the output format still matches the post's
+    // targets (e.g. regenerating the image of a TikTok post).
+    if (platforms.length === 0 && postId) {
+      const { data: postRow } = await supabase
+        .from("posts")
+        .select("platforms")
+        .eq("id", postId)
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (Array.isArray(postRow?.platforms)) {
+        platforms = postRow.platforms.map((x: unknown) => String(x)).filter(Boolean);
+      }
+    }
+
+    // One coherent output format for the whole post, derived from its targets.
+    const spec = getSocialImageSpec(platforms);
 
     // Pull the user's brand preferences from their profile so every
     // image respects the same visual identity.
@@ -505,6 +653,7 @@ serve(async (req) => {
       primary,
       secondary,
       accent,
+      spec,
     });
     if (graphiste.warning) console.warn("Graphiste GPT unavailable:", graphiste.warning);
 
@@ -522,6 +671,7 @@ serve(async (req) => {
         primary,
         secondary,
         accent,
+        spec,
       });
       usedFallback = true;
     }
@@ -584,6 +734,13 @@ serve(async (req) => {
         fallback: usedFallback,
         provider: usedFallback ? "professional-poster-fallback" : "graphiste-gpt",
         warning: usedFallback ? lastError : undefined,
+        format: {
+          width: spec.width,
+          height: spec.height,
+          label: spec.label,
+          orientation: spec.orientation,
+          platforms: spec.platforms,
+        },
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
