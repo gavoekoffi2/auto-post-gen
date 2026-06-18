@@ -7,7 +7,9 @@
 //
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
-import { generateImageUrl, getOpenRouterKey } from "../_shared/ai.ts";
+// Image generation for Pro Social AI must produce real poster layouts.
+// Keep this endpoint dedicated to Graphiste GPT poster output rather than
+// generic image providers.
 
 const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "*")
   .split(",")
@@ -85,6 +87,13 @@ function absoluteGraphisteUrl(value: string): string {
 function extractGraphisteImageUrl(value: unknown, allowTemplateImage = false): string | null {
   if (!value) return null;
   if (isImageUrl(value)) return absoluteGraphisteUrl(value);
+  if (typeof value === "string") {
+    const dataMatch = value.match(/data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/);
+    if (dataMatch?.[0]) return dataMatch[0];
+    const urlMatch = value.match(/https?:\/\/[^\s)"']+/);
+    if (urlMatch?.[0]) return absoluteGraphisteUrl(urlMatch[0]);
+    return null;
+  }
   if (Array.isArray(value)) {
     for (const item of value) {
       const found = extractGraphisteImageUrl(item, allowTemplateImage);
@@ -94,14 +103,41 @@ function extractGraphisteImageUrl(value: unknown, allowTemplateImage = false): s
   }
   if (typeof value === "object") {
     const obj = value as Record<string, unknown>;
+    if (typeof obj.b64_json === "string" && obj.b64_json.length > 100) {
+      return `data:image/png;base64,${obj.b64_json}`;
+    }
+    if (typeof obj.base64 === "string" && obj.base64.length > 100) {
+      return obj.base64.startsWith("data:image/") ? obj.base64 : `data:image/png;base64,${obj.base64}`;
+    }
     const finalImage =
+      extractGraphisteImageUrl(obj.poster_url, allowTemplateImage) ||
+      extractGraphisteImageUrl(obj.posterUrl, allowTemplateImage) ||
+      extractGraphisteImageUrl(obj.final_url, allowTemplateImage) ||
+      extractGraphisteImageUrl(obj.finalUrl, allowTemplateImage) ||
+      extractGraphisteImageUrl(obj.final_image_url, allowTemplateImage) ||
+      extractGraphisteImageUrl(obj.finalImageUrl, allowTemplateImage) ||
+      extractGraphisteImageUrl(obj.generated_image_url, allowTemplateImage) ||
+      extractGraphisteImageUrl(obj.generatedImageUrl, allowTemplateImage) ||
+      extractGraphisteImageUrl(obj.asset_url, allowTemplateImage) ||
+      extractGraphisteImageUrl(obj.assetUrl, allowTemplateImage) ||
       extractGraphisteImageUrl(obj.image_url, allowTemplateImage) ||
       extractGraphisteImageUrl(obj.imageUrl, allowTemplateImage) ||
       extractGraphisteImageUrl(obj.url, allowTemplateImage) ||
       extractGraphisteImageUrl(obj.publicUrl, allowTemplateImage) ||
+      extractGraphisteImageUrl(obj.public_url, allowTemplateImage) ||
       extractGraphisteImageUrl(obj.download_url, allowTemplateImage) ||
+      extractGraphisteImageUrl(obj.downloadUrl, allowTemplateImage) ||
+      extractGraphisteImageUrl(obj.secure_url, allowTemplateImage) ||
+      extractGraphisteImageUrl(obj.secureUrl, allowTemplateImage) ||
+      extractGraphisteImageUrl(obj.file, allowTemplateImage) ||
+      extractGraphisteImageUrl(obj.asset, allowTemplateImage) ||
+      extractGraphisteImageUrl(obj.poster, allowTemplateImage) ||
+      extractGraphisteImageUrl(obj.image, allowTemplateImage) ||
+      extractGraphisteImageUrl(obj.data, allowTemplateImage) ||
       extractGraphisteImageUrl(obj.output, allowTemplateImage) ||
+      extractGraphisteImageUrl(obj.outputs, allowTemplateImage) ||
       extractGraphisteImageUrl(obj.result, allowTemplateImage) ||
+      extractGraphisteImageUrl(obj.results, allowTemplateImage) ||
       extractGraphisteImageUrl(obj.images, allowTemplateImage);
     if (finalImage) return finalImage;
     if (allowTemplateImage) return extractGraphisteImageUrl(obj.template_used, true);
@@ -200,9 +236,9 @@ serve(async (req) => {
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (!supabaseUrl || !supabaseServiceKey || !getOpenRouterKey()) {
+  if (!supabaseUrl || !supabaseServiceKey) {
     return new Response(
-      JSON.stringify({ error: "Server misconfigured (missing OPENROUTER_API_KEY?)" }),
+      JSON.stringify({ error: "Server misconfigured (missing Supabase server configuration)" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }
@@ -247,66 +283,12 @@ serve(async (req) => {
       .eq("id", userId)
       .maybeSingle();
 
-    const peopleType = (body?.peopleType as string) || profile?.image_people_type || "african";
     const imageStyle: string = profile?.image_style || "photorealistic";
     const primary = profile?.brand_primary_color || "#8B5CF6";
     const secondary = profile?.brand_secondary_color || "#3B82F6";
     const accent = profile?.brand_accent_color || "#F59E0B";
-    const font = profile?.brand_font || "Inter";
     const sector = profile?.sector || "";
     const description = profile?.description || "";
-
-    const peopleDescription = peopleType === "african"
-      ? "des personnes africaines/noires"
-      : "des personnes caucasiennes/blanches";
-
-    // Translate the image_style enum into a concrete artistic brief.
-    const STYLE_BRIEFS: Record<string, string> = {
-      photorealistic:
-        "Style PHOTO ULTRA-RÉALISTE: photographie professionnelle, éclairage naturel cinématique, profondeur de champ, détails de peau et de matière réalistes, qualité magazine.",
-      illustration:
-        "Style ILLUSTRATION numérique soignée: rendu dessiné moderne, traits propres, palette de couleurs harmonieuse, ambiance chaleureuse, NE PAS ressembler à une photo.",
-      minimalist:
-        "Style MINIMALISTE et abstrait: composition épurée, beaucoup d'espace négatif, formes géométriques simples, 2-3 couleurs maximum, élégance sobre.",
-      corporate:
-        "Style CORPORATE professionnel sobre: ambiance bureau premium, lignes nettes, ton institutionnel, palette restreinte, sérieux et crédibilité.",
-      flat_design:
-        "Style FLAT DESIGN vectoriel: aplats de couleurs, formes géométriques, pas d'ombres réalistes, design vectoriel propre type illustration UI moderne.",
-    };
-    const styleBrief = STYLE_BRIEFS[imageStyle] || STYLE_BRIEFS.photorealistic;
-
-    const includesPeople = imageStyle === "photorealistic" || imageStyle === "illustration";
-
-    const imagePrompt = `Crée un visuel professionnel pour ce post sur les réseaux sociaux: "${postContent.substring(0, 200)}..."
-
-CONTEXTE BUSINESS:
-- Entreprise: ${profile?.company_name || "Entreprise"}
-- Secteur: ${sector}
-${description ? `- Activité: ${description.slice(0, 200)}` : ""}
-
-STYLE VISUEL (À RESPECTER STRICTEMENT):
-${styleBrief}
-
-CHARTE GRAPHIQUE (IMPÉRATIF):
-- Couleur principale dominante: ${primary}
-- Couleur secondaire d'appui: ${secondary}
-- Couleur d'accent (touche): ${accent}
-- L'image doit visuellement évoquer ces 3 couleurs (en arrière-plan, accessoires, vêtements, éléments graphiques)
-${font ? `- Si du texte doit apparaître, utilise une typographie type "${font}"` : ""}
-
-${includesPeople
-  ? `PERSONNAGES:
-- Inclure ${peopleDescription} en situation professionnelle pertinente au secteur "${sector}"
-- Expressions naturelles, attitudes engagées et crédibles
-- Tenue cohérente avec le secteur`
-  : `PAS DE PERSONNAGES — composition centrée sur des objets, formes ou métaphores visuelles liées au secteur.`}
-
-RÈGLES CRITIQUES:
-- AUCUN texte, mot, lettre ou chiffre visible dans l'image
-- Format carré 1:1 ou portrait 4:5 (réseaux sociaux)
-- Qualité finale haute, contraste maîtrisé
-- Le visuel doit immédiatement évoquer l'univers de "${sector}"
-- COHÉRENT avec la marque (les couleurs de la charte doivent être visibles)`;
 
     const graphiste = await tryGraphisteGptPoster({
       postContent,
@@ -319,14 +301,13 @@ RÈGLES CRITIQUES:
     });
     if (graphiste.warning) console.warn("Graphiste GPT unavailable:", graphiste.warning);
 
-    const { imageUrl: rawImageUrl, lastError } = graphiste.imageUrl
-      ? { imageUrl: graphiste.imageUrl, lastError: null }
-      : await generateImageUrl(imagePrompt);
+    const rawImageUrl = graphiste.imageUrl;
+    const lastError = graphiste.warning;
     let imageUrl: string | null = rawImageUrl;
 
     let usedFallback = false;
     if (!imageUrl) {
-      console.error("AI image generation failed, using branded fallback:", lastError);
+      console.error("Graphiste GPT poster generation failed, using branded non-AI fallback:", lastError);
       imageUrl = fallbackSvgDataUrl(primary, secondary, accent, imageStyle);
       usedFallback = true;
     }
@@ -384,7 +365,12 @@ RÈGLES CRITIQUES:
     }
 
     return new Response(
-      JSON.stringify({ imageUrl, fallback: usedFallback, warning: usedFallback ? lastError : undefined }),
+      JSON.stringify({
+        imageUrl,
+        fallback: usedFallback,
+        provider: usedFallback ? "branded-fallback" : "graphiste-gpt",
+        warning: usedFallback ? lastError : undefined,
+      }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err) {
