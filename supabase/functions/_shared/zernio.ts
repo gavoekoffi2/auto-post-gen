@@ -80,9 +80,59 @@ export interface ZernioPublishInput {
   requestId?: string; // sent as x-request-id for safe-retry idempotency
 }
 
+export interface ZernioPlatformResult {
+  platform: string;
+  status: "ok" | "pending" | "error";
+  id?: string;
+  externalId?: string;
+  externalUrl?: string;
+  error?: string;
+}
+
+function normaliseZernioStatus(value: unknown): ZernioPlatformResult["status"] {
+  const status = String(value || "").toLowerCase();
+  if (["published", "success", "succeeded", "completed", "complete", "ok"].includes(status)) return "ok";
+  if (["queued", "processing", "scheduled", "pending", "created", "draft"].includes(status)) return "pending";
+  return "error";
+}
+
+function extractZernioPlatformResults(data: any, requested: ZernioPublishInput["platforms"]): ZernioPlatformResult[] {
+  const post = data?.post || data?.existingPost || data || {};
+  const postId = post?._id || data?._id || data?.id;
+  const platformRows = Array.isArray(post?.platforms) ? post.platforms : [];
+
+  return requested.map((target) => {
+    const row = platformRows.find((p: any) => {
+      const platform = String(p?.platform || "").toLowerCase();
+      const accountId = typeof p?.accountId === "string" ? p.accountId : p?.accountId?._id;
+      return platform === target.platform.toLowerCase() && (!accountId || accountId === target.accountId);
+    });
+    if (!row && platformRows.length > 0) {
+      return {
+        platform: target.platform,
+        status: "error",
+        id: postId,
+        error: `Zernio did not return a status for ${target.platform}`,
+      };
+    }
+    const rawStatus = row?.status || post?.status;
+    const status = normaliseZernioStatus(rawStatus);
+    const externalId = row?.platformPostId || row?.externalId || row?.postId || postId;
+    const externalUrl = row?.platformPostUrl || row?.externalUrl || row?.url;
+    return {
+      platform: target.platform,
+      status,
+      id: postId,
+      externalId,
+      externalUrl,
+      error: status === "error" ? (row?.error || row?.message || data?.error || data?.message || `Zernio status: ${rawStatus || "unknown"}`) : undefined,
+    };
+  });
+}
+
 export async function zernioCreatePost(
   input: ZernioPublishInput,
-): Promise<{ ok: boolean; id?: string; error?: string }> {
+): Promise<{ ok: boolean; id?: string; error?: string; results: ZernioPlatformResult[] }> {
   const body: Record<string, unknown> = {
     content: input.content,
     publishNow: true,
@@ -99,7 +149,13 @@ export async function zernioCreatePost(
     body: JSON.stringify(body),
   });
   const t = await r.text();
-  if (!r.ok) return { ok: false, error: `Zernio ${r.status}: ${t.slice(0, 250)}` };
+  if (!r.ok) {
+    return {
+      ok: false,
+      error: `Zernio ${r.status}: ${t.slice(0, 250)}`,
+      results: input.platforms.map((p) => ({ platform: p.platform, status: "error", error: `Zernio ${r.status}: ${t.slice(0, 250)}` })),
+    };
+  }
   let d: any = {};
   try {
     d = JSON.parse(t);
@@ -107,5 +163,7 @@ export async function zernioCreatePost(
     /* empty 200 */
   }
   const id = d?.post?._id || d?._id || d?.existingPost?._id || d?.id;
-  return { ok: true, id };
+  const results = extractZernioPlatformResults(d, input.platforms);
+  const ok = results.some((result) => result.status === "ok");
+  return { ok, id, results, error: ok ? undefined : results.map((result) => `${result.platform}: ${result.error || result.status}`).join("; ") };
 }

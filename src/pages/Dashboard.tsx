@@ -181,25 +181,41 @@ export default function Dashboard() {
       });
       toast.dismiss(loadingToast);
       if (error) throw error;
-      const results = (data?.results || []) as Array<{ status: string; platform: string; message?: string }>;
+      const results = (data?.results || []) as Array<{ status: string; platform: string; message?: string; externalUrl?: string }>;
       const anyOk = results.some((r) => r.status === "ok");
+      const anyPending = results.some((r) => r.status === "pending");
       const allErrors = results.length > 0 && results.every((r) => r.status === "error");
       // Refresh from the DB so the displayed status matches whatever
       // publish-post settled on (published, failed or rolled back to
       // validated when nothing was attempted).
       const { data: refreshed } = await supabase
         .from("posts")
-        .select("status")
+        .select("status,publish_error,provider_post_id,external_post_ids")
         .eq("id", post.id)
         .maybeSingle();
       if (refreshed) {
         const status = (refreshed.status as PostStatus) || post.status;
         setPosts((prev) =>
-          prev.map((p) => (p.id === post.id ? { ...p, status } : p)),
+          prev.map((p) =>
+            p.id === post.id
+              ? {
+                  ...p,
+                  status,
+                  publish_error: refreshed.publish_error ?? null,
+                }
+              : p,
+          ),
         );
       }
       if (anyOk) {
-        toast.success("Post publié !");
+        const urls = results.filter((r) => r.status === "ok" && r.externalUrl).map((r) => r.externalUrl);
+        toast.success(urls.length ? `Post publié ! Lien: ${urls[0]}` : "Post publié !");
+      } else if (anyPending) {
+        const messages = results
+          .filter((r) => r.status === "pending")
+          .map((r) => `${r.platform}: ${r.message || "publication en attente côté Zernio/LinkedIn"}`)
+          .join("\n");
+        toast.warning(`Publication acceptée mais pas encore visible.\n${messages}`);
       } else if (allErrors) {
         const messages = results
           .map((r) => `${r.platform}: ${r.message || r.status}`)
@@ -763,9 +779,9 @@ export default function Dashboard() {
                          </Button>
                        </div>
                      )}
-                     {post.status === "failed" && formatPublishError(post.publish_error) && (
+                     {post.status !== "published" && formatPublishError(post.publish_error) && (
                        <p className="text-xs text-destructive mb-3 break-words">
-                         Raison de l'échec : {formatPublishError(post.publish_error)}
+                         Détail publication : {formatPublishError(post.publish_error)}
                        </p>
                      )}
                      <p className="text-sm text-muted-foreground mb-4 line-clamp-2">{post.content}</p>

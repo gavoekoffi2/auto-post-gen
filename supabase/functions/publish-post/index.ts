@@ -72,8 +72,9 @@ interface SocialConnectionRow {
 
 interface PublishResult {
   platform: string;
-  status: "ok" | "error" | "not_implemented" | "not_connected";
+  status: "ok" | "pending" | "error" | "not_implemented" | "not_connected";
   externalId?: string;
+  externalUrl?: string;
   message?: string;
 }
 
@@ -559,14 +560,31 @@ async function publishViaZernio(
     if (targets.length === 0) return { results, providerPostId: null };
 
     const res = await zernioCreatePost({ content, imageUrl, platforms: targets, requestId });
-    for (const t of targets) {
+    for (const result of res.results) {
       results.push(
-        res.ok
-          ? { platform: t.platform, status: "ok", externalId: res.id }
-          : { platform: t.platform, status: "error", message: res.error },
+        result.status === "ok"
+          ? {
+              platform: result.platform,
+              status: "ok",
+              externalId: result.externalId || result.id || res.id,
+              externalUrl: result.externalUrl,
+            }
+          : result.status === "pending"
+          ? {
+              platform: result.platform,
+              status: "pending",
+              externalId: result.externalId || result.id || res.id,
+              externalUrl: result.externalUrl,
+              message: "Zernio a accepté la publication mais LinkedIn ne la marque pas encore comme publiée.",
+            }
+          : {
+              platform: result.platform,
+              status: "error",
+              message: result.error || res.error || "Zernio publish failed",
+            },
       );
     }
-    return { results, providerPostId: res.ok ? (res.id ?? null) : null };
+    return { results, providerPostId: res.id ?? null };
   } catch (err) {
     return {
       results: platforms.map((p) => ({
@@ -657,13 +675,13 @@ async function publishPost(
   }
 
   const anyOk = results.some((r) => r.status === "ok");
+  const anyPending = results.some((r) => r.status === "pending");
   const allErrors = results.length > 0 && results.every((r) => r.status === "error");
 
-  // Decide the resulting state. If at least one platform succeeded we
-  // mark the post 'published'; if every attempt failed we mark it
-  // 'failed' so the user knows to retry. Otherwise (e.g. all platforms
-  // are 'not_connected'), revert to 'validated' so the user can retry
-  // after connecting an account.
+  // Decide the resulting state. Only a confirmed per-platform publish from
+  // Zernio counts as 'published'. A queued/processing response stays
+  // validated with publish_error details so the dashboard doesn't claim a
+  // LinkedIn post exists before LinkedIn/Zernio confirms it.
   const finalStatus = anyOk ? "published" : allErrors ? "failed" : "validated";
 
   // Persist external post ids so the engagement/comments sync can later
@@ -671,6 +689,7 @@ async function publishPost(
   const externalPostIds: Record<string, string> = {};
   for (const r of results) {
     if (r.status === "ok" && r.externalId) externalPostIds[r.platform] = r.externalId;
+    if (r.status === "ok" && r.externalUrl) externalPostIds[`${r.platform}_url`] = r.externalUrl;
   }
 
   await supabase
@@ -678,7 +697,7 @@ async function publishPost(
     .update({
       status: finalStatus,
       published_at: anyOk ? new Date().toISOString() : null,
-      publish_error: allErrors || finalStatus === "validated" ? JSON.stringify(results) : null,
+      publish_error: allErrors || anyPending || finalStatus === "validated" ? JSON.stringify(results) : null,
       provider_post_id: providerPostId,
       external_post_ids: externalPostIds,
     })
