@@ -289,7 +289,7 @@ async function tryGraphisteGptPoster(params: {
   const subject = `${params.companyName} — ${params.postContent}`.slice(0, 600);
   const prompt = buildGraphistePosterPrompt(params);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 240_000);
+  const timer = setTimeout(() => controller.abort(), 110_000);
   try {
     const resp = await fetch(endpoint, {
       method: "POST",
@@ -329,7 +329,14 @@ async function tryGraphisteGptPoster(params: {
       warning: `Graphiste GPT did not return a final image URL after polling; response only contains metadata/template data: ${JSON.stringify(data).slice(0, 500)}`,
     };
   } catch (err) {
-    return { imageUrl: null, warning: `Graphiste GPT threw: ${err instanceof Error ? err.message : String(err)}` };
+    const message = err instanceof Error ? err.message : String(err);
+    const isAbort = err instanceof Error && err.name === "AbortError";
+    return {
+      imageUrl: null,
+      warning: isAbort
+        ? "Graphiste GPT garde la génération ouverte trop longtemps et ne retourne pas d'URL finale avant la limite Supabase. Il faut un endpoint status/polling ou un vrai retour image synchrone côté Graphiste GPT."
+        : `Graphiste GPT threw: ${message}`,
+    };
   } finally {
     clearTimeout(timer);
   }
