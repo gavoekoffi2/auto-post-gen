@@ -12,6 +12,10 @@ test('generate-image uses Graphiste GPT posters, not generic OpenRouter/Gemini i
   assert.equal(source.includes('getOpenRouterKey'), false, 'must not require OpenRouter for image generation');
   assert.equal(/Gemini|gemini|OPENROUTER/.test(source), false, 'must not reference Gemini/OpenRouter in poster function');
   assert.match(source, /provider:\s*usedFallback \? "branded-fallback" : "graphiste-gpt"/);
+  assert.match(source, /mode:\s*"fast"/);
+  assert.equal(source.includes('mode: "quality"'), false, 'quality mode times out/fails reference loading in Graphiste API');
+  assert.equal(source.includes('aspectRatio'), false, 'do not send unsupported aspectRatio to Graphiste API');
+  assert.equal(source.includes('resolution'), false, 'do not send unsupported resolution to Graphiste API');
 });
 
 test('Graphiste GPT response extractor accepts common final poster URL shapes', () => {

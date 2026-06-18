@@ -163,9 +163,6 @@ async function tryGraphisteGptPoster(params: {
   sector: string;
   description: string;
   companyName: string;
-  primary: string;
-  secondary: string;
-  accent: string;
 }): Promise<{ imageUrl: string | null; warning: string | null }> {
   const key = Deno.env.get("GRAPHISTE_GPT_API_KEY");
   if (!key) return { imageUrl: null, warning: "GRAPHISTE_GPT_API_KEY not configured" };
@@ -173,7 +170,7 @@ async function tryGraphisteGptPoster(params: {
   const endpoint = Deno.env.get("GRAPHISTE_GPT_API_URL") || GRAPHISTE_GPT_DEFAULT_URL;
   const subject = `${params.companyName} — ${params.postContent}`.slice(0, 600);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 45_000);
+  const timer = setTimeout(() => controller.abort(), 115_000);
   try {
     const resp = await fetch(endpoint, {
       method: "POST",
@@ -184,12 +181,7 @@ async function tryGraphisteGptPoster(params: {
       body: JSON.stringify({
         domain: graphisteDomain(params.sector, params.description),
         subject,
-        mode: "quality",
-        aspectRatio: "4:5",
-        resolution: "1K",
-        prompt:
-          `Affiche professionnelle en français pour réseaux sociaux. Marque: ${params.companyName}. ` +
-          `Couleurs: ${params.primary}, ${params.secondary}, ${params.accent}. Sujet: ${subject}`,
+        mode: "fast",
       }),
       signal: controller.signal,
     });
@@ -295,9 +287,6 @@ serve(async (req) => {
       sector,
       description,
       companyName: profile?.company_name || "Entreprise",
-      primary,
-      secondary,
-      accent,
     });
     if (graphiste.warning) console.warn("Graphiste GPT unavailable:", graphiste.warning);
 
