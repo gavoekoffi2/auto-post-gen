@@ -170,7 +170,7 @@ async function tryGraphisteGptPoster(params: {
   const endpoint = Deno.env.get("GRAPHISTE_GPT_API_URL") || GRAPHISTE_GPT_DEFAULT_URL;
   const subject = `${params.companyName} — ${params.postContent}`.slice(0, 600);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 115_000);
+  const timer = setTimeout(() => controller.abort(), 240_000);
   try {
     const resp = await fetch(endpoint, {
       method: "POST",
@@ -181,7 +181,9 @@ async function tryGraphisteGptPoster(params: {
       body: JSON.stringify({
         domain: graphisteDomain(params.sector, params.description),
         subject,
-        mode: "fast",
+        // Graphiste GPT quality modes: "fast" uses the quick model; "premium" uses OpenAI GPT Image 2.
+        // Pro Social AI runs generation asynchronously, so prefer poster quality over speed.
+        quality: "premium",
       }),
       signal: controller.signal,
     });
