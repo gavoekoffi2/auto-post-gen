@@ -29,6 +29,9 @@ function buildCorsHeaders(origin: string | null) {
 
 const MAX_PAYLOAD_BYTES = 64 * 1024;
 
+const GRAPHISTE_GPT_DEFAULT_URL =
+  "https://bbfzfgcdioewzbmlgaqy.supabase.co/functions/v1/api-v1/v1/posters/generate";
+
 function safeColor(value: string, fallback: string): string {
   return /^#[0-9a-f]{6}$/i.test(value) ? value : fallback;
 }
@@ -64,6 +67,115 @@ function fallbackSvgDataUrl(primary: string, secondary: string, accent: string, 
   <rect x="230" y="230" width="740" height="740" rx="96" fill="none" stroke="#ffffff" stroke-width="5" opacity="0.35"/>
 </svg>`.trim();
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+function isImageUrl(value: unknown): value is string {
+  return typeof value === "string" && (
+    value.startsWith("data:image/") ||
+    /^https?:\/\/\S+/i.test(value) ||
+    value.startsWith("/reference-templates/")
+  );
+}
+
+function absoluteGraphisteUrl(value: string): string {
+  if (value.startsWith("/")) return `https://graphistegpt.pro${value}`;
+  return value;
+}
+
+function extractGraphisteImageUrl(value: unknown, allowTemplateImage = false): string | null {
+  if (!value) return null;
+  if (isImageUrl(value)) return absoluteGraphisteUrl(value);
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = extractGraphisteImageUrl(item, allowTemplateImage);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    const finalImage =
+      extractGraphisteImageUrl(obj.image_url, allowTemplateImage) ||
+      extractGraphisteImageUrl(obj.imageUrl, allowTemplateImage) ||
+      extractGraphisteImageUrl(obj.url, allowTemplateImage) ||
+      extractGraphisteImageUrl(obj.publicUrl, allowTemplateImage) ||
+      extractGraphisteImageUrl(obj.download_url, allowTemplateImage) ||
+      extractGraphisteImageUrl(obj.output, allowTemplateImage) ||
+      extractGraphisteImageUrl(obj.result, allowTemplateImage) ||
+      extractGraphisteImageUrl(obj.images, allowTemplateImage);
+    if (finalImage) return finalImage;
+    if (allowTemplateImage) return extractGraphisteImageUrl(obj.template_used, true);
+  }
+  return null;
+}
+
+function graphisteDomain(sector: string, description: string): string {
+  const haystack = `${sector} ${description}`.toLowerCase();
+  if (/restaurant|food|cuisine|bar|burger|pizza|menu|boisson/.test(haystack)) return "restaurant";
+  if (/église|eglise|church|pasteur|minist/.test(haystack)) return "church";
+  if (/formation|cours|école|ecole|academy|coaching|webinar/.test(haystack)) return "formation";
+  if (/event|événement|evenement|concert|conférence|conference|festival/.test(haystack)) return "event";
+  if (/ecommerce|commerce|boutique|produit|shop|vente/.test(haystack)) return "ecommerce";
+  if (/mode|fashion|vêtement|vetement|beauté|beaute/.test(haystack)) return "fashion";
+  if (/immobilier|real.?estate|maison|terrain|appartement/.test(haystack)) return "realestate";
+  if (/santé|sante|health|clinique|médical|medical|pharma/.test(haystack)) return "health";
+  return "service";
+}
+
+async function tryGraphisteGptPoster(params: {
+  postContent: string;
+  sector: string;
+  description: string;
+  companyName: string;
+  primary: string;
+  secondary: string;
+  accent: string;
+}): Promise<{ imageUrl: string | null; warning: string | null }> {
+  const key = Deno.env.get("GRAPHISTE_GPT_API_KEY");
+  if (!key) return { imageUrl: null, warning: "GRAPHISTE_GPT_API_KEY not configured" };
+
+  const endpoint = Deno.env.get("GRAPHISTE_GPT_API_URL") || GRAPHISTE_GPT_DEFAULT_URL;
+  const subject = `${params.companyName} — ${params.postContent}`.slice(0, 600);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 45_000);
+  try {
+    const resp = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        domain: graphisteDomain(params.sector, params.description),
+        subject,
+        mode: "quality",
+        aspectRatio: "4:5",
+        resolution: "1K",
+        prompt:
+          `Affiche professionnelle en français pour réseaux sociaux. Marque: ${params.companyName}. ` +
+          `Couleurs: ${params.primary}, ${params.secondary}, ${params.accent}. Sujet: ${subject}`,
+      }),
+      signal: controller.signal,
+    });
+    const text = await resp.text();
+    if (!resp.ok) return { imageUrl: null, warning: `Graphiste GPT ${resp.status}: ${text.slice(0, 300)}` };
+    let data: unknown;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      return { imageUrl: null, warning: `Graphiste GPT returned non-JSON: ${text.slice(0, 120)}` };
+    }
+    const imageUrl = extractGraphisteImageUrl(data, false);
+    if (imageUrl) return { imageUrl, warning: null };
+    return {
+      imageUrl: null,
+      warning: "Graphiste GPT did not return a final image URL yet; response only contains metadata/template data.",
+    };
+  } catch (err) {
+    return { imageUrl: null, warning: `Graphiste GPT threw: ${err instanceof Error ? err.message : String(err)}` };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 serve(async (req) => {
@@ -196,7 +308,20 @@ RÈGLES CRITIQUES:
 - Le visuel doit immédiatement évoquer l'univers de "${sector}"
 - COHÉRENT avec la marque (les couleurs de la charte doivent être visibles)`;
 
-    const { imageUrl: rawImageUrl, lastError } = await generateImageUrl(imagePrompt);
+    const graphiste = await tryGraphisteGptPoster({
+      postContent,
+      sector,
+      description,
+      companyName: profile?.company_name || "Entreprise",
+      primary,
+      secondary,
+      accent,
+    });
+    if (graphiste.warning) console.warn("Graphiste GPT unavailable:", graphiste.warning);
+
+    const { imageUrl: rawImageUrl, lastError } = graphiste.imageUrl
+      ? { imageUrl: graphiste.imageUrl, lastError: null }
+      : await generateImageUrl(imagePrompt);
     let imageUrl: string | null = rawImageUrl;
 
     let usedFallback = false;
