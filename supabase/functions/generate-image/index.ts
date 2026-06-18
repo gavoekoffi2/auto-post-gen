@@ -134,7 +134,7 @@ async function pollGraphisteGptJob(endpoint: string, key: string, firstData: unk
 
   const started = Date.now();
   let delay = 4000;
-  while (Date.now() - started < 210_000) {
+  while (Date.now() - started < 90_000) {
     await sleep(delay);
     for (const url of candidates) {
       try {
@@ -305,6 +305,10 @@ async function tryGraphisteGptPoster(params: {
         // Graphiste GPT quality modes: "fast" uses the quick model; "premium" uses OpenAI GPT Image 2.
         // Pro Social AI runs generation asynchronously, so prefer poster quality over speed.
         quality: "premium",
+        waitForCompletion: true,
+        sync: true,
+        returnImage: true,
+        returnUrl: true,
       }),
       signal: controller.signal,
     });
