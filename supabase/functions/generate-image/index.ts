@@ -158,17 +158,60 @@ function graphisteDomain(sector: string, description: string): string {
   return "service";
 }
 
+function buildGraphistePosterPrompt(params: {
+  postContent: string;
+  sector: string;
+  description: string;
+  companyName: string;
+  primary: string;
+  secondary: string;
+  accent: string;
+}): string {
+  const businessContext = [
+    `Entreprise: ${params.companyName || "Entreprise"}`,
+    params.sector ? `Secteur: ${params.sector}` : null,
+    params.description ? `Activité: ${params.description.slice(0, 260)}` : null,
+  ].filter(Boolean).join("\n");
+
+  return `Créer une AFFICHE PUBLICITAIRE PROFESSIONNELLE complète en français pour les réseaux sociaux.
+
+${businessContext}
+
+MESSAGE À TRANSFORMER EN AFFICHE:
+${params.postContent.slice(0, 900)}
+
+EXIGENCE PRINCIPALE:
+- Ne pas générer une image vide, un simple fond, ou une affiche sans contenu.
+- L'affiche doit contenir une vraie composition complète: titre principal lisible, visuel fort, blocs graphiques, hiérarchie claire, contraste premium.
+- Ajouter 2 à 5 mots-clés courts issus du message, mais éviter les longs paragraphes.
+- Prévoir un espace CTA visuel du type "Contactez-nous", "Réservez", "Découvrez", ou équivalent selon le message.
+- Utiliser les affiches/templates internes Graphiste GPT comme référence de structure, mais adapter le design au message ci-dessus.
+
+STYLE:
+- Qualité premium, rendu publicitaire professionnel, moderne, non vide.
+- Format social/poster vertical ou carré avec une composition remplie.
+- Couleurs de marque à intégrer visiblement: primaire ${params.primary}, secondaire ${params.secondary}, accent ${params.accent}.
+- Si des personnes sont représentées, privilégier des personnes africaines/noires professionnelles et crédibles.
+
+SORTIE ATTENDUE:
+Une affiche finale complète, prête à publier, pas une image standard et pas un template vide.`;
+}
+
 async function tryGraphisteGptPoster(params: {
   postContent: string;
   sector: string;
   description: string;
   companyName: string;
+  primary: string;
+  secondary: string;
+  accent: string;
 }): Promise<{ imageUrl: string | null; warning: string | null }> {
   const key = Deno.env.get("GRAPHISTE_GPT_API_KEY");
   if (!key) return { imageUrl: null, warning: "GRAPHISTE_GPT_API_KEY not configured" };
 
   const endpoint = Deno.env.get("GRAPHISTE_GPT_API_URL") || GRAPHISTE_GPT_DEFAULT_URL;
   const subject = `${params.companyName} — ${params.postContent}`.slice(0, 600);
+  const prompt = buildGraphistePosterPrompt(params);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 240_000);
   try {
@@ -181,6 +224,8 @@ async function tryGraphisteGptPoster(params: {
       body: JSON.stringify({
         domain: graphisteDomain(params.sector, params.description),
         subject,
+        prompt,
+        usageType: "social",
         // Graphiste GPT quality modes: "fast" uses the quick model; "premium" uses OpenAI GPT Image 2.
         // Pro Social AI runs generation asynchronously, so prefer poster quality over speed.
         quality: "premium",
@@ -289,6 +334,9 @@ serve(async (req) => {
       sector,
       description,
       companyName: profile?.company_name || "Entreprise",
+      primary,
+      secondary,
+      accent,
     });
     if (graphiste.warning) console.warn("Graphiste GPT unavailable:", graphiste.warning);
 

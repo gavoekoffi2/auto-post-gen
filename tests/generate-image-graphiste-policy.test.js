@@ -18,6 +18,10 @@ test('generate-image uses Graphiste GPT posters, not generic OpenRouter/Gemini i
   assert.equal(source.includes('mode: "quality"'), false, 'do not use the old unsupported mode field for premium generation');
   assert.equal(source.includes('aspectRatio'), false, 'do not send unsupported aspectRatio to Graphiste API');
   assert.equal(source.includes('resolution'), false, 'do not send unsupported resolution to Graphiste API');
+  assert.match(source, /prompt,\n\s*usageType: "social"/);
+  assert.match(source, /Ne pas générer une image vide/);
+  assert.match(source, /titre principal lisible/);
+  assert.match(source, /quality:\s*"premium"/);
 });
 
 test('Graphiste GPT response extractor accepts common final poster URL shapes', () => {
