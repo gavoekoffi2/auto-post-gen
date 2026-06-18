@@ -305,8 +305,8 @@ async function tryGraphisteGptPoster(params: {
         // Graphiste GPT quality modes: "fast" uses the quick model; "premium" uses OpenAI GPT Image 2.
         // Pro Social AI runs generation asynchronously, so prefer poster quality over speed.
         quality: "premium",
-        waitForCompletion: true,
-        sync: true,
+        waitForCompletion: false,
+        async: true,
         returnImage: true,
         returnUrl: true,
       }),
