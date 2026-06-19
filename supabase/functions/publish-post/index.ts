@@ -22,6 +22,7 @@ import {
   toPostizIdentifier,
 } from "../_shared/postiz.ts";
 import { zernioCreatePost, zernioListAccounts } from "../_shared/zernio.ts";
+import { resumePosterJob } from "../_shared/graphiste.ts";
 
 const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "*")
   .split(",")
@@ -61,6 +62,9 @@ interface PostRow {
   content: string;
   platforms: string[] | null;
   image_url: string | null;
+  image_job_id: string | null;
+  image_status_url: string | null;
+  image_status: string | null;
 }
 
 interface SocialConnectionRow {
@@ -600,6 +604,7 @@ async function publishViaZernio(
 async function publishPost(
   supabase: DbClient,
   postId: string,
+  resumeDeadlineMs?: number,
 ): Promise<{ post_id: string; results: PublishResult[]; skipped?: string }> {
   // Atomically claim the post: only succeed if it is still in the
   // 'validated' state, transitioning it to 'publishing'. This prevents
@@ -623,6 +628,44 @@ async function publishPost(
   }
 
   const post = claimed as PostRow;
+
+  // Automatic posts may carry a Graphiste GPT poster job that was started at
+  // generation time (auto-generate-weekly). By the time the post is due the
+  // job has long finished, so resume it now and attach the poster before
+  // publishing — this is what lets image-only networks (Instagram) work.
+  // Skipped once the batch's shared resume budget is spent, so a rare stuck
+  // job can't stall the whole publish run.
+  if (
+    !post.image_url &&
+    post.image_job_id &&
+    post.image_status !== "failed" &&
+    (resumeDeadlineMs === undefined || Date.now() < resumeDeadlineMs)
+  ) {
+    try {
+      // Normally finished long ago, so the first status poll returns instantly;
+      // the small ceiling only bites if a job is genuinely stuck.
+      const poster = await resumePosterJob(post.image_job_id, post.image_status_url ?? null, 15_000);
+      if (poster.imageUrl) {
+        // Persist a permanent copy (the source URL may expire) so the saved
+        // image_url stays valid for the dashboard and any re-publish.
+        let stable = poster.imageUrl;
+        try {
+          stable = await ensurePublicImage(supabase, poster.imageUrl, post.user_id);
+        } catch (rehostErr) {
+          console.error("rehost resumed poster failed:", rehostErr);
+        }
+        post.image_url = stable;
+        await supabase
+          .from("posts")
+          .update({ image_url: stable, image_status: "done" })
+          .eq("id", post.id);
+      } else if (poster.status === "failed") {
+        await supabase.from("posts").update({ image_status: "failed" }).eq("id", post.id);
+      }
+    } catch (err) {
+      console.error("resume poster job failed:", err);
+    }
+  }
 
   const { data: connectionsRaw } = await supabase
     .from("social_connections")
@@ -781,7 +824,7 @@ serve(async (req) => {
           );
         }
       }
-      const result = await publishPost(supabase, body.postId);
+      const result = await publishPost(supabase, body.postId, Date.now() + 20_000);
       return new Response(
         JSON.stringify({ success: true, ...result }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
@@ -815,10 +858,13 @@ serve(async (req) => {
       .order("scheduled_for", { ascending: true })
       .limit(CRON_BATCH_SIZE);
 
+    // Shared budget for resuming pending poster jobs across the whole batch,
+    // so even many unresolved jobs can't push the run past the edge limit.
+    const resumeDeadlineMs = Date.now() + 90_000;
     const results: any[] = [];
     for (const row of due || []) {
       try {
-        const r = await publishPost(supabase, row.id);
+        const r = await publishPost(supabase, row.id, resumeDeadlineMs);
         results.push(r);
       } catch (err) {
         results.push({ post_id: row.id, error: err instanceof Error ? err.message : String(err) });

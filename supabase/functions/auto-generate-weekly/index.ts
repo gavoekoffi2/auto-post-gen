@@ -3,6 +3,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { chatText, getOpenRouterKey, getTextModel } from "../_shared/ai.ts";
 import { buildInspirationBlock, researchInspiration } from "../_shared/research.ts";
+import { rehostToUserAssets, startPosterJob } from "../_shared/graphiste.ts";
 
 const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "*")
   .split(",")
@@ -94,6 +95,12 @@ serve(async (req) => {
     }
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    // Wall-clock budget for the whole run. Post creation is never skipped, but
+    // once this passes we stop kicking (blocking) poster jobs so the image work
+    // can't push the cron past the edge runtime limit; those posts just go out
+    // text-only. publish-post still publishes everything on schedule.
+    const posterDeadline = Date.now() + 90_000;
 
     const { data: profiles, error: profilesError } = await supabase
       .from("profiles")
@@ -255,7 +262,16 @@ Génère uniquement le texte du post, sans titre ni explication.`;
           scheduledDate.setDate(scheduledDate.getDate() + daysUntilTarget);
           scheduledDate.setHours(hour, minute, 0, 0);
 
-          const { error: insertError } = await supabase
+          // Pick the visual. A custom image library wins (free, instant);
+          // otherwise we kick off a Graphiste GPT poster job further below.
+          const customImages: string[] = profile.use_custom_images && Array.isArray(profile.custom_image_urls)
+            ? profile.custom_image_urls.filter((u: unknown): u is string => typeof u === "string" && !!u)
+            : [];
+          const customImage = customImages.length
+            ? customImages[Math.floor(Math.random() * customImages.length)]
+            : null;
+
+          const { data: inserted, error: insertError } = await supabase
             .from("posts")
             .insert({
               user_id: profile.id,
@@ -267,12 +283,60 @@ Génère uniquement le texte du post, sans titre ni explication.`;
               status: "validated",
               week_number: weekNumber,
               scheduled_for: scheduledDate.toISOString(),
-            });
+              image_url: customImage,
+            })
+            .select("id")
+            .single();
 
-          if (insertError) {
+          if (insertError || !inserted) {
             console.error(`Insert error for ${profile.id}:`, insertError);
-          } else {
-            generated += 1;
+            continue;
+          }
+          generated += 1;
+
+          // No custom image → start an async Graphiste GPT poster. The job
+          // finishes within minutes; publish-post resumes it and attaches the
+          // poster before the post (scheduled days from now) is published, so
+          // image-only networks like Instagram work. Best-effort: a failure
+          // here just leaves the post text-only.
+          if (!customImage && Deno.env.get("GRAPHISTE_GPT_API_KEY") && Date.now() < posterDeadline) {
+            try {
+              const poster = await startPosterJob({
+                postContent: generatedContent,
+                sector,
+                description,
+                companyName,
+                primary: profile.brand_primary_color || "#8B5CF6",
+                secondary: profile.brand_secondary_color || "#3B82F6",
+                accent: profile.brand_accent_color || "#F59E0B",
+                logoUrl: profile.logo_url || null,
+                platforms,
+              });
+              if (poster.imageUrl) {
+                // Fast path: a finished poster came back immediately.
+                let finalUrl = poster.imageUrl;
+                try {
+                  finalUrl = await rehostToUserAssets(supabase, poster.imageUrl, profile.id);
+                } catch (rehostErr) {
+                  console.error(`Poster rehost failed for ${profile.id}:`, rehostErr);
+                }
+                await supabase.from("posts")
+                  .update({ image_url: finalUrl, image_status: "done" })
+                  .eq("id", inserted.id);
+              } else if (poster.status === "processing" && (poster.jobId || poster.statusUrl)) {
+                await supabase.from("posts")
+                  .update({
+                    image_job_id: poster.jobId,
+                    image_status_url: poster.statusUrl,
+                    image_status: "processing",
+                  })
+                  .eq("id", inserted.id);
+              } else {
+                console.error(`Poster kick failed for ${profile.id}:`, poster.error);
+              }
+            } catch (posterErr) {
+              console.error(`Poster job error for ${profile.id}:`, posterErr);
+            }
           }
         }
 
