@@ -58,6 +58,37 @@ function formatPublishError(raw?: string | null): string | null {
   return String(raw).slice(0, 200);
 }
 
+// Image generation is resumable: the edge function does a short bounded poll and
+// hands back a job id when a premium poster is still rendering. We re-call it
+// with that job id until the poster is ready, an error is returned, or we hit a
+// generous overall budget — so slow 2K posters finish without any single call
+// running near Supabase's request timeout.
+async function generatePosterImage(
+  initialBody: Record<string, unknown>,
+): Promise<{ imageUrl?: string; error?: string; detail?: string }> {
+  let body: Record<string, unknown> = initialBody;
+  // Up to ~7 calls; each call internally polls ~40-45s → several minutes total.
+  for (let attempt = 0; attempt < 7; attempt++) {
+    const { data, error } = await supabase.functions.invoke("generate-image", { body });
+    if (error) throw error;
+    if (data?.error) return { error: data.error as string, detail: data.detail as string | undefined };
+    if (data?.imageUrl) return { imageUrl: data.imageUrl as string };
+    if (data?.status === "processing" && (data.jobId || data.statusUrl)) {
+      body = {
+        postId: initialBody.postId,
+        platforms: initialBody.platforms,
+        jobId: data.jobId,
+        statusUrl: data.statusUrl,
+      };
+      continue;
+    }
+    break;
+  }
+  return {
+    error: "La génération de l'affiche prend plus de temps que prévu. Cliquez sur « Régénérer l'affiche » pour réessayer.",
+  };
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const [posts, setPosts] = useState<Post[]>([]);
@@ -366,30 +397,21 @@ export default function Dashboard() {
       void (async () => {
         try {
           const imageSpec = getSocialImageSpec(defaultPlatforms);
-          const { data: imgData, error: imgError } = await supabase.functions.invoke(
-            'generate-image',
-            {
-              body: {
-                postContent: data.content,
-                peopleType: userProfile?.image_people_type || 'african',
-                postId: savedPost.id,
-                platforms: defaultPlatforms,
-              },
-            },
-          );
-          if (imgError) throw imgError;
-          if (imgData?.error) {
-            if (imgData.detail) console.warn("Image error detail:", imgData.detail);
-            toast.error(imgData.error);
-          } else if (imgData?.imageUrl) {
+          const res = await generatePosterImage({
+            postContent: data.content,
+            peopleType: userProfile?.image_people_type || 'african',
+            postId: savedPost.id,
+            platforms: defaultPlatforms,
+          });
+          if (res.error) {
+            if (res.detail) console.warn("Image error detail:", res.detail);
+            toast.error(res.error);
+          } else if (res.imageUrl) {
+            const url = res.imageUrl;
             setPosts((prev) =>
-              prev.map((p) =>
-                p.id === savedPost.id ? { ...p, image_url: imgData.imageUrl } : p,
-              ),
+              prev.map((p) => (p.id === savedPost.id ? { ...p, image_url: url } : p)),
             );
             toast.success(`Affiche IA ajoutée (${imageSpec.label}, ${imageSpec.aspectRatio})`);
-          } else {
-            toast.error("Affiche non générée. Cliquez sur 'Régénérer l'affiche' pour réessayer.");
           }
         } catch (imgErr) {
           console.error('Image gen failed:', imgErr);
@@ -421,25 +443,23 @@ export default function Dashboard() {
     try {
       const regenPlatforms = post.platforms || (post.platform ? [post.platform] : []);
       const imageSpec = getSocialImageSpec(regenPlatforms);
-      const { data, error } = await supabase.functions.invoke('generate-image', {
-        body: {
-          postContent: post.content,
-          peopleType: userProfile?.image_people_type || 'african',
-          postId: post.id,
-          platforms: regenPlatforms,
-        },
+      const res = await generatePosterImage({
+        postContent: post.content,
+        peopleType: userProfile?.image_people_type || 'african',
+        postId: post.id,
+        platforms: regenPlatforms,
       });
       toast.dismiss(loadingToast);
-      if (error) throw error;
-      if (data?.error) {
-        if (data.detail) console.warn("Image error detail:", data.detail);
-        toast.error(data.error);
-      } else if (data?.imageUrl) {
+      if (res.error) {
+        if (res.detail) console.warn("Image error detail:", res.detail);
+        toast.error(res.error);
+      } else if (res.imageUrl) {
+        const url = res.imageUrl;
         setPosts((prev) =>
-          prev.map((p) => (p.id === post.id ? { ...p, image_url: data.imageUrl } : p)),
+          prev.map((p) => (p.id === post.id ? { ...p, image_url: url } : p)),
         );
         setEditingPost((current) =>
-          current?.id === post.id ? { ...current, image_url: data.imageUrl } : current,
+          current?.id === post.id ? { ...current, image_url: url } : current,
         );
         toast.success(`Affiche IA générée (${imageSpec.label}, ${imageSpec.aspectRatio})`);
       } else {

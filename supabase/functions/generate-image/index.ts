@@ -149,15 +149,22 @@ function graphisteJobFailed(value: unknown): boolean {
   return false;
 }
 
-async function pollGraphisteGptJob(endpoint: string, key: string, firstData: unknown, signal: AbortSignal): Promise<string | null> {
-  const jobId = extractGraphisteJobId(firstData);
-  const statusUrl = extractGraphisteStatusUrl(firstData);
-  const candidates = graphisteStatusCandidates(endpoint, statusUrl, jobId);
-  if (candidates.length === 0) return null;
+type GraphisteJobStatus = "completed" | "processing" | "failed";
 
+// Poll the job's status URL(s) for a BOUNDED window. Returns "processing" if the
+// budget elapses without a final image, so the caller can hand the job back to
+// the client to resume — keeping every edge invocation short and safely under
+// Supabase's 150s request timeout (premium 2K posters can take minutes).
+async function pollGraphisteJob(
+  candidates: string[],
+  key: string,
+  budgetMs: number,
+  signal: AbortSignal,
+): Promise<{ imageUrl: string | null; status: GraphisteJobStatus }> {
+  if (candidates.length === 0) return { imageUrl: null, status: "processing" };
   const started = Date.now();
-  let delay = 3000;
-  while (Date.now() - started < 110_000) {
+  let delay = 2500;
+  while (Date.now() - started < budgetMs) {
     await sleep(delay);
     for (const url of candidates) {
       try {
@@ -171,15 +178,36 @@ async function pollGraphisteGptJob(endpoint: string, key: string, firstData: unk
         let data: unknown;
         try { data = JSON.parse(text); } catch { data = text; }
         const imageUrl = extractGraphisteImageUrl(data, false);
-        if (imageUrl) return imageUrl;
-        if (graphisteJobFailed(data)) return null;
+        if (imageUrl) return { imageUrl, status: "completed" };
+        if (graphisteJobFailed(data)) return { imageUrl: null, status: "failed" };
       } catch (_err) {
         // Try next candidate / next poll tick.
       }
     }
-    delay = Math.min(delay + 2000, 10000);
+    delay = Math.min(delay + 1500, 6000);
   }
-  return null;
+  return { imageUrl: null, status: "processing" };
+}
+
+// Resume polling an in-flight job started by a previous (short) invocation.
+async function resumeGraphisteJob(
+  jobId: string,
+  statusUrl: string | null,
+  budgetMs: number,
+): Promise<{ imageUrl: string | null; status: GraphisteJobStatus }> {
+  const key = Deno.env.get("GRAPHISTE_GPT_API_KEY");
+  if (!key) return { imageUrl: null, status: "failed" };
+  const endpoint = Deno.env.get("GRAPHISTE_GPT_API_URL") || GRAPHISTE_GPT_DEFAULT_URL;
+  const candidates = graphisteStatusCandidates(endpoint, statusUrl, jobId);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), budgetMs + 10_000);
+  try {
+    return await pollGraphisteJob(candidates, key, budgetMs, controller.signal);
+  } catch (_err) {
+    return { imageUrl: null, status: "processing" };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function extractGraphisteImageUrl(value: unknown, allowTemplateImage = false): string | null {
@@ -318,9 +346,16 @@ async function tryGraphisteGptPoster(params: {
   accent: string;
   logoUrl: string | null;
   spec: SocialImageSpec;
-}): Promise<{ imageUrl: string | null; warning: string | null }> {
+}): Promise<{ imageUrl: string | null; warning: string | null; jobId: string | null; statusUrl: string | null; status: GraphisteJobStatus }> {
+  const fail = (warning: string) => ({
+    imageUrl: null,
+    warning,
+    jobId: null,
+    statusUrl: null,
+    status: "failed" as GraphisteJobStatus,
+  });
   const key = Deno.env.get("GRAPHISTE_GPT_API_KEY");
-  if (!key) return { imageUrl: null, warning: "GRAPHISTE_GPT_API_KEY not configured" };
+  if (!key) return fail("GRAPHISTE_GPT_API_KEY not configured");
 
   const endpoint = Deno.env.get("GRAPHISTE_GPT_API_URL") || GRAPHISTE_GPT_DEFAULT_URL;
   const colors = [params.primary, params.secondary, params.accent]
@@ -347,7 +382,9 @@ async function tryGraphisteGptPoster(params: {
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 125_000);
+  // Short cap: the POST returns a job (HTTP 202) quickly; the brief poll below
+  // catches fast posters, and slower ones are handed back to the client.
+  const timer = setTimeout(() => controller.abort(), 60_000);
   try {
     const resp = await fetch(endpoint, {
       method: "POST",
@@ -363,10 +400,8 @@ async function tryGraphisteGptPoster(params: {
     const text = await resp.text();
     let data: unknown = null;
     try { data = JSON.parse(text); } catch { data = null; }
-    if (!resp.ok) return { imageUrl: null, warning: graphisteErrorMessage(resp.status, data, text) };
-    if (data === null) {
-      return { imageUrl: null, warning: `Graphiste GPT returned non-JSON: ${text.slice(0, 120)}` };
-    }
+    if (!resp.ok) return fail(graphisteErrorMessage(resp.status, data, text));
+    if (data === null) return fail(`Graphiste GPT returned non-JSON: ${text.slice(0, 120)}`);
     // Surface any fields the API ignored (e.g. an accidental unknown field).
     if (typeof data === "object") {
       const envelope = data as { success?: unknown; warnings?: unknown };
@@ -374,29 +409,29 @@ async function tryGraphisteGptPoster(params: {
       if (Array.isArray(w) && w.length) console.warn("Graphiste GPT warnings:", w);
       // Public API errors use { success:false, error:{ code, message, request_id } }.
       // Handle that even if a proxy/runtime accidentally returns HTTP 200/202.
-      if (envelope.success === false) {
-        return { imageUrl: null, warning: graphisteErrorMessage(resp.status, data, text) };
-      }
+      if (envelope.success === false) return fail(graphisteErrorMessage(resp.status, data, text));
     }
+    const jobId = extractGraphisteJobId(data);
+    const statusUrl = extractGraphisteStatusUrl(data);
     // Fast path: a finished poster came back directly at data.image_url.
-    const imageUrl = extractGraphisteImageUrl(data, false);
-    if (imageUrl) return { imageUrl, warning: null };
-    // Async (HTTP 202 + job_id + absolute status_url): poll until completed.
-    const polledImageUrl = await pollGraphisteGptJob(endpoint, key, data, controller.signal);
-    if (polledImageUrl) return { imageUrl: polledImageUrl, warning: null };
-    return {
-      imageUrl: null,
-      warning: "Graphiste GPT n'a pas retourné d'image finale (le job n'a pas abouti dans le délai). Réessayez.",
-    };
+    const direct = extractGraphisteImageUrl(data, false);
+    if (direct) return { imageUrl: direct, warning: null, jobId, statusUrl, status: "completed" };
+    // Async (HTTP 202 + job_id + absolute status_url): poll briefly, then hand
+    // the job back to the client to resume so no single call runs too long.
+    const candidates = graphisteStatusCandidates(endpoint, statusUrl, jobId);
+    const r = await pollGraphisteJob(candidates, key, 40_000, controller.signal);
+    if (r.status === "failed") {
+      return { imageUrl: null, warning: "Graphiste GPT a signalé un échec de génération.", jobId, statusUrl, status: "failed" };
+    }
+    return { imageUrl: r.imageUrl, warning: null, jobId, statusUrl, status: r.status };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const isAbort = err instanceof Error && err.name === "AbortError";
-    return {
-      imageUrl: null,
-      warning: isAbort
+    return fail(
+      isAbort
         ? "Graphiste GPT a dépassé le délai de génération. Réessayez dans un instant."
         : `Graphiste GPT inaccessible: ${message}`,
-    };
+    );
   } finally {
     clearTimeout(timer);
   }
@@ -453,11 +488,16 @@ serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const postContent: string = (body?.postContent || "").toString().slice(0, 2000);
     const postId: string | null = body?.postId || null;
+    // Resume mode: a previous call returned a job id to keep polling.
+    const resumeJobId: string | null =
+      typeof body?.jobId === "string" && body.jobId ? body.jobId : null;
+    const resumeStatusUrl: string | null =
+      typeof body?.statusUrl === "string" && body.statusUrl ? body.statusUrl : null;
     let platforms: string[] = Array.isArray(body?.platforms)
       ? body.platforms.map((x: unknown) => String(x)).filter(Boolean).slice(0, 12)
       : [];
 
-    if (!postContent) {
+    if (!resumeJobId && !postContent) {
       return new Response(
         JSON.stringify({ error: "postContent is required" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
@@ -489,64 +529,83 @@ serve(async (req) => {
       resolution: "2K",
     };
 
+    const jsonResponse = (payload: Record<string, unknown>, status = 200) =>
+      new Response(JSON.stringify(payload), {
+        status,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    // No real Graphiste GPT poster → clear, actionable error (never an SVG).
+    const noFinalImage = (detail?: string) =>
+      jsonResponse({
+        error: "Graphiste GPT n'a pas retourné d'affiche finale. Réessayez ; si le problème persiste, vérifiez la clé GRAPHISTE_GPT_API_KEY et le service Graphiste GPT.",
+        code: "no_final_image",
+        detail: detail || undefined,
+        format,
+      });
+    // Still generating → hand the job back so the client resumes polling.
+    const stillProcessing = (jobId: string | null, statusUrl: string | null) =>
+      jsonResponse({ status: "processing", jobId, statusUrl, format });
+
     // The poster engine is Graphiste GPT only — there is no local fallback.
     // If the key is missing, fail clearly and save nothing.
     if (!Deno.env.get("GRAPHISTE_GPT_API_KEY")) {
-      return new Response(
-        JSON.stringify({
-          error: "Génération d'affiche indisponible : le secret GRAPHISTE_GPT_API_KEY n'est pas configuré dans Supabase (Edge Functions → Secrets).",
-          code: "missing_api_key",
-          format,
-        }),
-        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+      return jsonResponse({
+        error: "Génération d'affiche indisponible : le secret GRAPHISTE_GPT_API_KEY n'est pas configuré dans Supabase (Edge Functions → Secrets).",
+        code: "missing_api_key",
+        format,
+      });
     }
 
-    // Pull the user's brand preferences from their profile so every
-    // image respects the same visual identity.
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select(
-        "image_people_type, image_style, brand_primary_color, brand_secondary_color, brand_accent_color, brand_font, sector, description, company_name, logo_url",
-      )
-      .eq("id", userId)
-      .maybeSingle();
+    let imageUrl: string | null = null;
 
-    const primary = profile?.brand_primary_color || "#8B5CF6";
-    const secondary = profile?.brand_secondary_color || "#3B82F6";
-    const accent = profile?.brand_accent_color || "#F59E0B";
-    const sector = profile?.sector || "";
-    const description = profile?.description || "";
+    if (resumeJobId) {
+      // Resume an in-flight job: short bounded poll, then hand back if needed.
+      const r = await resumeGraphisteJob(resumeJobId, resumeStatusUrl, 45_000);
+      if (r.status === "failed") return noFinalImage("job failed");
+      if (!r.imageUrl) return stillProcessing(resumeJobId, resumeStatusUrl);
+      imageUrl = r.imageUrl;
+    } else {
+      // Initial request: load brand preferences and kick off generation.
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select(
+          "image_people_type, image_style, brand_primary_color, brand_secondary_color, brand_accent_color, brand_font, sector, description, company_name, logo_url",
+        )
+        .eq("id", userId)
+        .maybeSingle();
 
-    const graphiste = await tryGraphisteGptPoster({
-      postContent,
-      sector,
-      description,
-      companyName: profile?.company_name || "Entreprise",
-      primary,
-      secondary,
-      accent,
-      logoUrl: profile?.logo_url || null,
-      spec,
-    });
-    if (graphiste.warning) console.warn("Graphiste GPT unavailable:", graphiste.warning);
+      const primary = profile?.brand_primary_color || "#8B5CF6";
+      const secondary = profile?.brand_secondary_color || "#3B82F6";
+      const accent = profile?.brand_accent_color || "#F59E0B";
+      const sector = profile?.sector || "";
+      const description = profile?.description || "";
 
-    if (!graphiste.imageUrl) {
-      // No real Graphiste GPT poster: do NOT save anything (no SVG, no
-      // placeholder). Surface a clear, actionable error instead.
-      console.warn("generate-image: no final Graphiste GPT image:", graphiste.warning);
-      return new Response(
-        JSON.stringify({
-          error: "Graphiste GPT n'a pas retourné d'affiche finale. Réessayez ; si le problème persiste, vérifiez la clé GRAPHISTE_GPT_API_KEY et le service Graphiste GPT.",
-          code: "no_final_image",
-          detail: graphiste.warning || undefined,
-          format,
-        }),
-        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+      const graphiste = await tryGraphisteGptPoster({
+        postContent,
+        sector,
+        description,
+        companyName: profile?.company_name || "Entreprise",
+        primary,
+        secondary,
+        accent,
+        logoUrl: profile?.logo_url || null,
+        spec,
+      });
+      if (graphiste.warning) console.warn("Graphiste GPT:", graphiste.warning);
+
+      if (graphiste.status === "failed") return noFinalImage(graphiste.warning || undefined);
+      if (!graphiste.imageUrl) {
+        // Still generating: hand the job to the client so it can resume polling
+        // without any single invocation running near the 150s edge limit.
+        if (graphiste.jobId || graphiste.statusUrl) {
+          return stillProcessing(graphiste.jobId, graphiste.statusUrl);
+        }
+        return noFinalImage(graphiste.warning || undefined);
+      }
+      imageUrl = graphiste.imageUrl;
     }
 
-    let imageUrl = graphiste.imageUrl;
+    if (!imageUrl) return noFinalImage();
 
     // Re-host to user-assets/ for a permanent URL, and verify it is a real
     // raster image (never an SVG/placeholder) before saving it anywhere.

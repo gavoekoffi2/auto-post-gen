@@ -80,11 +80,23 @@ test('generate-image uses the documented business default and async polling', ()
   assert.match(source, /postContent = ""/);
   assert.equal(source.includes('return "service";'), false);
   assert.match(source, /return "business";/, 'documented generic default domain');
-  assert.match(source, /pollGraphisteGptJob/);
+  assert.match(source, /pollGraphisteJob/);
   assert.match(source, /extractGraphisteJobId/);
   assert.match(source, /statusUrl/);
   // stops early when the polled job reports a terminal failure.
   assert.match(source, /graphisteJobFailed/);
+});
+
+test('generate-image is resumable: short bounded polls + job handoff (no 150s blocking call)', () => {
+  assert.match(source, /function pollGraphisteJob\(/);
+  assert.match(source, /function resumeGraphisteJob\(/);
+  assert.match(source, /const stillProcessing =/);
+  assert.match(source, /status: "processing"/);
+  // each poll window stays well under Supabase's 150s request timeout.
+  assert.match(source, /pollGraphisteJob\(candidates, key, 40_000/);
+  assert.match(source, /resumeGraphisteJob\(resumeJobId, resumeStatusUrl, 45_000\)/);
+  assert.equal(source.includes('110_000'), false, 'no single ~110s blocking poll');
+  assert.equal(source.includes('125_000'), false, 'no ~125s blocking controller');
 });
 
 test('Graphiste GPT response extractor accepts common final poster URL shapes', () => {

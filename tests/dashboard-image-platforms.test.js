@@ -21,12 +21,14 @@ test('dashboard tells the user which format was produced', () => {
   assert.ok(source.includes('${imageSpec.label}, ${imageSpec.aspectRatio}'));
 });
 
-test('dashboard surfaces the clear backend error instead of a silent failure', () => {
-  // both image flows show the actionable error message returned by the function.
-  assert.match(source, /imgData\?\.error/);
-  assert.match(source, /data\?\.error/);
-  assert.match(source, /toast\.error\(imgData\.error\)/);
-  assert.match(source, /toast\.error\(data\.error\)/);
+test('dashboard resumes long poster jobs and surfaces clear errors', () => {
+  // resumable helper that re-calls generate-image with the returned job id.
+  assert.match(source, /async function generatePosterImage\(/);
+  assert.match(source, /data\?\.status === "processing"/);
+  assert.match(source, /jobId: data\.jobId/);
+  assert.match(source, /statusUrl: data\.statusUrl/);
+  // both flows use the helper and show the actionable error message.
+  assert.match(source, /toast\.error\(res\.error\)/);
   // and never claim a "secours"/SVG fallback success anymore.
   assert.equal(source.includes('visuel de secours'), false);
   assert.equal(source.includes('affiche professionnelle de secours'), false);
