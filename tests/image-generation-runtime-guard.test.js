@@ -10,7 +10,7 @@ const edge = readFileSync(join(__dirname, '..', 'supabase/functions/generate-ima
 const script = readFileSync(join(__dirname, '..', 'scripts/test-image-gen.sh'), 'utf8');
 
 test('dashboard image generation has a client-side timeout and always clears loading state', () => {
-  assert.match(dashboard, /IMAGE_GENERATION_TIMEOUT_MS\s*=\s*260000/);
+  assert.match(dashboard, /IMAGE_GENERATION_TIMEOUT_MS\s*=\s*390000/);
   assert.match(dashboard, /invokeGenerateImageWithTimeout/);
   assert.match(dashboard, /Promise\.race/);
   assert.match(dashboard, /clearTimeout\(timeoutId\)/);
@@ -19,15 +19,17 @@ test('dashboard image generation has a client-side timeout and always clears loa
   assert.match(dashboard, /toast\.dismiss\(loadingToast\)/);
 });
 
-test('edge and dashboard allow slow premium Graphiste poster jobs to run for several minutes', () => {
-  assert.match(dashboard, /IMAGE_GENERATION_TIMEOUT_MS\s*=\s*260000/);
-  assert.match(edge, /GRAPHISTE_TOTAL_TIMEOUT_MS\s*=\s*240_000/);
-  assert.match(edge, /GRAPHISTE_POLL_BUDGET_MS\s*=\s*220_000/);
+test('edge and dashboard allow very slow premium Graphiste poster jobs to run for up to 6 minutes', () => {
+  assert.match(dashboard, /IMAGE_GENERATION_TIMEOUT_MS\s*=\s*390000/);
+  assert.match(edge, /GRAPHISTE_TOTAL_TIMEOUT_MS\s*=\s*360_000/);
+  assert.match(edge, /GRAPHISTE_POLL_BUDGET_MS\s*=\s*340_000/);
   assert.match(edge, /elapsed_ms/);
   assert.match(edge, /request_id/);
   assert.match(edge, /job_id/);
   assert.doesNotMatch(edge, /55_000/);
   assert.doesNotMatch(edge, /45_000/);
+  assert.doesNotMatch(edge, /240_000/);
+  assert.doesNotMatch(edge, /220_000/);
 });
 
 test('E2E image script sends the real Supabase bearer token header', () => {

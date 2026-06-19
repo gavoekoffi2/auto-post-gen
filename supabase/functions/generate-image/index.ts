@@ -36,8 +36,8 @@ const MAX_PAYLOAD_BYTES = 64 * 1024;
 
 const GRAPHISTE_GPT_DEFAULT_URL =
   "https://bbfzfgcdioewzbmlgaqy.supabase.co/functions/v1/api-v1/v1/posters/generate";
-const GRAPHISTE_TOTAL_TIMEOUT_MS = 240_000;
-const GRAPHISTE_POLL_BUDGET_MS = 220_000;
+const GRAPHISTE_TOTAL_TIMEOUT_MS = 360_000;
+const GRAPHISTE_POLL_BUDGET_MS = 340_000;
 
 type GraphistePosterResult = {
   imageUrl: string | null;

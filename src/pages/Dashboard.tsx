@@ -43,7 +43,7 @@ type UserProfile = {
 // publish-post stores the per-platform outcome as a JSON array in
 // posts.publish_error. Turn it into a short, human-readable reason.
 
-const IMAGE_GENERATION_TIMEOUT_MS = 260000;
+const IMAGE_GENERATION_TIMEOUT_MS = 390000;
 const MAX_GRAPHISTE_POLL_ATTEMPTS = 8;
 const GRAPHISTE_POLL_INTERVAL_MS = 10000;
 
