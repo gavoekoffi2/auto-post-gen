@@ -137,6 +137,21 @@ serve(async (req) => {
           ? profile.platforms
           : ["Instagram"];
 
+        // Time of day the user picked for automatic posts (defaults to 10:00).
+        const [rawHour, rawMinute] = String(profile.preferred_time || "10:00")
+          .split(":")
+          .map((n) => parseInt(n, 10));
+        const hour = Number.isFinite(rawHour) ? Math.min(23, Math.max(0, rawHour)) : 10;
+        const minute = Number.isFinite(rawMinute) ? Math.min(59, Math.max(0, rawMinute)) : 0;
+
+        // How many of this run's posts orient toward the company's service
+        // (promo). The rest are pure value (no promotion). Clamp to what we
+        // actually generate now so it never exceeds the weekly frequency.
+        const promoThisRun = Math.min(
+          Math.max(0, profile.promo_posts_per_week ?? 1),
+          postsToGenerate,
+        );
+
         // Research the business ONCE per user and reuse the inspiration for
         // every post generated this week. This grounds automatic posts in
         // real, current, sector-specific facts (the same enrichment the
@@ -161,30 +176,52 @@ serve(async (req) => {
         let generated = 0;
 
         for (let i = 0; i < postsToGenerate; i++) {
-          const angle = AUTO_ANGLES[(i + weekNumber) % AUTO_ANGLES.length];
+          const isPromo = i < promoThisRun;
           const avoidBlock = generatedThisRun.length
             ? `\nNE répète NI le sujet NI l'accroche de ces posts déjà générés cette semaine:\n${
                 generatedThisRun.map((c, k) => `${k + 1}. ${c.slice(0, 150)}`).join("\n")
               }\n`
             : "";
 
-          const contentPrompt = `Tu es un expert en création de contenu pour les réseaux sociaux, spécialisé dans le métier décrit ci-dessous. Reste STRICTEMENT dans ce domaine d'activité, ne généralise pas vers d'autres sujets.
+          // Most posts are pure value (no promotion); a small, user-chosen
+          // number are oriented toward the company's service.
+          const contentPrompt = isPromo
+            ? `Tu es un expert en marketing pour les réseaux sociaux, spécialisé dans le métier décrit ci-dessous. Reste STRICTEMENT dans ce domaine d'activité.
 
 PROFIL DU CLIENT:
 - Nom de l'entreprise: ${companyName}
 - Secteur: ${sector}
 ${description ? `- Description de l'activité: ${description}` : ""}
 - Ton: ${profile.tone || "Professionnel"}
+${inspirationBlock}
+OBJECTIF DE CE POST: présenter ce que propose ${companyName} et donner envie de faire appel à ses services.
 
-ANGLE IMPOSÉ POUR CE POST: ${angle}
+RÈGLES:
+- 100% en français
+- 60-100 mots
+- 2-3 émojis pertinents
+- Commence par un bénéfice concret pour le client (jamais par "Nous sommes...")
+- Présente clairement le service ou la valeur que ${companyName} apporte, sans promesses irréalistes
+- Écris "${companyName}" tel quel, jamais entre crochets ni en placeholder
+- Termine par un appel à l'action clair et naturel (contacter, écrire, réserver…)
+${avoidBlock}
+Génère uniquement le texte du post, sans titre ni explication.`
+            : `Tu es un expert en création de contenu pour les réseaux sociaux, spécialisé dans le métier décrit ci-dessous. Reste STRICTEMENT dans ce domaine d'activité, ne généralise pas vers d'autres sujets.
+
+PROFIL DU CLIENT:
+- Secteur: ${sector}
+${description ? `- Description de l'activité: ${description}` : ""}
+- Ton: ${profile.tone || "Professionnel"}
+
+ANGLE IMPOSÉ POUR CE POST: ${AUTO_ANGLES[(i + weekNumber) % AUTO_ANGLES.length]}
 ${inspirationBlock}
 RÈGLES:
 - 100% en français
 - 60-100 mots
 - 2-3 émojis pertinents
 - Apporte une valeur CONCRÈTE et SPÉCIFIQUE à ce métier (un conseil, un chiffre ou un fait qu'un vrai connaisseur donnerait) — surtout pas du générique applicable à n'importe quelle entreprise
-- Écris "${companyName}" tel quel, jamais entre crochets ni en placeholder
-- Termine par une question engageante ou un appel à l'action
+- Ce post sert à AIDER l'audience, pas à promouvoir l'entreprise : aucune promotion, aucun prix, aucune offre. Tu peux mentionner "${companyName}" une seule fois maximum, naturellement, et uniquement si c'est pertinent.
+- Termine par une question engageante
 ${avoidBlock}
 Génère uniquement le texte du post, sans titre ni explication.`;
 
@@ -216,13 +253,13 @@ Génère uniquement le texte du post, sans titre ni explication.`;
           const currentDay = scheduledDate.getDay();
           const daysUntilTarget = ((targetDayNumber - currentDay + 7) % 7) || 7;
           scheduledDate.setDate(scheduledDate.getDate() + daysUntilTarget);
-          scheduledDate.setHours(10, 0, 0, 0);
+          scheduledDate.setHours(hour, minute, 0, 0);
 
           const { error: insertError } = await supabase
             .from("posts")
             .insert({
               user_id: profile.id,
-              title: "Contenu automatique",
+              title: isPromo ? "Post promotionnel" : "Contenu automatique",
               content: generatedContent,
               platforms,
               // When auto_publish is on, mark as validated so the publisher

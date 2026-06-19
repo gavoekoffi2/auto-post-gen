@@ -53,6 +53,8 @@ export default function Profile() {
     style_example: "",
     platforms: [] as string[],
     preferred_days: [] as string[],
+    preferred_time: "10:00",
+    promo_posts_per_week: 1,
     auto_publish: false,
     image_people_type: "african",
     use_custom_images: false,
@@ -102,6 +104,8 @@ export default function Profile() {
           style_example: data.style_example || "",
           platforms: data.platforms || [],
           preferred_days: data.preferred_days || [],
+          preferred_time: data.preferred_time || "10:00",
+          promo_posts_per_week: data.promo_posts_per_week ?? 1,
           auto_publish: data.auto_publish || false,
           image_people_type: data.image_people_type || "african",
           use_custom_images: data.use_custom_images || false,
@@ -143,6 +147,8 @@ export default function Profile() {
           style_example: profile.style_example,
           platforms: profile.platforms,
           preferred_days: profile.preferred_days,
+          preferred_time: profile.preferred_time,
+          promo_posts_per_week: profile.promo_posts_per_week,
           auto_publish: profile.auto_publish,
           image_people_type: profile.image_people_type,
           use_custom_images: profile.use_custom_images,
@@ -468,6 +474,46 @@ export default function Profile() {
                       </div>
                     ))}
                   </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="preferred-time">Heure de publication</Label>
+                  <Input
+                    id="preferred-time"
+                    type="time"
+                    className="glass-card w-full md:w-48"
+                    value={profile.preferred_time}
+                    onChange={(e) =>
+                      setProfile({ ...profile, preferred_time: e.target.value || "10:00" })
+                    }
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Heure à laquelle vos posts automatiques seront publiés les jours choisis.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Posts orientés service (promo) par semaine</Label>
+                  <Select
+                    value={profile.promo_posts_per_week.toString()}
+                    onValueChange={(v) =>
+                      setProfile({ ...profile, promo_posts_per_week: parseInt(v) })
+                    }
+                  >
+                    <SelectTrigger className="glass-card w-full md:w-48">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="0">0 (que de la valeur)</SelectItem>
+                      <SelectItem value="1">1 post promo</SelectItem>
+                      <SelectItem value="2">2 posts promo</SelectItem>
+                      <SelectItem value="3">3 posts promo</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Le reste de vos posts apporte uniquement de la valeur, sans promotion de
+                    l'entreprise. Si ce nombre dépasse votre fréquence, il est ajusté automatiquement.
+                  </p>
                 </div>
 
                 <div className="flex items-center space-x-2 pt-4 border-t border-border/50">

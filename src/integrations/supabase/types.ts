@@ -258,6 +258,8 @@ export type Database = {
           platforms: string[]
           post_frequency: number
           preferred_days: string[] | null
+          preferred_time: string
+          promo_posts_per_week: number
           sector: string
           style_example: string | null
           style_examples: Json | null
@@ -293,6 +295,8 @@ export type Database = {
           platforms?: string[]
           post_frequency?: number
           preferred_days?: string[] | null
+          preferred_time?: string
+          promo_posts_per_week?: number
           sector: string
           style_example?: string | null
           style_examples?: Json | null
@@ -328,6 +332,8 @@ export type Database = {
           platforms?: string[]
           post_frequency?: number
           preferred_days?: string[] | null
+          preferred_time?: string
+          promo_posts_per_week?: number
           sector?: string
           style_example?: string | null
           style_examples?: Json | null
