@@ -36,6 +36,8 @@ const MAX_PAYLOAD_BYTES = 64 * 1024;
 
 const GRAPHISTE_GPT_DEFAULT_URL =
   "https://bbfzfgcdioewzbmlgaqy.supabase.co/functions/v1/api-v1/v1/posters/generate";
+const GRAPHISTE_TOTAL_TIMEOUT_MS = 55_000;
+const GRAPHISTE_POLL_BUDGET_MS = 45_000;
 
 // Aspect ratios supported by the Graphiste GPT API (v1.1). We send the post's
 // exact network ratio when supported (e.g. 1.91:1 for LinkedIn / Facebook) so
@@ -110,6 +112,18 @@ function extractGraphisteJobId(value: unknown): string | null {
   return null;
 }
 
+function extractGraphisteRequestId(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+  const obj = value as Record<string, unknown>;
+  const direct = obj.request_id || obj.requestId || obj.id;
+  if (typeof direct === "string" && direct.trim()) return direct.trim();
+  for (const key of ["data", "error", "result", "job", "request", "generation"]) {
+    const nested = extractGraphisteRequestId(obj[key]);
+    if (nested) return nested;
+  }
+  return null;
+}
+
 function extractGraphisteStatusUrl(value: unknown): string | null {
   if (!value || typeof value !== "object") return null;
   const obj = value as Record<string, unknown>;
@@ -157,7 +171,7 @@ async function pollGraphisteGptJob(endpoint: string, key: string, firstData: unk
 
   const started = Date.now();
   let delay = 3000;
-  while (Date.now() - started < 110_000) {
+  while (Date.now() - started < GRAPHISTE_POLL_BUDGET_MS) {
     await sleep(delay);
     for (const url of candidates) {
       try {
@@ -318,9 +332,9 @@ async function tryGraphisteGptPoster(params: {
   accent: string;
   logoUrl: string | null;
   spec: SocialImageSpec;
-}): Promise<{ imageUrl: string | null; warning: string | null }> {
+}): Promise<{ imageUrl: string | null; warning: string | null; request_id?: string | null; job_id?: string | null; elapsed_ms?: number }> {
   const key = Deno.env.get("GRAPHISTE_GPT_API_KEY");
-  if (!key) return { imageUrl: null, warning: "GRAPHISTE_GPT_API_KEY not configured" };
+  if (!key) return { imageUrl: null, warning: "GRAPHISTE_GPT_API_KEY not configured", elapsed_ms: 0 };
 
   const endpoint = Deno.env.get("GRAPHISTE_GPT_API_URL") || GRAPHISTE_GPT_DEFAULT_URL;
   const colors = [params.primary, params.secondary, params.accent]
@@ -347,7 +361,8 @@ async function tryGraphisteGptPoster(params: {
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 125_000);
+  const started = Date.now();
+  const timer = setTimeout(() => controller.abort(), GRAPHISTE_TOTAL_TIMEOUT_MS);
   try {
     const resp = await fetch(endpoint, {
       method: "POST",
@@ -363,9 +378,13 @@ async function tryGraphisteGptPoster(params: {
     const text = await resp.text();
     let data: unknown = null;
     try { data = JSON.parse(text); } catch { data = null; }
-    if (!resp.ok) return { imageUrl: null, warning: graphisteErrorMessage(resp.status, data, text) };
+    const request_id = extractGraphisteRequestId(data);
+    const job_id = extractGraphisteJobId(data);
+    const elapsed_ms = Date.now() - started;
+    console.info("Graphiste GPT initial response", { status: resp.status, request_id, job_id, elapsed_ms });
+    if (!resp.ok) return { imageUrl: null, warning: graphisteErrorMessage(resp.status, data, text), request_id, job_id, elapsed_ms };
     if (data === null) {
-      return { imageUrl: null, warning: `Graphiste GPT returned non-JSON: ${text.slice(0, 120)}` };
+      return { imageUrl: null, warning: `Graphiste GPT returned non-JSON: ${text.slice(0, 120)}`, request_id, job_id, elapsed_ms };
     }
     // Surface any fields the API ignored (e.g. an accidental unknown field).
     if (typeof data === "object") {
@@ -375,18 +394,21 @@ async function tryGraphisteGptPoster(params: {
       // Public API errors use { success:false, error:{ code, message, request_id } }.
       // Handle that even if a proxy/runtime accidentally returns HTTP 200/202.
       if (envelope.success === false) {
-        return { imageUrl: null, warning: graphisteErrorMessage(resp.status, data, text) };
+        return { imageUrl: null, warning: graphisteErrorMessage(resp.status, data, text), request_id, job_id, elapsed_ms: Date.now() - started };
       }
     }
     // Fast path: a finished poster came back directly at data.image_url.
     const imageUrl = extractGraphisteImageUrl(data, false);
-    if (imageUrl) return { imageUrl, warning: null };
+    if (imageUrl) return { imageUrl, warning: null, request_id, job_id, elapsed_ms: Date.now() - started };
     // Async (HTTP 202 + job_id + absolute status_url): poll until completed.
     const polledImageUrl = await pollGraphisteGptJob(endpoint, key, data, controller.signal);
-    if (polledImageUrl) return { imageUrl: polledImageUrl, warning: null };
+    if (polledImageUrl) return { imageUrl: polledImageUrl, warning: null, request_id, job_id, elapsed_ms: Date.now() - started };
     return {
       imageUrl: null,
-      warning: "Graphiste GPT n'a pas retourné d'image finale (le job n'a pas abouti dans le délai). Réessayez.",
+      warning: "Graphiste GPT n'a pas retourné d'image finale dans le délai court de sécurité. Réessayez dans un instant.",
+      request_id,
+      job_id,
+      elapsed_ms: Date.now() - started,
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -396,6 +418,7 @@ async function tryGraphisteGptPoster(params: {
       warning: isAbort
         ? "Graphiste GPT a dépassé le délai de génération. Réessayez dans un instant."
         : `Graphiste GPT inaccessible: ${message}`,
+      elapsed_ms: Date.now() - started,
     };
   } finally {
     clearTimeout(timer);
@@ -529,7 +552,7 @@ serve(async (req) => {
       logoUrl: profile?.logo_url || null,
       spec,
     });
-    if (graphiste.warning) console.warn("Graphiste GPT unavailable:", graphiste.warning);
+    if (graphiste.warning) console.warn("Graphiste GPT unavailable:", { warning: graphiste.warning, request_id: graphiste.request_id, job_id: graphiste.job_id, elapsed_ms: graphiste.elapsed_ms });
 
     if (!graphiste.imageUrl) {
       // No real Graphiste GPT poster: do NOT save anything (no SVG, no
@@ -540,6 +563,9 @@ serve(async (req) => {
           error: "Graphiste GPT n'a pas retourné d'affiche finale. Réessayez ; si le problème persiste, vérifiez la clé GRAPHISTE_GPT_API_KEY et le service Graphiste GPT.",
           code: "no_final_image",
           detail: graphiste.warning || undefined,
+          request_id: graphiste.request_id || undefined,
+          job_id: graphiste.job_id || undefined,
+          elapsed_ms: graphiste.elapsed_ms,
           format,
         }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
@@ -616,7 +642,7 @@ serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({ imageUrl, provider: "graphiste-gpt", fallback: false, format }),
+      JSON.stringify({ imageUrl, provider: "graphiste-gpt", fallback: false, request_id: graphiste.request_id || undefined, job_id: graphiste.job_id || undefined, elapsed_ms: graphiste.elapsed_ms, format }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err) {

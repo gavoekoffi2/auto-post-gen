@@ -42,6 +42,39 @@ type UserProfile = {
 
 // publish-post stores the per-platform outcome as a JSON array in
 // posts.publish_error. Turn it into a short, human-readable reason.
+
+const IMAGE_GENERATION_TIMEOUT_MS = 65000;
+
+type GenerateImageResult = {
+  data?: {
+    imageUrl?: string;
+    error?: string;
+    detail?: string;
+    code?: string;
+    format?: { label?: string; aspectRatio?: string };
+  } | null;
+  error?: unknown;
+};
+
+function imageTimeoutError(): Error {
+  return new Error("La génération d'affiche prend trop longtemps. Le post est sauvegardé : cliquez sur Régénérer l'affiche dans un instant.");
+}
+
+async function invokeGenerateImageWithTimeout(body: Record<string, unknown>): Promise<GenerateImageResult> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => reject(imageTimeoutError()), IMAGE_GENERATION_TIMEOUT_MS);
+    });
+    return await Promise.race([
+      supabase.functions.invoke('generate-image', { body }),
+      timeoutPromise,
+    ]) as GenerateImageResult;
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
 function formatPublishError(raw?: string | null): string | null {
   if (!raw) return null;
   try {
@@ -75,6 +108,14 @@ export default function Dashboard() {
   const [regeneratingContentIds, setRegeneratingContentIds] = useState<Set<string>>(new Set());
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [hasConnection, setHasConnection] = useState<boolean | null>(null);
+
+  const clearGeneratingImage = (postId: string) => {
+    setGeneratingImageIds((prev) => {
+      const next = new Set(prev);
+      next.delete(postId);
+      return next;
+    });
+  };
 
   useEffect(() => {
     checkAuthAndLoadData();
@@ -366,17 +407,12 @@ export default function Dashboard() {
       void (async () => {
         try {
           const imageSpec = getSocialImageSpec(defaultPlatforms);
-          const { data: imgData, error: imgError } = await supabase.functions.invoke(
-            'generate-image',
-            {
-              body: {
-                postContent: data.content,
-                peopleType: userProfile?.image_people_type || 'african',
-                postId: savedPost.id,
-                platforms: defaultPlatforms,
-              },
-            },
-          );
+          const { data: imgData, error: imgError } = await invokeGenerateImageWithTimeout({
+            postContent: data.content,
+            peopleType: userProfile?.image_people_type || 'african',
+            postId: savedPost.id,
+            platforms: defaultPlatforms,
+          });
           if (imgError) throw imgError;
           if (imgData?.error) {
             if (imgData.detail) console.warn("Image error detail:", imgData.detail);
@@ -397,11 +433,7 @@ export default function Dashboard() {
             "Image non générée. Cliquez sur 'Régénérer image' sur le post pour réessayer.",
           );
         } finally {
-          setGeneratingImageIds((prev) => {
-            const next = new Set(prev);
-            next.delete(savedPost.id);
-            return next;
-          });
+          clearGeneratingImage(savedPost.id);
         }
       })();
     } catch (error: unknown) {
@@ -421,13 +453,11 @@ export default function Dashboard() {
     try {
       const regenPlatforms = post.platforms || (post.platform ? [post.platform] : []);
       const imageSpec = getSocialImageSpec(regenPlatforms);
-      const { data, error } = await supabase.functions.invoke('generate-image', {
-        body: {
-          postContent: post.content,
-          peopleType: userProfile?.image_people_type || 'african',
-          postId: post.id,
-          platforms: regenPlatforms,
-        },
+      const { data, error } = await invokeGenerateImageWithTimeout({
+        postContent: post.content,
+        peopleType: userProfile?.image_people_type || 'african',
+        postId: post.id,
+        platforms: regenPlatforms,
       });
       toast.dismiss(loadingToast);
       if (error) throw error;
@@ -450,11 +480,7 @@ export default function Dashboard() {
       const message = err instanceof Error ? err.message : "Erreur de génération d'image";
       toast.error(message);
     } finally {
-      setGeneratingImageIds((prev) => {
-        const next = new Set(prev);
-        next.delete(post.id);
-        return next;
-      });
+      clearGeneratingImage(post.id);
     }
   };
 
