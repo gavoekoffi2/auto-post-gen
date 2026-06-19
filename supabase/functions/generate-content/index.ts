@@ -76,6 +76,48 @@ interface UserPreferences {
   custom_image_urls?: string[];
 }
 
+function cleanSentence(value: string, fallback: string): string {
+  return (value || fallback)
+    .replace(/[\n\r]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 220) || fallback;
+}
+
+function buildFallbackContent(params: {
+  companyName: string;
+  sector: string;
+  description: string;
+  postType: "value" | "promo";
+}): string {
+  const company = cleanSentence(params.companyName, "Notre entreprise");
+  const activity = cleanSentence(params.description || params.sector, "votre activité");
+  const hook = params.postType === "promo"
+    ? `Vous cherchez une solution fiable pour ${activity.toLowerCase()} ?`
+    : `Une erreur fréquente dans ${activity.toLowerCase()} : vouloir tout faire sans méthode claire.`;
+  const valueLine = params.postType === "promo"
+    ? `${company} vous accompagne avec une approche simple, professionnelle et adaptée à vos objectifs.`
+    : `Chez ${company}, nous recommandons de commencer par une priorité concrète, de mesurer le résultat, puis d'améliorer étape par étape.`;
+  const cta = params.postType === "promo"
+    ? "Contactez-nous pour en parler et voir ce qui peut être mis en place rapidement."
+    : "Quelle est la priorité que vous voulez améliorer cette semaine ?";
+
+  return `${hook}\n\n${valueLine}\n\n${cta}`;
+}
+
+async function recordGenerationUsage(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  status: "success" | "fallback" | "error",
+  error?: string,
+) {
+  await supabase.from("generation_usage").insert({
+    user_id: userId,
+    function_name: "generate-content",
+    status,
+    error: error ? error.slice(0, 500) : null,
+  });
+}
 
 serve(async (req) => {
   const corsHeaders = buildCorsHeaders(req.headers.get("origin"));
@@ -152,13 +194,6 @@ serve(async (req) => {
           error: `Limite de ${RATE_LIMIT_MAX} générations par heure atteinte. Réessayez plus tard.`,
         }),
         { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    }
-
-    if (!getOpenRouterKey()) {
-      return new Response(
-        JSON.stringify({ error: "AI service not configured (OPENROUTER_API_KEY missing)" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
@@ -270,8 +305,22 @@ ${recentList || "(aucun pour l'instant)"}
 
 Réponds UNIQUEMENT avec le texte du post, sans titre ni explication, sans guillemets autour.`;
 
+    const fallbackContent = (reason: string) => ({
+      content: buildFallbackContent({ companyName, sector, description, postType }),
+      angle: angle.name,
+      postType,
+      usedWebInspiration: webResults.length > 0,
+      fallback: true,
+      provider: "local-content-fallback",
+      warning: reason,
+    });
+
     let generatedContent = "";
+    let fallbackReason = "";
     try {
+      if (!getOpenRouterKey()) {
+        throw new Error("OPENROUTER_API_KEY missing");
+      }
       const textResponse = await chatCompletion({
         model: getTextModel(),
         messages: [
@@ -286,47 +335,31 @@ Réponds UNIQUEMENT avec le texte du post, sans titre ni explication, sans guill
         top_p: 0.95,
       });
       if (!textResponse.ok) {
-        if (textResponse.status === 429) {
-          return new Response(
-            JSON.stringify({ error: "Limite de taux atteinte, réessayez plus tard." }),
-            { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-          );
-        }
-        if (textResponse.status === 402) {
-          return new Response(
-            JSON.stringify({ error: "Crédit insuffisant, veuillez recharger votre compte." }),
-            { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-          );
-        }
-        console.error("OpenRouter text status:", textResponse.status);
-        throw new Error("OpenRouter error");
+        const detail = (await textResponse.text()).slice(0, 240);
+        throw new Error(`OpenRouter ${textResponse.status}: ${detail}`);
       }
       const textData = await textResponse.json();
       generatedContent = textData?.choices?.[0]?.message?.content?.trim() || "";
     } catch (err) {
       if (err instanceof AIQuotaError) {
-        return new Response(
-          JSON.stringify({
-            error: err.code === "rate"
-              ? "Limite de taux atteinte, réessayez plus tard."
-              : "Crédit insuffisant.",
-          }),
-          { status: err.code === "rate" ? 429 : 402, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-        );
+        fallbackReason = err.code === "rate" ? "AI rate limit reached" : "AI credit exhausted";
+      } else {
+        fallbackReason = err instanceof Error ? err.message : String(err);
       }
-      throw err;
+      console.error("generate-content AI fallback:", fallbackReason);
     }
 
     if (!generatedContent) {
-      throw new Error("AI returned empty content");
+      const payload = fallbackContent(fallbackReason || "AI returned empty content");
+      await recordGenerationUsage(supabase, userId, "fallback", payload.warning);
+      return new Response(
+        JSON.stringify(payload),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
 
     // Record success
-    await supabase.from("generation_usage").insert({
-      user_id: userId,
-      function_name: "generate-content",
-      status: "success",
-    });
+    await recordGenerationUsage(supabase, userId, "success");
 
     return new Response(
       JSON.stringify({

@@ -41,6 +41,7 @@ jobs:
             exit 1
           fi
           supabase functions deploy generate-image --project-ref "$PROJECT_REF"
+          supabase functions deploy generate-content --project-ref "$PROJECT_REF"
           supabase functions deploy publish-post --project-ref "$PROJECT_REF"
           supabase functions deploy zernio-status --project-ref "$PROJECT_REF"
           supabase functions deploy zernio-connect --project-ref "$PROJECT_REF"
