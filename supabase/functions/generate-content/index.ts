@@ -84,6 +84,11 @@ function cleanSentence(value: string, fallback: string): string {
     .slice(0, 220) || fallback;
 }
 
+// Clean, natural fallback used only when the AI text provider is unavailable.
+// No "erreur" phrasing, no lowercased free-text, no placeholders — it must read
+// like a real, publishable post. Value posts keep the company mention subtle;
+// only promo posts push the service. One variant is picked at random so repeated
+// fallbacks don't look identical.
 function buildFallbackContent(params: {
   companyName: string;
   sector: string;
@@ -91,18 +96,21 @@ function buildFallbackContent(params: {
   postType: "value" | "promo";
 }): string {
   const company = cleanSentence(params.companyName, "Notre entreprise");
-  const activity = cleanSentence(params.description || params.sector, "votre activité");
-  const hook = params.postType === "promo"
-    ? `Vous cherchez une solution fiable pour ${activity.toLowerCase()} ?`
-    : `Une erreur fréquente dans ${activity.toLowerCase()} : vouloir tout faire sans méthode claire.`;
-  const valueLine = params.postType === "promo"
-    ? `${company} vous accompagne avec une approche simple, professionnelle et adaptée à vos objectifs.`
-    : `Chez ${company}, nous recommandons de commencer par une priorité concrète, de mesurer le résultat, puis d'améliorer étape par étape.`;
-  const cta = params.postType === "promo"
-    ? "Contactez-nous pour en parler et voir ce qui peut être mis en place rapidement."
-    : "Quelle est la priorité que vous voulez améliorer cette semaine ?";
+  const pick = (arr: string[]) => arr[Math.floor(Math.random() * arr.length)];
 
-  return `${hook}\n\n${valueLine}\n\n${cta}`;
+  if (params.postType === "promo") {
+    return pick([
+      `Vous cherchez un partenaire fiable et professionnel ? 🤝\n\n${company} vous accompagne avec une approche claire, adaptée à vos objectifs, et des résultats concrets — sans jargon inutile.\n\nÉcrivez-nous pour en parler, on vous répond vite. 📩`,
+      `Passez à l'action avec ${company}. 🚀\n\nDes solutions simples, un accompagnement sérieux et un suivi à chaque étape pour atteindre vos objectifs sereinement.\n\nContactez-nous dès aujourd'hui pour démarrer.`,
+      `Et si cette semaine était la bonne pour avancer ? ✨\n\n${company} met son savoir-faire au service de votre projet, avec une méthode claire et des engagements tenus.\n\nParlons-en : envoyez-nous un message. 📩`,
+    ]);
+  }
+
+  return pick([
+    `💡 La régularité bat l'intensité : une seule action vraiment utile par semaine vaut mieux que dix idées jamais mises en œuvre.\n\nLe réflexe que nous recommandons : choisir une priorité claire, mesurer son impact, puis ajuster.\n\nQuelle est votre priorité cette semaine ?`,
+    `🎯 Avant d'ajouter de nouveaux outils, clarifiez l'objectif : à quoi ressemble un bon résultat, concrètement ?\n\nUne fois la cible définie, les bonnes décisions deviennent beaucoup plus simples à prendre.\n\nVotre objectif numéro 1 ce mois-ci, c'est quoi ?`,
+    `✅ Un principe qui change tout : se concentrer sur ce qui apporte le plus de résultat, et simplifier le reste.\n\nC'est souvent en faisant moins, mais mieux, qu'on progresse le plus vite.\n\nSur quoi pourriez-vous gagner du temps dès cette semaine ?`,
+  ]);
 }
 
 async function recordGenerationUsage(
