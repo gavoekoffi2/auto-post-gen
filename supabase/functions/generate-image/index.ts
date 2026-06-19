@@ -39,6 +39,16 @@ const GRAPHISTE_GPT_DEFAULT_URL =
 const GRAPHISTE_TOTAL_TIMEOUT_MS = 55_000;
 const GRAPHISTE_POLL_BUDGET_MS = 45_000;
 
+type GraphistePosterResult = {
+  imageUrl: string | null;
+  warning: string | null;
+  processing?: boolean;
+  request_id?: string | null;
+  job_id?: string | null;
+  status_url?: string | null;
+  elapsed_ms?: number;
+};
+
 // Aspect ratios supported by the Graphiste GPT API (v1.1). We send the post's
 // exact network ratio when supported (e.g. 1.91:1 for LinkedIn / Facebook) so
 // the API never falls back to its 9:16 default; otherwise we map orientation to
@@ -322,6 +332,52 @@ function graphisteErrorMessage(status: number, body: unknown, text: string): str
   return `Graphiste GPT a échoué (${status}). Réessayez dans un instant. ${detail}`;
 }
 
+async function tryGraphisteGptStatus(params: {
+  jobId: string | null;
+  statusUrl: string | null;
+}): Promise<GraphistePosterResult> {
+  const key = Deno.env.get("GRAPHISTE_GPT_API_KEY");
+  if (!key) return { imageUrl: null, warning: "GRAPHISTE_GPT_API_KEY not configured", elapsed_ms: 0 };
+  const endpoint = Deno.env.get("GRAPHISTE_GPT_API_URL") || GRAPHISTE_GPT_DEFAULT_URL;
+  const controller = new AbortController();
+  const started = Date.now();
+  const timer = setTimeout(() => controller.abort(), GRAPHISTE_TOTAL_TIMEOUT_MS);
+  try {
+    const seed = { data: { job_id: params.jobId || undefined, status_url: params.statusUrl || undefined } };
+    const imageUrl = await pollGraphisteGptJob(endpoint, key, seed, controller.signal);
+    if (imageUrl) {
+      return {
+        imageUrl,
+        warning: null,
+        processing: false,
+        job_id: params.jobId,
+        status_url: params.statusUrl,
+        elapsed_ms: Date.now() - started,
+      };
+    }
+    return {
+      imageUrl: null,
+      warning: null,
+      processing: true,
+      job_id: params.jobId,
+      status_url: params.statusUrl,
+      elapsed_ms: Date.now() - started,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      imageUrl: null,
+      warning: `Graphiste GPT status inaccessible: ${message}`,
+      processing: true,
+      job_id: params.jobId,
+      status_url: params.statusUrl,
+      elapsed_ms: Date.now() - started,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function tryGraphisteGptPoster(params: {
   postContent: string;
   sector: string;
@@ -332,7 +388,7 @@ async function tryGraphisteGptPoster(params: {
   accent: string;
   logoUrl: string | null;
   spec: SocialImageSpec;
-}): Promise<{ imageUrl: string | null; warning: string | null; request_id?: string | null; job_id?: string | null; elapsed_ms?: number }> {
+}): Promise<GraphistePosterResult> {
   const key = Deno.env.get("GRAPHISTE_GPT_API_KEY");
   if (!key) return { imageUrl: null, warning: "GRAPHISTE_GPT_API_KEY not configured", elapsed_ms: 0 };
 
@@ -380,11 +436,12 @@ async function tryGraphisteGptPoster(params: {
     try { data = JSON.parse(text); } catch { data = null; }
     const request_id = extractGraphisteRequestId(data);
     const job_id = extractGraphisteJobId(data);
+    const status_url = extractGraphisteStatusUrl(data);
     const elapsed_ms = Date.now() - started;
     console.info("Graphiste GPT initial response", { status: resp.status, request_id, job_id, elapsed_ms });
-    if (!resp.ok) return { imageUrl: null, warning: graphisteErrorMessage(resp.status, data, text), request_id, job_id, elapsed_ms };
+    if (!resp.ok) return { imageUrl: null, warning: graphisteErrorMessage(resp.status, data, text), request_id, job_id, status_url, elapsed_ms };
     if (data === null) {
-      return { imageUrl: null, warning: `Graphiste GPT returned non-JSON: ${text.slice(0, 120)}`, request_id, job_id, elapsed_ms };
+      return { imageUrl: null, warning: `Graphiste GPT returned non-JSON: ${text.slice(0, 120)}`, request_id, job_id, status_url, elapsed_ms };
     }
     // Surface any fields the API ignored (e.g. an accidental unknown field).
     if (typeof data === "object") {
@@ -394,20 +451,22 @@ async function tryGraphisteGptPoster(params: {
       // Public API errors use { success:false, error:{ code, message, request_id } }.
       // Handle that even if a proxy/runtime accidentally returns HTTP 200/202.
       if (envelope.success === false) {
-        return { imageUrl: null, warning: graphisteErrorMessage(resp.status, data, text), request_id, job_id, elapsed_ms: Date.now() - started };
+        return { imageUrl: null, warning: graphisteErrorMessage(resp.status, data, text), request_id, job_id, status_url, elapsed_ms: Date.now() - started };
       }
     }
     // Fast path: a finished poster came back directly at data.image_url.
     const imageUrl = extractGraphisteImageUrl(data, false);
-    if (imageUrl) return { imageUrl, warning: null, request_id, job_id, elapsed_ms: Date.now() - started };
+    if (imageUrl) return { imageUrl, warning: null, request_id, job_id, status_url, elapsed_ms: Date.now() - started };
     // Async (HTTP 202 + job_id + absolute status_url): poll until completed.
     const polledImageUrl = await pollGraphisteGptJob(endpoint, key, data, controller.signal);
-    if (polledImageUrl) return { imageUrl: polledImageUrl, warning: null, request_id, job_id, elapsed_ms: Date.now() - started };
+    if (polledImageUrl) return { imageUrl: polledImageUrl, warning: null, request_id, job_id, status_url, elapsed_ms: Date.now() - started };
     return {
       imageUrl: null,
       warning: "Graphiste GPT n'a pas retourné d'image finale dans le délai court de sécurité. Réessayez dans un instant.",
+      processing: Boolean(job_id || status_url),
       request_id,
       job_id,
+      status_url,
       elapsed_ms: Date.now() - started,
     };
   } catch (err) {
@@ -476,11 +535,14 @@ serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const postContent: string = (body?.postContent || "").toString().slice(0, 2000);
     const postId: string | null = body?.postId || null;
+    const graphisteJobId: string | null = (body?.graphisteJobId || body?.job_id || body?.jobId || "").toString().trim() || null;
+    const graphisteStatusUrl: string | null = (body?.graphisteStatusUrl || body?.status_url || body?.statusUrl || "").toString().trim() || null;
+    const isGraphisteStatusPoll = Boolean(graphisteJobId || graphisteStatusUrl);
     let platforms: string[] = Array.isArray(body?.platforms)
       ? body.platforms.map((x: unknown) => String(x)).filter(Boolean).slice(0, 12)
       : [];
 
-    if (!postContent) {
+    if (!postContent && !isGraphisteStatusPoll) {
       return new Response(
         JSON.stringify({ error: "postContent is required" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
@@ -525,36 +587,62 @@ serve(async (req) => {
       );
     }
 
-    // Pull the user's brand preferences from their profile so every
-    // image respects the same visual identity.
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select(
-        "image_people_type, image_style, brand_primary_color, brand_secondary_color, brand_accent_color, brand_font, sector, description, company_name, logo_url",
-      )
-      .eq("id", userId)
-      .maybeSingle();
+    let graphiste: GraphistePosterResult;
+    if (isGraphisteStatusPoll) {
+      graphiste = await tryGraphisteGptStatus({
+        jobId: graphisteJobId,
+        statusUrl: graphisteStatusUrl,
+      });
+    } else {
+      // Pull the user's brand preferences from their profile so every
+      // image respects the same visual identity.
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select(
+          "image_people_type, image_style, brand_primary_color, brand_secondary_color, brand_accent_color, brand_font, sector, description, company_name, logo_url",
+        )
+        .eq("id", userId)
+        .maybeSingle();
 
-    const primary = profile?.brand_primary_color || "#8B5CF6";
-    const secondary = profile?.brand_secondary_color || "#3B82F6";
-    const accent = profile?.brand_accent_color || "#F59E0B";
-    const sector = profile?.sector || "";
-    const description = profile?.description || "";
+      const primary = profile?.brand_primary_color || "#8B5CF6";
+      const secondary = profile?.brand_secondary_color || "#3B82F6";
+      const accent = profile?.brand_accent_color || "#F59E0B";
+      const sector = profile?.sector || "";
+      const description = profile?.description || "";
 
-    const graphiste = await tryGraphisteGptPoster({
-      postContent,
-      sector,
-      description,
-      companyName: profile?.company_name || "Entreprise",
-      primary,
-      secondary,
-      accent,
-      logoUrl: profile?.logo_url || null,
-      spec,
-    });
+      graphiste = await tryGraphisteGptPoster({
+        postContent,
+        sector,
+        description,
+        companyName: profile?.company_name || "Entreprise",
+        primary,
+        secondary,
+        accent,
+        logoUrl: profile?.logo_url || null,
+        spec,
+      });
+    }
     if (graphiste.warning) console.warn("Graphiste GPT unavailable:", { warning: graphiste.warning, request_id: graphiste.request_id, job_id: graphiste.job_id, elapsed_ms: graphiste.elapsed_ms });
 
     if (!graphiste.imageUrl) {
+      // Slow Graphiste jobs are not failures. Return the job handle so the
+      // dashboard can poll this Edge Function again without starting another
+      // paid generation.
+      if (graphiste.processing && (graphiste.job_id || graphiste.status_url)) {
+        return new Response(
+          JSON.stringify({
+            processing: true,
+            code: "graphiste_processing",
+            message: "Affiche Graphiste GPT encore en génération.",
+            request_id: graphiste.request_id || undefined,
+            job_id: graphiste.job_id || undefined,
+            status_url: graphiste.status_url || undefined,
+            elapsed_ms: graphiste.elapsed_ms,
+            format,
+          }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
       // No real Graphiste GPT poster: do NOT save anything (no SVG, no
       // placeholder). Surface a clear, actionable error instead.
       console.warn("generate-image: no final Graphiste GPT image:", graphiste.warning);
@@ -565,6 +653,7 @@ serve(async (req) => {
           detail: graphiste.warning || undefined,
           request_id: graphiste.request_id || undefined,
           job_id: graphiste.job_id || undefined,
+          status_url: graphiste.status_url || undefined,
           elapsed_ms: graphiste.elapsed_ms,
           format,
         }),
@@ -642,7 +731,7 @@ serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({ imageUrl, provider: "graphiste-gpt", fallback: false, request_id: graphiste.request_id || undefined, job_id: graphiste.job_id || undefined, elapsed_ms: graphiste.elapsed_ms, format }),
+      JSON.stringify({ imageUrl, provider: "graphiste-gpt", fallback: false, request_id: graphiste.request_id || undefined, job_id: graphiste.job_id || undefined, status_url: graphiste.status_url || undefined, elapsed_ms: graphiste.elapsed_ms, format }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err) {

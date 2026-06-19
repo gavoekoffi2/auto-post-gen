@@ -34,3 +34,20 @@ test('E2E image script sends the real Supabase bearer token header', () => {
   assert.ok(script.includes('Authorization: Bearer ' + tokenExpansion), 'script must pass the access token to the Edge Function');
   assert.doesNotMatch(script, new RegExp('Authorization: Bearer ' + '\\*'.repeat(3)));
 });
+
+
+test('edge returns a processing state with job_id/status_url instead of losing a slow Graphiste job', () => {
+  assert.match(edge, /processing:\s*true/);
+  assert.match(edge, /code:\s*"graphiste_processing"/);
+  assert.match(edge, /status_url/);
+  assert.match(edge, /graphisteJobId/);
+  assert.match(edge, /graphisteStatusUrl/);
+});
+
+test('dashboard automatically polls an existing Graphiste job without starting a new paid generation', () => {
+  assert.match(dashboard, /pollGraphisteJobUntilReady/);
+  assert.match(dashboard, /MAX_GRAPHISTE_POLL_ATTEMPTS\s*=\s*8/);
+  assert.match(dashboard, /graphisteJobId:\s*current\.job_id/);
+  assert.match(dashboard, /graphisteStatusUrl:\s*current\.status_url/);
+  assert.match(dashboard, /current\?\.processing/);
+});

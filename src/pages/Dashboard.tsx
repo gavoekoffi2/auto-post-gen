@@ -44,6 +44,8 @@ type UserProfile = {
 // posts.publish_error. Turn it into a short, human-readable reason.
 
 const IMAGE_GENERATION_TIMEOUT_MS = 65000;
+const MAX_GRAPHISTE_POLL_ATTEMPTS = 8;
+const GRAPHISTE_POLL_INTERVAL_MS = 10000;
 
 type GenerateImageResult = {
   data?: {
@@ -51,6 +53,10 @@ type GenerateImageResult = {
     error?: string;
     detail?: string;
     code?: string;
+    processing?: boolean;
+    job_id?: string;
+    status_url?: string;
+    message?: string;
     format?: { label?: string; aspectRatio?: string };
   } | null;
   error?: unknown;
@@ -58,6 +64,10 @@ type GenerateImageResult = {
 
 function imageTimeoutError(): Error {
   return new Error("La génération d'affiche prend trop longtemps. Le post est sauvegardé : cliquez sur Régénérer l'affiche dans un instant.");
+}
+
+function waitForGraphistePoll(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function invokeGenerateImageWithTimeout(body: Record<string, unknown>): Promise<GenerateImageResult> {
@@ -115,6 +125,49 @@ export default function Dashboard() {
       next.delete(postId);
       return next;
     });
+  };
+
+  const applyGeneratedImage = (postId: string, imageUrl: string) => {
+    setPosts((prev) =>
+      prev.map((p) => (p.id === postId ? { ...p, image_url: imageUrl } : p)),
+    );
+    setEditingPost((current) =>
+      current?.id === postId ? { ...current, image_url: imageUrl } : current,
+    );
+  };
+
+  const pollGraphisteJobUntilReady = async (
+    postId: string,
+    platforms: string[],
+    result: NonNullable<GenerateImageResult["data"]>,
+    imageSpec: ReturnType<typeof getSocialImageSpec>,
+  ) => {
+    let current = result;
+    toast.info("Affiche Graphiste GPT encore en génération : je continue automatiquement...");
+    for (let attempt = 0; attempt < MAX_GRAPHISTE_POLL_ATTEMPTS; attempt++) {
+      if (!current?.processing || (!current.job_id && !current.status_url)) return false;
+      await waitForGraphistePoll(GRAPHISTE_POLL_INTERVAL_MS);
+      const { data, error } = await invokeGenerateImageWithTimeout({
+        postId,
+        platforms,
+        graphisteJobId: current.job_id,
+        graphisteStatusUrl: current.status_url,
+      });
+      if (error) throw error;
+      current = data || null;
+      if (current?.imageUrl) {
+        applyGeneratedImage(postId, current.imageUrl);
+        toast.success(`Affiche IA générée (${imageSpec.label}, ${imageSpec.aspectRatio})`);
+        return true;
+      }
+      if (current?.error && !current.processing) {
+        if (current.detail) console.warn("Image error detail:", current.detail);
+        toast.error(current.error);
+        return false;
+      }
+    }
+    toast.warning("L'affiche est encore en préparation. Cliquez sur Régénérer l’affiche dans quelques instants.");
+    return false;
   };
 
   useEffect(() => {
@@ -414,16 +467,14 @@ export default function Dashboard() {
             platforms: defaultPlatforms,
           });
           if (imgError) throw imgError;
-          if (imgData?.error) {
+          if (imgData?.imageUrl) {
+            applyGeneratedImage(savedPost.id, imgData.imageUrl);
+            toast.success(`Affiche IA ajoutée (${imageSpec.label}, ${imageSpec.aspectRatio})`);
+          } else if (imgData?.processing) {
+            await pollGraphisteJobUntilReady(savedPost.id, defaultPlatforms, imgData, imageSpec);
+          } else if (imgData?.error) {
             if (imgData.detail) console.warn("Image error detail:", imgData.detail);
             toast.error(imgData.error);
-          } else if (imgData?.imageUrl) {
-            setPosts((prev) =>
-              prev.map((p) =>
-                p.id === savedPost.id ? { ...p, image_url: imgData.imageUrl } : p,
-              ),
-            );
-            toast.success(`Affiche IA ajoutée (${imageSpec.label}, ${imageSpec.aspectRatio})`);
           } else {
             toast.error("Affiche non générée. Cliquez sur 'Régénérer l'affiche' pour réessayer.");
           }
@@ -461,17 +512,14 @@ export default function Dashboard() {
       });
       toast.dismiss(loadingToast);
       if (error) throw error;
-      if (data?.error) {
+      if (data?.imageUrl) {
+        applyGeneratedImage(post.id, data.imageUrl);
+        toast.success(`Affiche IA générée (${imageSpec.label}, ${imageSpec.aspectRatio})`);
+      } else if (data?.processing) {
+        await pollGraphisteJobUntilReady(post.id, regenPlatforms, data, imageSpec);
+      } else if (data?.error) {
         if (data.detail) console.warn("Image error detail:", data.detail);
         toast.error(data.error);
-      } else if (data?.imageUrl) {
-        setPosts((prev) =>
-          prev.map((p) => (p.id === post.id ? { ...p, image_url: data.imageUrl } : p)),
-        );
-        setEditingPost((current) =>
-          current?.id === post.id ? { ...current, image_url: data.imageUrl } : current,
-        );
-        toast.success(`Affiche IA générée (${imageSpec.label}, ${imageSpec.aspectRatio})`);
       } else {
         toast.error("Affiche non générée");
       }
