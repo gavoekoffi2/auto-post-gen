@@ -378,18 +378,18 @@ export default function Dashboard() {
             },
           );
           if (imgError) throw imgError;
-          if (imgData?.imageUrl) {
+          if (imgData?.error) {
+            if (imgData.detail) console.warn("Image error detail:", imgData.detail);
+            toast.error(imgData.error);
+          } else if (imgData?.imageUrl) {
             setPosts((prev) =>
               prev.map((p) =>
                 p.id === savedPost.id ? { ...p, image_url: imgData.imageUrl } : p,
               ),
             );
-            if (imgData.fallback) {
-              if (imgData.warning) console.warn("Image fallback reason:", imgData.warning);
-              toast.warning("Image IA indisponible — visuel de secours utilisé. Réessayez via 'Régénérer'.");
-            } else {
-              toast.success(`Image IA ajoutée (${imageSpec.label} ${imageSpec.width}×${imageSpec.height})`);
-            }
+            toast.success(`Affiche IA ajoutée (${imageSpec.label}, ${imageSpec.aspectRatio})`);
+          } else {
+            toast.error("Affiche non générée. Cliquez sur 'Régénérer l'affiche' pour réessayer.");
           }
         } catch (imgErr) {
           console.error('Image gen failed:', imgErr);
@@ -417,7 +417,7 @@ export default function Dashboard() {
   const handleRegenerateImage = async (post: Post) => {
     if (generatingImageIds.has(post.id)) return;
     setGeneratingImageIds((prev) => new Set(prev).add(post.id));
-    const loadingToast = toast.loading("Génération d'image...");
+    const loadingToast = toast.loading("Génération de l'affiche…");
     try {
       const regenPlatforms = post.platforms || (post.platform ? [post.platform] : []);
       const imageSpec = getSocialImageSpec(regenPlatforms);
@@ -431,21 +431,19 @@ export default function Dashboard() {
       });
       toast.dismiss(loadingToast);
       if (error) throw error;
-      if (data?.imageUrl) {
+      if (data?.error) {
+        if (data.detail) console.warn("Image error detail:", data.detail);
+        toast.error(data.error);
+      } else if (data?.imageUrl) {
         setPosts((prev) =>
           prev.map((p) => (p.id === post.id ? { ...p, image_url: data.imageUrl } : p)),
         );
         setEditingPost((current) =>
           current?.id === post.id ? { ...current, image_url: data.imageUrl } : current,
         );
-        if (data.fallback) {
-          if (data.warning) console.warn("Image fallback reason:", data.warning);
-          toast.warning("Graphiste GPT trop lent — affiche professionnelle de secours générée.");
-        } else {
-          toast.success(`Image IA générée (${imageSpec.label} ${imageSpec.width}×${imageSpec.height})`);
-        }
+        toast.success(`Affiche IA générée (${imageSpec.label}, ${imageSpec.aspectRatio})`);
       } else {
-        toast.error("Image non générée");
+        toast.error("Affiche non générée");
       }
     } catch (err) {
       toast.dismiss(loadingToast);

@@ -7,31 +7,82 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const source = readFileSync(join(__dirname, '..', 'supabase/functions/generate-image/index.ts'), 'utf8');
 
-test('generate-image uses Graphiste GPT posters, not generic OpenRouter/Gemini image fallback', () => {
-  assert.equal(source.includes('generateImageUrl('), false, 'must not call generic image generator');
-  assert.equal(source.includes('getOpenRouterKey'), false, 'must not require OpenRouter for image generation');
-  assert.equal(/Gemini|gemini|OPENROUTER/.test(source), false, 'must not reference Gemini/OpenRouter in poster function');
-  assert.match(source, /provider:\s*usedFallback \? "professional-poster-fallback" : "graphiste-gpt"/);
-  assert.match(source, /buildProfessionalPosterSvgDataUrl/);
-  assert.equal(source.includes('ALLOW_BRANDED_IMAGE_FALLBACK'), false, 'must not refuse generation behind a fallback flag');
+test('generate-image uses Graphiste GPT premium only — no generic/Gemini/OpenRouter providers', () => {
+  assert.equal(source.includes('generateImageUrl('), false, 'must not call a generic image generator');
+  assert.equal(source.includes('getOpenRouterKey'), false);
+  assert.equal(/Gemini|gemini|OPENROUTER/.test(source), false);
   assert.match(source, /quality:\s*"premium"/);
-  assert.equal(source.includes('mode: "fast"'), false, 'must not use fast mode because it routes to the quick model');
-  assert.equal(source.includes('quality: "fast"'), false, 'must not use fast quality because it routes to the quick model');
-  assert.equal(source.includes('mode: "quality"'), false, 'do not use the old unsupported mode field for premium generation');
-  assert.equal(source.includes('aspectRatio'), false, 'do not send unsupported aspectRatio to Graphiste API');
-  assert.equal(source.includes('resolution'), false, 'do not send unsupported resolution to Graphiste API');
-  assert.match(source, /prompt,\n\s*usageType: "social"/);
-  assert.match(source, /Ne pas générer une image vide/);
-  assert.match(source, /titre principal lisible/);
-  assert.match(source, /graphisteDomain\(params\.sector, params\.description, params\.postContent\)/);
+  assert.equal(source.includes('mode: "fast"'), false);
+  assert.equal(source.includes('quality: "fast"'), false);
+});
+
+test('generate-image sends the documented Graphiste GPT v1.1 contract fields', () => {
+  // Fields per https://graphistegpt.pro/docs/api — the API reads `subject`
+  // (not a free-form prompt), aspect_ratio/resolution control the format,
+  // mode "async" is the recommended Supabase flow, and Idempotency-Key avoids
+  // double-charging on retries.
+  assert.match(source, /subject:\s*buildGraphisteSubject\(params\)/);
+  assert.match(source, /title:\s*titleFromPost\(/);
+  assert.match(source, /aspect_ratio:\s*graphisteAspectRatio\(params\.spec\)/);
+  assert.match(source, /resolution:\s*"2K"/);
+  assert.match(source, /mode:\s*"async"/);
+  assert.match(source, /"Idempotency-Key":\s*crypto\.randomUUID\(\)/);
+  assert.match(source, /domain:\s*graphisteDomain\(params\.sector, params\.description, params\.postContent\)/);
+  assert.match(source, /requestBody\.colors = colors/);
+  assert.match(source, /requestBody\.logo_urls = \[params\.logoUrl\]/);
+});
+
+test('aspect_ratio sends the exact supported network ratio (e.g. 1.91:1), never the 9:16 default', () => {
+  // v1.1 supports 1.91:1 etc., so we send the spec ratio when supported.
+  assert.match(source, /GRAPHISTE_RATIOS\.has\(spec\.aspectRatio\)\s*\)\s*return spec\.aspectRatio/);
+  assert.match(source, /"1\.91:1"/);
+  // and a safe orientation fallback remains for any unsupported ratio.
+  assert.match(source, /case "landscape": return "16:9"/);
+  assert.match(source, /default: return "1:1"/);
+});
+
+test('generate-image no longer sends the undocumented fields the API ignores', () => {
+  assert.equal(source.includes('usageType'), false);
+  assert.equal(source.includes('waitForCompletion'), false);
+  assert.equal(source.includes('returnImage'), false);
+  assert.equal(source.includes('returnUrl'), false);
+  assert.equal(source.includes('buildGraphistePosterPrompt'), false, 'no free-form prompt builder');
+  assert.equal(source.includes('prompt,'), false, 'no prompt field in the request body');
+});
+
+test('generate-image parses the v1.1 structured error envelope', () => {
+  // { success:false, error:{ code, message, request_id } }
+  assert.match(source, /graphisteErrorMessage\(resp\.status, data, text\)/);
+  assert.match(source, /const apiError = \(body as/);
+  assert.match(source, /apiError\.code/);
+  assert.match(source, /apiError\.message/);
+});
+
+test('generate-image never builds or saves a local SVG poster as a success', () => {
+  assert.equal(source.includes('buildProfessionalPosterSvgDataUrl'), false);
+  assert.equal(source.includes('professional-poster-fallback'), false);
+  assert.equal(source.includes('data:image/svg+xml'), false, 'never emits an SVG data URL');
+  assert.match(source, /provider:\s*"graphiste-gpt"/);
+  // SVGs/placeholders are actively rejected when extracting/verifying images.
+  assert.match(source, /contentType\.includes\("svg"\)/);
+  assert.match(source, /reference-templates/);
+});
+
+test('generate-image fails with a clear, actionable error instead of saving junk', () => {
+  assert.match(source, /code:\s*"missing_api_key"/);
+  assert.match(source, /code:\s*"no_final_image"/);
+  assert.match(source, /GRAPHISTE_GPT_API_KEY/);
+});
+
+test('generate-image uses the documented business default and async polling', () => {
   assert.match(source, /postContent = ""/);
-  assert.equal(source.includes('return "service";'), false, 'broken Graphiste service references must not be the default');
-  assert.match(source, /return "formation";/);
-  assert.match(source, /pas comme contrainte stricte/);
-  assert.match(source, /créer librement une affiche adaptée au message/);
+  assert.equal(source.includes('return "service";'), false);
+  assert.match(source, /return "business";/, 'documented generic default domain');
   assert.match(source, /pollGraphisteGptJob/);
   assert.match(source, /extractGraphisteJobId/);
   assert.match(source, /statusUrl/);
+  // stops early when the polled job reports a terminal failure.
+  assert.match(source, /graphisteJobFailed/);
 });
 
 test('Graphiste GPT response extractor accepts common final poster URL shapes', () => {
@@ -39,15 +90,12 @@ test('Graphiste GPT response extractor accepts common final poster URL shapes', 
     'poster_url',
     'posterUrl',
     'final_image_url',
-    'finalImageUrl',
     'generated_image_url',
-    'generatedImageUrl',
     'asset_url',
-    'assetUrl',
     'public_url',
     'downloadUrl',
     'secure_url',
-    'poster',
+    'image_url',
     'image',
     'data',
     'outputs',

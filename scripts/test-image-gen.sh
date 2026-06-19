@@ -45,26 +45,30 @@ echo "✓ Authentifié."
 echo "→ Appel de generate-image (peut prendre 10-40s) ..."
 RESP=$(curl -sS "$SUPA_URL/functions/v1/generate-image" \
   -H "Authorization: Bearer $TOKEN" -H "apikey: $ANON" -H "Content-Type: application/json" \
-  -d '{"postContent":"Visuel professionnel et moderne pour une entreprise, ambiance premium.","peopleType":"african"}')
+  -d '{"postContent":"Titre: Offre premium de rentrée. Boostez votre visibilité avec notre accompagnement marketing digital. Réservez votre audit gratuit dès aujourd hui.","platforms":["LinkedIn"],"peopleType":"african"}')
 
 printf '%s' "$RESP" | python3 -c '
 import sys, json
+raw = sys.stdin.read()
 try:
-    r = json.load(sys.stdin)
+    r = json.loads(raw)
 except Exception:
-    print("❌ Réponse non-JSON :"); print(sys.stdin.read()[:300]); sys.exit(1)
+    print("❌ Réponse non-JSON :"); print(raw[:300]); sys.exit(1)
 if r.get("error"):
-    print("❌ Erreur fonction:", r["error"]); sys.exit(1)
-url = r.get("imageUrl") or ""
-kind = "data-URL inline" if url.startswith("data:") else "URL hébergée (storage)"
-print("imageUrl présent :", bool(url), "—", kind)
-print("aperçu           :", (url[:90] + "…") if url else "(vide)")
-if r.get("fallback"):
-    print()
-    print("⚠️  FALLBACK utilisé : l’image IA a échoué, visuel de secours renvoyé.")
-    print("    raison :", r.get("warning"))
-    print("    → Vérifie: fonctions redéployées ? crédit OpenRouter ? OPENROUTER_IMAGE_MODEL ?")
+    print("❌ Erreur Graphiste GPT :", r["error"])
+    if r.get("code"):   print("   code   :", r["code"])
+    if r.get("detail"): print("   détail :", str(r["detail"])[:300])
+    print("   → Vérifie: GRAPHISTE_GPT_API_KEY dans Supabase Secrets ? crédits Graphiste GPT ? service en ligne ?")
     sys.exit(2)
+url = r.get("imageUrl") or ""
+fmt = r.get("format") or {}
+if not url:
+    print("❌ Aucune image retournée."); sys.exit(2)
+if url.startswith("data:image/svg") or url.lower().split("?")[0].endswith(".svg"):
+    print("❌ SVG retourné — ce n est PAS une vraie affiche Graphiste GPT :", url[:90]); sys.exit(3)
+print("provider :", r.get("provider"))
+print("format   :", fmt.get("label"), fmt.get("aspectRatio"), fmt.get("resolution"))
+print("imageUrl :", url[:100] + ("…" if len(url) > 100 else ""))
 print()
-print("✅ SUCCÈS : vraie image IA générée (pas de fallback). Le correctif fonctionne.")
+print("✅ SUCCÈS : vraie affiche Graphiste GPT premium (image réelle, pas de SVG).")
 '

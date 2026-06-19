@@ -37,44 +37,19 @@ const MAX_PAYLOAD_BYTES = 64 * 1024;
 const GRAPHISTE_GPT_DEFAULT_URL =
   "https://bbfzfgcdioewzbmlgaqy.supabase.co/functions/v1/api-v1/v1/posters/generate";
 
-function safeColor(value: string, fallback: string): string {
-  return /^#[0-9a-f]{6}$/i.test(value) ? value : fallback;
-}
-
-function escapeSvgText(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function splitWords(value: string, maxWords: number): string[] {
-  return value
-    .replace(/https?:\/\/\S+/g, "")
-    .replace(/[\n\r]+/g, " ")
-    .split(/\s+/)
-    .map((w) => w.trim())
-    .filter(Boolean)
-    .slice(0, maxWords);
-}
-
-function wrapSvgLine(words: string[], maxChars: number, maxLines: number): string[] {
-  const lines: string[] = [];
-  let current = "";
-  for (const word of words) {
-    const next = current ? `${current} ${word}` : word;
-    if (next.length > maxChars && current) {
-      lines.push(current);
-      current = word;
-    } else {
-      current = next;
-    }
-    if (lines.length === maxLines) break;
+// Aspect ratios supported by the Graphiste GPT API (v1.1). We send the post's
+// exact network ratio when supported (e.g. 1.91:1 for LinkedIn / Facebook) so
+// the API never falls back to its 9:16 default; otherwise we map orientation to
+// the closest standard ratio.
+const GRAPHISTE_RATIOS = new Set(["9:16", "16:9", "1:1", "4:5", "1.91:1", "4:3", "3:4", "2:3", "3:2"]);
+function graphisteAspectRatio(spec: SocialImageSpec): string {
+  if (GRAPHISTE_RATIOS.has(spec.aspectRatio)) return spec.aspectRatio;
+  switch (spec.orientation) {
+    case "story": return "9:16";
+    case "portrait": return "4:5";
+    case "landscape": return "16:9";
+    default: return "1:1";
   }
-  if (current && lines.length < maxLines) lines.push(current);
-  return lines;
 }
 
 function titleFromPost(postContent: string, companyName: string): string {
@@ -93,47 +68,6 @@ function ctaFromPost(postContent: string): string {
   return "Passez à l’action";
 }
 
-// The sub-message under the headline: the post text with any "Titre:" label and
-// the headline itself removed, so the poster never prints the title twice.
-function bodyFromPost(postContent: string, title: string): string {
-  let text = postContent.replace(/(?:titre|title)\s*[:：-]\s*/i, " ");
-  if (title) text = text.split(title).join(" ");
-  return text.replace(/\s+/g, " ").replace(/^[\s.,;:!?–-]+/, "").trim();
-}
-
-interface PosterLayout {
-  pad: number;
-  eyebrow: number;
-  title: number;
-  titleLines: number;
-  body: number;
-  bodyLines: number;
-  bodyWords: number;
-  cta: number;
-  badge: number;
-  footer: number;
-}
-
-// Every font size is clamped to a readable minimum (>= 20px on the output
-// canvas) so the fallback poster never degrades into the tiny, illegible text
-// that AI image models tend to produce. Sizes scale with the canvas width and
-// adapt per orientation so the same renderer fills a 1200x627 LinkedIn banner
-// and a 1080x1920 TikTok story without overflowing.
-function posterLayout(spec: SocialImageSpec): PosterLayout {
-  const w = spec.width;
-  const px = (factor: number, min: number) => Math.max(Math.round(w * factor), min);
-  switch (spec.orientation) {
-    case "story":
-      return { pad: px(0.075, 60), eyebrow: px(0.030, 26), title: px(0.094, 60), titleLines: 4, body: px(0.036, 26), bodyLines: 3, bodyWords: 26, cta: px(0.042, 32), badge: px(0.027, 22), footer: px(0.022, 20) };
-    case "portrait":
-      return { pad: px(0.072, 56), eyebrow: px(0.028, 26), title: px(0.086, 56), titleLines: 4, body: px(0.034, 24), bodyLines: 3, bodyWords: 24, cta: px(0.040, 30), badge: px(0.026, 22), footer: px(0.021, 20) };
-    case "landscape":
-      return { pad: px(0.050, 40), eyebrow: px(0.023, 22), title: px(0.052, 44), titleLines: 2, body: px(0.024, 20), bodyLines: 1, bodyWords: 14, cta: px(0.030, 28), badge: px(0.022, 22), footer: px(0.019, 20) };
-    default: // square
-      return { pad: px(0.070, 56), eyebrow: px(0.028, 26), title: px(0.080, 54), titleLines: 3, body: px(0.032, 24), bodyLines: 3, bodyWords: 22, cta: px(0.038, 30), badge: px(0.026, 22), footer: px(0.021, 20) };
-  }
-}
-
 function orientationLabel(orientation: string): string {
   switch (orientation) {
     case "story": return "vertical plein écran 9:16";
@@ -143,135 +77,16 @@ function orientationLabel(orientation: string): string {
   }
 }
 
-// Premium, dimension-aware poster used both as the robust fallback when the AI
-// poster service is unavailable and as a guaranteed correctly-sized output. It
-// renders a real marketing composition: brand gradient, depth lighting, a
-// company badge, a platform/format badge, an eyebrow, a large readable
-// headline, an accent rule, a short readable sub-message and a CTA pill. Text
-// is drawn by us (never by an image model) so it stays sharp and legible.
-function buildProfessionalPosterSvgDataUrl(params: {
-  postContent: string;
-  companyName: string;
-  sector: string;
-  primary: string;
-  secondary: string;
-  accent: string;
-  spec: SocialImageSpec;
-}): string {
-  const p = safeColor(params.primary, "#111827");
-  const s = safeColor(params.secondary, "#2563EB");
-  const a = safeColor(params.accent, "#F59E0B");
-  const { spec } = params;
-  const W = spec.width;
-  const H = spec.height;
-  const L = posterLayout(spec);
-  const tall = spec.orientation === "story" || spec.orientation === "portrait";
-
-  const contentW = W - L.pad * 2;
-  const charsPerLine = (fontSize: number) =>
-    Math.max(8, Math.floor(contentW / (fontSize * 0.56)));
-
-  const titleText = titleFromPost(params.postContent, params.companyName);
-  const title = wrapSvgLine(splitWords(titleText, 14), charsPerLine(L.title), L.titleLines);
-  const body = wrapSvgLine(
-    splitWords(bodyFromPost(params.postContent, titleText), L.bodyWords),
-    charsPerLine(L.body),
-    L.bodyLines,
-  );
-  const cta = escapeSvgText(ctaFromPost(params.postContent));
-  const company = escapeSvgText((params.companyName || "Votre entreprise").slice(0, 38).toUpperCase());
-  const sector = escapeSvgText((params.sector || "Service professionnel").slice(0, 34));
-  const formatBadge = escapeSvgText(`${spec.label} · ${W}×${H}`);
-
-  // Collision-free top-down flow: each block sits below the previous one, then
-  // the CTA + footer are pinned near the bottom without ever overlapping the
-  // body. Works for a short 1200x627 banner and a tall 1080x1920 story alike.
-  const badgeH = Math.round(L.badge * 2.0);
-  const eyebrowY = L.pad + badgeH + Math.round(H * 0.045) + L.eyebrow;
-  const titleLineH = Math.round(L.title * 1.08);
-  const titleTop = eyebrowY + Math.round(L.eyebrow * 0.8) + L.title;
-  const titleNodes = title
-    .map((line, i) => `<text x="${L.pad}" y="${titleTop + i * titleLineH}" font-size="${L.title}" font-weight="900" fill="#ffffff" letter-spacing="-1.5">${escapeSvgText(line)}</text>`)
-    .join("\n  ");
-  const titleBottom = titleTop + (title.length - 1) * titleLineH;
-  const ruleY = titleBottom + Math.round(L.title * 0.42);
-  const ruleH = Math.max(8, Math.round(L.title * 0.13));
-  const bodyLineH = Math.round(L.body * 1.34);
-  const bodyTop = ruleY + ruleH + Math.round(L.body * 1.3) + L.body;
-  const bodyNodes = body
-    .map((line, i) => `<text x="${L.pad}" y="${bodyTop + i * bodyLineH}" font-size="${L.body}" font-weight="600" fill="#F1F5F9" opacity="0.94">${escapeSvgText(line)}</text>`)
-    .join("\n  ");
-  const bodyBottom = bodyTop + Math.max(0, body.length - 1) * bodyLineH;
-
-  const footerBaseline = H - Math.round(L.pad * 0.8);
-  const ctaH = Math.round(L.cta * 2.0);
-  const ctaW = Math.min(contentW, Math.round(cta.length * L.cta * 0.66) + L.cta * 2.6);
-  // Keep the CTA below the body, drop it toward the lower third on tall canvases,
-  // and never let it run into the footer line.
-  const maxCtaTop = footerBaseline - L.footer - Math.round(L.footer) - ctaH;
-  const ctaTop = Math.min(
-    maxCtaTop,
-    Math.max(bodyBottom + Math.round(L.cta), tall ? Math.round(H * 0.76) : 0),
-  );
-  const ctaTextY = ctaTop + Math.round(ctaH * 0.64);
-
-  // Decorative geometry scaled to the canvas.
-  const spotR = Math.round(Math.max(W, H) * 0.42);
-  const orbR = Math.round(W * 0.36);
-  const ringR = Math.round(W * 0.13);
-  const ringCx = W - L.pad - ringR;
-  const ringCy = Math.round(H * 0.5);
-
-  const svg = `
-<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="${p}"/>
-      <stop offset="52%" stop-color="${s}"/>
-      <stop offset="100%" stop-color="#020617"/>
-    </linearGradient>
-    <radialGradient id="spot" cx="78%" cy="22%" r="60%">
-      <stop offset="0%" stop-color="${a}" stop-opacity="0.95"/>
-      <stop offset="100%" stop-color="${a}" stop-opacity="0"/>
-    </radialGradient>
-    <linearGradient id="scrim" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#020617" stop-opacity="0"/>
-      <stop offset="58%" stop-color="#020617" stop-opacity="0.10"/>
-      <stop offset="100%" stop-color="#020617" stop-opacity="0.66"/>
-    </linearGradient>
-    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="${Math.round(L.cta * 0.4)}" stdDeviation="${Math.round(L.cta * 0.5)}" flood-color="#000000" flood-opacity="0.30"/></filter>
-  </defs>
-  <rect width="${W}" height="${H}" fill="url(#bg)"/>
-  <circle cx="${W - Math.round(W * 0.1)}" cy="${Math.round(H * 0.16)}" r="${spotR}" fill="url(#spot)"/>
-  <circle cx="${Math.round(W * 0.92)}" cy="${Math.round(H * 0.9)}" r="${orbR}" fill="#ffffff" opacity="0.07"/>
-  <circle cx="${ringCx}" cy="${ringCy}" r="${ringR}" fill="none" stroke="#ffffff" stroke-width="${Math.round(L.badge * 0.5)}" opacity="0.16"/>
-  <rect width="${W}" height="${H}" fill="url(#scrim)"/>
-  <rect x="${Math.round(L.pad * 0.55)}" y="${Math.round(L.pad * 0.55)}" width="${W - Math.round(L.pad * 1.1)}" height="${H - Math.round(L.pad * 1.1)}" rx="${Math.round(L.pad * 0.7)}" fill="none" stroke="#ffffff" stroke-width="3" opacity="0.22"/>
-  <g filter="url(#shadow)">
-    <rect x="${L.pad}" y="${L.pad}" width="${Math.min(contentW, Math.round(company.length * L.badge * 0.62) + L.badge * 2)}" height="${badgeH}" rx="${Math.round(badgeH / 2)}" fill="#ffffff" opacity="0.97"/>
-    <text x="${L.pad + Math.round(L.badge * 0.9)}" y="${L.pad + Math.round(badgeH * 0.64)}" font-size="${L.badge}" font-weight="900" fill="${p}" letter-spacing="0.5">${company}</text>
-  </g>
-  <rect x="${W - L.pad - (Math.round(formatBadge.length * L.badge * 0.56) + L.badge * 1.6)}" y="${L.pad}" width="${Math.round(formatBadge.length * L.badge * 0.56) + L.badge * 1.6}" height="${badgeH}" rx="${Math.round(badgeH / 2)}" fill="${a}" opacity="0.95"/>
-  <text x="${W - L.pad - Math.round(L.badge * 0.8)}" y="${L.pad + Math.round(badgeH * 0.64)}" font-size="${Math.round(L.badge * 0.82)}" font-weight="800" fill="#111827" text-anchor="end">${formatBadge}</text>
-  <text x="${L.pad}" y="${eyebrowY}" font-size="${L.eyebrow}" font-weight="800" fill="${a}" letter-spacing="${Math.round(L.eyebrow * 0.18)}">${sector.toUpperCase()}</text>
-  ${titleNodes}
-  <rect x="${L.pad}" y="${ruleY}" width="${Math.round(W * 0.12)}" height="${ruleH}" rx="${Math.max(4, Math.round(L.title * 0.065))}" fill="${a}"/>
-  ${bodyNodes}
-  <g filter="url(#shadow)">
-    <rect x="${L.pad}" y="${ctaTop}" width="${ctaW}" height="${ctaH}" rx="${Math.round(ctaH / 2)}" fill="${a}"/>
-    <text x="${L.pad + Math.round(ctaW / 2)}" y="${ctaTextY}" font-size="${L.cta}" font-weight="900" fill="#111827" text-anchor="middle">${cta}</text>
-  </g>
-  <text x="${L.pad}" y="${footerBaseline}" font-size="${L.footer}" font-weight="700" fill="#CBD5E1" opacity="0.85">${orientationLabel(spec.orientation)} · ${escapeSvgText((params.companyName || "Pro Social AI").slice(0, 30))}</text>
-</svg>`.trim();
-  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-}
-
 function isImageUrl(value: unknown): value is string {
-  return typeof value === "string" && (
-    value.startsWith("data:image/") ||
-    /^https?:\/\/\S+/i.test(value) ||
-    value.startsWith("/reference-templates/")
-  );
+  if (typeof value !== "string") return false;
+  const v = value.trim();
+  // Only a real raster poster counts: reject template placeholders and SVGs.
+  if (v.includes("/reference-templates/")) return false;
+  if (/^data:image\/svg/i.test(v)) return false;
+  if (v.startsWith("data:image/")) return true;
+  if (/^https?:\/\//i.test(v)) return !/\.svg(\?|#|$)/i.test(v);
+  if (v.startsWith("/")) return !/\.svg(\?|#|$)/i.test(v);
+  return false;
 }
 
 function absoluteGraphisteUrl(value: string): string {
@@ -321,6 +136,19 @@ function graphisteStatusCandidates(endpoint: string, statusUrl: string | null, j
   return [...new Set(out)];
 }
 
+// Detect a terminal "failed" job so polling can stop early instead of waiting
+// out the whole budget.
+function graphisteJobFailed(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const obj = value as Record<string, unknown>;
+  const status = typeof obj.status === "string" ? obj.status.toLowerCase() : "";
+  if (status === "failed" || status === "error" || status === "canceled" || status === "cancelled") return true;
+  for (const key of ["data", "result", "job"]) {
+    if (graphisteJobFailed(obj[key])) return true;
+  }
+  return false;
+}
+
 async function pollGraphisteGptJob(endpoint: string, key: string, firstData: unknown, signal: AbortSignal): Promise<string | null> {
   const jobId = extractGraphisteJobId(firstData);
   const statusUrl = extractGraphisteStatusUrl(firstData);
@@ -328,8 +156,8 @@ async function pollGraphisteGptJob(endpoint: string, key: string, firstData: unk
   if (candidates.length === 0) return null;
 
   const started = Date.now();
-  let delay = 4000;
-  while (Date.now() - started < 90_000) {
+  let delay = 3000;
+  while (Date.now() - started < 110_000) {
     await sleep(delay);
     for (const url of candidates) {
       try {
@@ -344,11 +172,12 @@ async function pollGraphisteGptJob(endpoint: string, key: string, firstData: unk
         try { data = JSON.parse(text); } catch { data = text; }
         const imageUrl = extractGraphisteImageUrl(data, false);
         if (imageUrl) return imageUrl;
+        if (graphisteJobFailed(data)) return null;
       } catch (_err) {
         // Try next candidate / next poll tick.
       }
     }
-    delay = Math.min(delay + 3000, 12000);
+    delay = Math.min(delay + 2000, 10000);
   }
   return null;
 }
@@ -358,9 +187,11 @@ function extractGraphisteImageUrl(value: unknown, allowTemplateImage = false): s
   if (isImageUrl(value)) return absoluteGraphisteUrl(value);
   if (typeof value === "string") {
     const dataMatch = value.match(/data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/);
-    if (dataMatch?.[0]) return dataMatch[0];
+    if (dataMatch?.[0] && !/^data:image\/svg/i.test(dataMatch[0])) return dataMatch[0];
     const urlMatch = value.match(/https?:\/\/[^\s)"']+/);
-    if (urlMatch?.[0]) return absoluteGraphisteUrl(urlMatch[0]);
+    if (urlMatch?.[0] && !/\.svg(\?|#|$)/i.test(urlMatch[0]) && !urlMatch[0].includes("/reference-templates/")) {
+      return absoluteGraphisteUrl(urlMatch[0]);
+    }
     return null;
   }
   if (Array.isArray(value)) {
@@ -419,63 +250,62 @@ function graphisteDomain(sector: string, description: string, postContent = ""):
   if (/restaurant|food|cuisine|bar|burger|pizza|menu|boisson|plat|midi|réservez|reservez/.test(haystack)) return "restaurant";
   if (/église|eglise|church|pasteur|minist/.test(haystack)) return "church";
   if (/formation|cours|école|ecole|academy|coaching|webinar|atelier|apprendre/.test(haystack)) return "formation";
-  if (/event|événement|evenement|concert|conférence|conference|festival/.test(haystack)) return "event";
+  if (/event|événement|evenement|concert|conférence|conference|festival/.test(haystack)) return "evenement";
   if (/ecommerce|commerce|boutique|produit|shop|vente|promo|promotion|offre/.test(haystack)) return "ecommerce";
   if (/mode|fashion|vêtement|vetement|beauté|beaute/.test(haystack)) return "fashion";
   if (/immobilier|real.?estate|maison|terrain|appartement/.test(haystack)) return "realestate";
   if (/santé|sante|health|clinique|médical|medical|pharma/.test(haystack)) return "health";
-  // Avoid Graphiste GPT's broken "service" references; formation has reliable templates and still works for generic business posts.
-  return "formation";
+  // "business" is the documented generic default (GET /v1/domains) — always reliable.
+  return "business";
 }
 
-function buildGraphistePosterPrompt(params: {
+// The Graphiste GPT API has no free-form `prompt` field — it reads `subject`
+// (a detailed description) plus the structured fields. So all of our creative
+// direction lives here, in `subject`.
+function buildGraphisteSubject(params: {
   postContent: string;
   sector: string;
   description: string;
   companyName: string;
-  primary: string;
-  secondary: string;
-  accent: string;
   spec: SocialImageSpec;
 }): string {
-  const businessContext = [
+  const ctx = [
     `Entreprise: ${params.companyName || "Entreprise"}`,
     params.sector ? `Secteur: ${params.sector}` : null,
-    params.description ? `Activité: ${params.description.slice(0, 260)}` : null,
-  ].filter(Boolean).join("\n");
+    params.description ? `Activité: ${params.description.slice(0, 220)}` : null,
+  ].filter(Boolean).join(". ");
+  const cta = ctaFromPost(params.postContent);
+  return [
+    `Affiche publicitaire professionnelle premium pour les réseaux sociaux (${params.spec.label}, ${orientationLabel(params.spec.orientation)}).`,
+    `${ctx}.`,
+    `Message à mettre en valeur: ${params.postContent.slice(0, 700)}`,
+    `Composition: vraie affiche marketing complète (pas une simple image décorative ni un fond vide), titre principal très lisible, hiérarchie visuelle forte, éclairage cinématographique, mise en page moderne remplie de bord à bord, contraste premium.`,
+    `Appel à l'action clair et visible: ${cta}.`,
+    `Interdictions: pas de petit texte illisible, pas de fausses lettres, pas de watermark, pas d'élément d'interface, pas d'image vide ni de template vide.`,
+    `Si des personnes sont représentées, privilégier des personnes africaines/noires professionnelles et crédibles.`,
+    `Direction (EN): premium social media poster, high-end marketing campaign, cinematic lighting, strong visual hierarchy, modern clean layout, large readable headline, clear CTA, no tiny unreadable text, no random letters, no watermark, no UI.`,
+  ].join("\n").slice(0, 1800);
+}
 
-  const { spec } = params;
-  const formatLine = `FORMAT CIBLE (obligatoire): ${spec.label} — ${spec.width}×${spec.height} px, orientation ${orientationLabel(spec.orientation)}. Composer toute l'affiche exactement dans ce cadrage, sans bandes vides ni recadrage.`;
-
-  return `Créer une AFFICHE PUBLICITAIRE PROFESSIONNELLE complète en français pour les réseaux sociaux.
-
-${businessContext}
-
-${formatLine}
-
-MESSAGE À TRANSFORMER EN AFFICHE:
-${params.postContent.slice(0, 900)}
-
-EXIGENCE PRINCIPALE:
-- Ne pas générer une image vide, un simple fond, ou une affiche sans contenu.
-- L'affiche doit contenir une vraie composition complète: titre principal lisible, visuel fort, blocs graphiques, hiérarchie claire, contraste premium.
-- Qualité affiche de campagne premium: éclairage cinématographique, profondeur, hiérarchie visuelle forte, mise en page moderne et épurée.
-- Le titre et le CTA doivent être GRANDS et parfaitement lisibles. Aucun petit texte illisible, aucune lettre aléatoire, aucun faux texte, aucun watermark, aucun élément d'interface.
-- Ajouter 2 à 5 mots-clés courts issus du message, mais éviter les longs paragraphes.
-- Prévoir un espace CTA visuel du type "Contactez-nous", "Réservez", "Découvrez", ou équivalent selon le message.
-- Utiliser les affiches/templates internes Graphiste GPT comme inspiration professionnelle de structure, pas comme contrainte stricte.
-- Si le message ne correspond pas parfaitement au domaine fourni, créer librement une affiche adaptée au message en appliquant les bonnes pratiques Graphiste GPT: hiérarchie forte, mise en page remplie, contraste, CTA, visuel central, équilibre typographique.
-
-STYLE:
-- Qualité premium, rendu publicitaire professionnel, moderne, non vide.
-- Respecter strictement le format cible ci-dessus (${spec.width}×${spec.height} px) avec une composition remplie de bord à bord.
-- Couleurs de marque à intégrer visiblement: primaire ${params.primary}, secondaire ${params.secondary}, accent ${params.accent}.
-- Si des personnes sont représentées, privilégier des personnes africaines/noires professionnelles et crédibles.
-
-DIRECTION (EN): Premium social media poster, high-end marketing campaign style, cinematic lighting, professional composition, strong visual hierarchy, modern clean layout, brand-consistent colors, large readable headline, clear CTA, no tiny unreadable text, no random letters, no watermark, no UI elements.
-
-SORTIE ATTENDUE:
-Une affiche finale complète, prête à publier, au format ${spec.width}×${spec.height} px, pas une image standard et pas un template vide.`;
+// Turn a Graphiste GPT HTTP error into a clear, actionable message. Parses the
+// v1.1 error envelope { success:false, error:{ code, message, request_id } }.
+// Never includes the API key (only the status code and the API's own message).
+function graphisteErrorMessage(status: number, body: unknown, text: string): string {
+  let detail = text.slice(0, 160);
+  if (body && typeof body === "object") {
+    const apiError = (body as { error?: { code?: unknown; message?: unknown } }).error;
+    if (apiError && typeof apiError === "object") {
+      const code = typeof apiError.code === "string" ? apiError.code : "";
+      const message = typeof apiError.message === "string" ? apiError.message : "";
+      detail = [code, message].filter(Boolean).join(": ") || detail;
+    }
+  }
+  if (status === 401) return `Clé Graphiste GPT invalide ou manquante (401). Vérifiez le secret GRAPHISTE_GPT_API_KEY dans Supabase. ${detail}`;
+  if (status === 402) return `Crédits Graphiste GPT insuffisants (402). Rechargez le compte Graphiste GPT puis réessayez. ${detail}`;
+  if (status === 403) return `Accès Graphiste GPT refusé (403). Vérifiez les droits/scope de la clé API. ${detail}`;
+  if (status === 429) return `Trop de requêtes vers Graphiste GPT (429). Réessayez dans une minute. ${detail}`;
+  if (status === 400) return `Requête refusée par Graphiste GPT (400): ${detail}`;
+  return `Graphiste GPT a échoué (${status}). Réessayez dans un instant. ${detail}`;
 }
 
 async function tryGraphisteGptPoster(params: {
@@ -486,53 +316,71 @@ async function tryGraphisteGptPoster(params: {
   primary: string;
   secondary: string;
   accent: string;
+  logoUrl: string | null;
   spec: SocialImageSpec;
 }): Promise<{ imageUrl: string | null; warning: string | null }> {
   const key = Deno.env.get("GRAPHISTE_GPT_API_KEY");
   if (!key) return { imageUrl: null, warning: "GRAPHISTE_GPT_API_KEY not configured" };
 
   const endpoint = Deno.env.get("GRAPHISTE_GPT_API_URL") || GRAPHISTE_GPT_DEFAULT_URL;
-  const subject = `${params.companyName} — ${params.postContent} [Format ${params.spec.label} ${params.spec.width}x${params.spec.height}]`.slice(0, 600);
-  const prompt = buildGraphistePosterPrompt(params);
+  const colors = [params.primary, params.secondary, params.accent]
+    .map((c) => (c || "").trim())
+    .filter((c) => /^#[0-9a-f]{6}$/i.test(c));
+
+  // Per the documented contract (v1.1): domain + subject are required; quality is
+  // forced to premium server-side; aspect_ratio + resolution control the output
+  // format (without them the API silently defaults every poster to 9:16). We use
+  // mode "async" — recommended for Supabase — so the API returns a job to poll
+  // instead of holding a long synchronous connection.
+  const requestBody: Record<string, unknown> = {
+    domain: graphisteDomain(params.sector, params.description, params.postContent),
+    subject: buildGraphisteSubject(params),
+    title: titleFromPost(params.postContent, params.companyName),
+    quality: "premium",
+    aspect_ratio: graphisteAspectRatio(params.spec),
+    resolution: "2K",
+    mode: "async",
+  };
+  if (colors.length) requestBody.colors = colors;
+  if (params.logoUrl && /^https?:\/\//i.test(params.logoUrl)) {
+    requestBody.logo_urls = [params.logoUrl];
+  }
+
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 35_000);
+  const timer = setTimeout(() => controller.abort(), 125_000);
   try {
     const resp = await fetch(endpoint, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${key}`,
         "Content-Type": "application/json",
+        // Lets the API safely retry a failed generation without double-charging.
+        "Idempotency-Key": crypto.randomUUID(),
       },
-      body: JSON.stringify({
-        domain: graphisteDomain(params.sector, params.description, params.postContent),
-        subject,
-        prompt,
-        usageType: "social",
-        // Graphiste GPT quality modes: "fast" uses the quick model; "premium" uses OpenAI GPT Image 2.
-        // Pro Social AI runs generation asynchronously, so prefer poster quality over speed.
-        quality: "premium",
-        waitForCompletion: false,
-        async: true,
-        returnImage: true,
-        returnUrl: true,
-      }),
+      body: JSON.stringify(requestBody),
       signal: controller.signal,
     });
     const text = await resp.text();
-    if (!resp.ok) return { imageUrl: null, warning: `Graphiste GPT ${resp.status}: ${text.slice(0, 300)}` };
-    let data: unknown;
-    try {
-      data = JSON.parse(text);
-    } catch {
+    let data: unknown = null;
+    try { data = JSON.parse(text); } catch { data = null; }
+    if (!resp.ok) return { imageUrl: null, warning: graphisteErrorMessage(resp.status, data, text) };
+    if (data === null) {
       return { imageUrl: null, warning: `Graphiste GPT returned non-JSON: ${text.slice(0, 120)}` };
     }
+    // Surface any fields the API ignored (e.g. an accidental unknown field).
+    if (typeof data === "object") {
+      const w = (data as { warnings?: unknown }).warnings;
+      if (Array.isArray(w) && w.length) console.warn("Graphiste GPT warnings:", w);
+    }
+    // Fast path: a finished poster came back directly at data.image_url.
     const imageUrl = extractGraphisteImageUrl(data, false);
     if (imageUrl) return { imageUrl, warning: null };
+    // Async (HTTP 202 + job_id + absolute status_url): poll until completed.
     const polledImageUrl = await pollGraphisteGptJob(endpoint, key, data, controller.signal);
     if (polledImageUrl) return { imageUrl: polledImageUrl, warning: null };
     return {
       imageUrl: null,
-      warning: `Graphiste GPT did not return a final image URL after polling; response only contains metadata/template data: ${JSON.stringify(data).slice(0, 500)}`,
+      warning: "Graphiste GPT n'a pas retourné d'image finale (le job n'a pas abouti dans le délai). Réessayez.",
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -540,8 +388,8 @@ async function tryGraphisteGptPoster(params: {
     return {
       imageUrl: null,
       warning: isAbort
-        ? "Graphiste GPT garde la génération ouverte trop longtemps et ne retourne pas d'URL finale avant la limite Supabase. Il faut un endpoint status/polling ou un vrai retour image synchrone côté Graphiste GPT."
-        : `Graphiste GPT threw: ${message}`,
+        ? "Graphiste GPT a dépassé le délai de génération. Réessayez dans un instant."
+        : `Graphiste GPT inaccessible: ${message}`,
     };
   } finally {
     clearTimeout(timer);
@@ -627,18 +475,37 @@ serve(async (req) => {
 
     // One coherent output format for the whole post, derived from its targets.
     const spec = getSocialImageSpec(platforms);
+    const format = {
+      label: spec.label,
+      aspectRatio: graphisteAspectRatio(spec),
+      orientation: spec.orientation,
+      platforms: spec.platforms,
+      resolution: "2K",
+    };
+
+    // The poster engine is Graphiste GPT only — there is no local fallback.
+    // If the key is missing, fail clearly and save nothing.
+    if (!Deno.env.get("GRAPHISTE_GPT_API_KEY")) {
+      return new Response(
+        JSON.stringify({
+          error: "Génération d'affiche indisponible : le secret GRAPHISTE_GPT_API_KEY n'est pas configuré dans Supabase (Edge Functions → Secrets).",
+          code: "missing_api_key",
+          format,
+        }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
 
     // Pull the user's brand preferences from their profile so every
     // image respects the same visual identity.
     const { data: profile } = await supabase
       .from("profiles")
       .select(
-        "image_people_type, image_style, brand_primary_color, brand_secondary_color, brand_accent_color, brand_font, sector, description, company_name",
+        "image_people_type, image_style, brand_primary_color, brand_secondary_color, brand_accent_color, brand_font, sector, description, company_name, logo_url",
       )
       .eq("id", userId)
       .maybeSingle();
 
-    const imageStyle: string = profile?.image_style || "photorealistic";
     const primary = profile?.brand_primary_color || "#8B5CF6";
     const secondary = profile?.brand_secondary_color || "#3B82F6";
     const accent = profile?.brand_accent_color || "#F59E0B";
@@ -653,39 +520,40 @@ serve(async (req) => {
       primary,
       secondary,
       accent,
+      logoUrl: profile?.logo_url || null,
       spec,
     });
     if (graphiste.warning) console.warn("Graphiste GPT unavailable:", graphiste.warning);
 
-    const rawImageUrl = graphiste.imageUrl;
-    const lastError = graphiste.warning;
-    let imageUrl: string | null = rawImageUrl;
-
-    let usedFallback = false;
-    if (!imageUrl) {
-      console.warn("Graphiste GPT poster generation failed, using dynamic professional poster fallback:", lastError);
-      imageUrl = buildProfessionalPosterSvgDataUrl({
-        postContent,
-        companyName: profile?.company_name || "Entreprise",
-        sector,
-        primary,
-        secondary,
-        accent,
-        spec,
-      });
-      usedFallback = true;
+    if (!graphiste.imageUrl) {
+      // No real Graphiste GPT poster: do NOT save anything (no SVG, no
+      // placeholder). Surface a clear, actionable error instead.
+      console.warn("generate-image: no final Graphiste GPT image:", graphiste.warning);
+      return new Response(
+        JSON.stringify({
+          error: "Graphiste GPT n'a pas retourné d'affiche finale. Réessayez ; si le problème persiste, vérifiez la clé GRAPHISTE_GPT_API_KEY et le service Graphiste GPT.",
+          code: "no_final_image",
+          detail: graphiste.warning || undefined,
+          format,
+        }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
 
-    // Re-host to user-assets/ so the URL is permanent.
+    let imageUrl = graphiste.imageUrl;
+
+    // Re-host to user-assets/ for a permanent URL, and verify it is a real
+    // raster image (never an SVG/placeholder) before saving it anywhere.
     if (!imageUrl.startsWith(supabaseUrl)) {
+      let bytes: Uint8Array | null = null;
+      let contentType = "image/png";
       try {
-        let bytes: Uint8Array;
-        let contentType = "image/png";
         if (imageUrl.startsWith("data:")) {
           const commaIdx = imageUrl.indexOf(",");
           const meta = imageUrl.slice(5, commaIdx);
           const payload = imageUrl.slice(commaIdx + 1);
-          contentType = (meta.split(";")[0] || "image/png").trim();
+          contentType = (meta.split(";")[0] || "image/png").trim().toLowerCase();
+          if (contentType.includes("svg")) throw new Error("refusing SVG data URL");
           if (meta.includes(";base64")) {
             const bin = atob(payload);
             bytes = new Uint8Array(bin.length);
@@ -695,53 +563,54 @@ serve(async (req) => {
           }
         } else {
           const fetched = await fetch(imageUrl);
-          if (!fetched.ok) throw new Error(`Image fetch ${fetched.status}`);
-          const ab = await fetched.arrayBuffer();
-          bytes = new Uint8Array(ab);
-          contentType = fetched.headers.get("content-type") || "image/png";
+          if (!fetched.ok) throw new Error(`image fetch ${fetched.status}`);
+          contentType = (fetched.headers.get("content-type") || "image/png").toLowerCase();
+          if (!contentType.startsWith("image/") || contentType.includes("svg")) {
+            throw new Error(`unexpected content-type ${contentType}`);
+          }
+          bytes = new Uint8Array(await fetched.arrayBuffer());
         }
-        const ext = (contentType.split("/")[1] || "png").split(";")[0].replace(/[^a-z0-9]/gi, "") || "png";
-        const path = `${userId}/ai-${Date.now()}.${ext}`;
-        const { error: upErr } = await supabase.storage
-          .from("user-assets")
-          .upload(path, bytes, { contentType, upsert: true });
-        if (!upErr) {
-          const { data } = supabase.storage.from("user-assets").getPublicUrl(path);
-          imageUrl = data.publicUrl;
+      } catch (verifyErr) {
+        console.error("generate-image: could not verify a real raster poster:", verifyErr);
+        return new Response(
+          JSON.stringify({
+            error: "Graphiste GPT n'a pas retourné une vraie image d'affiche exploitable. Réessayez.",
+            code: "no_final_image",
+            format,
+          }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+      // Upload (best-effort: keep the verified source URL/data if upload fails).
+      if (bytes) {
+        try {
+          const ext = (contentType.split("/")[1] || "png").split(";")[0].replace(/[^a-z0-9]/gi, "") || "png";
+          const path = `${userId}/ai-${Date.now()}.${ext}`;
+          const { error: upErr } = await supabase.storage
+            .from("user-assets")
+            .upload(path, bytes, { contentType, upsert: true });
+          if (!upErr) {
+            const { data } = supabase.storage.from("user-assets").getPublicUrl(path);
+            imageUrl = data.publicUrl;
+          }
+        } catch (rehostErr) {
+          console.error("rehost upload failed (keeping verified source):", rehostErr);
         }
-      } catch (rehostErr) {
-        console.error("rehost failed:", rehostErr);
-        // Keep the original URL as best-effort fallback.
       }
     }
 
-    // If a postId was given, attach the image directly so the dashboard
-    // can rely on the row update instead of round-tripping the URL.
+    // Attach the finished poster to the post row (success path only).
     if (postId) {
       const { error: updateErr } = await supabase
         .from("posts")
         .update({ image_url: imageUrl })
         .eq("id", postId)
         .eq("user_id", userId);
-      if (updateErr) {
-        console.error("Failed to attach image to post:", updateErr);
-      }
+      if (updateErr) console.error("Failed to attach image to post:", updateErr);
     }
 
     return new Response(
-      JSON.stringify({
-        imageUrl,
-        fallback: usedFallback,
-        provider: usedFallback ? "professional-poster-fallback" : "graphiste-gpt",
-        warning: usedFallback ? lastError : undefined,
-        format: {
-          width: spec.width,
-          height: spec.height,
-          label: spec.label,
-          orientation: spec.orientation,
-          platforms: spec.platforms,
-        },
-      }),
+      JSON.stringify({ imageUrl, provider: "graphiste-gpt", fallback: false, format }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err) {
