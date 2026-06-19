@@ -44,7 +44,9 @@ echo "✓ Authentifié."
 
 echo "→ Appel de generate-image (peut prendre 10-40s) ..."
 RESP=$(curl -sS "$SUPA_URL/functions/v1/generate-image" \
-  -H "Authorization: Bearer $TOKEN" -H "apikey: $ANON" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "apikey: $ANON" \
+  -H "Content-Type: application/json" \
   -d '{"postContent":"Titre: Offre premium de rentrée. Boostez votre visibilité avec notre accompagnement marketing digital. Réservez votre audit gratuit dès aujourd hui.","platforms":["LinkedIn"],"peopleType":"african"}')
 
 printf '%s' "$RESP" | python3 -c '

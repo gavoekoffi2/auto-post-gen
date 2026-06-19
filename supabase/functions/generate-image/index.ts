@@ -41,7 +41,7 @@ const GRAPHISTE_GPT_DEFAULT_URL =
 // exact network ratio when supported (e.g. 1.91:1 for LinkedIn / Facebook) so
 // the API never falls back to its 9:16 default; otherwise we map orientation to
 // the closest standard ratio.
-const GRAPHISTE_RATIOS = new Set(["9:16", "16:9", "1:1", "4:5", "1.91:1", "4:3", "3:4", "2:3", "3:2"]);
+const GRAPHISTE_RATIOS = new Set(["9:16", "16:9", "1:1", "4:5", "5:4", "1.91:1", "4:3", "3:4", "2:3", "3:2"]);
 function graphisteAspectRatio(spec: SocialImageSpec): string {
   if (GRAPHISTE_RATIOS.has(spec.aspectRatio)) return spec.aspectRatio;
   switch (spec.orientation) {
@@ -369,8 +369,14 @@ async function tryGraphisteGptPoster(params: {
     }
     // Surface any fields the API ignored (e.g. an accidental unknown field).
     if (typeof data === "object") {
-      const w = (data as { warnings?: unknown }).warnings;
+      const envelope = data as { success?: unknown; warnings?: unknown };
+      const w = envelope.warnings;
       if (Array.isArray(w) && w.length) console.warn("Graphiste GPT warnings:", w);
+      // Public API errors use { success:false, error:{ code, message, request_id } }.
+      // Handle that even if a proxy/runtime accidentally returns HTTP 200/202.
+      if (envelope.success === false) {
+        return { imageUrl: null, warning: graphisteErrorMessage(resp.status, data, text) };
+      }
     }
     // Fast path: a finished poster came back directly at data.image_url.
     const imageUrl = extractGraphisteImageUrl(data, false);

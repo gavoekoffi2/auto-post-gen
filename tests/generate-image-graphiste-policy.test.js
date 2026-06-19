@@ -36,6 +36,7 @@ test('aspect_ratio sends the exact supported network ratio (e.g. 1.91:1), never 
   // v1.1 supports 1.91:1 etc., so we send the spec ratio when supported.
   assert.match(source, /GRAPHISTE_RATIOS\.has\(spec\.aspectRatio\)\s*\)\s*return spec\.aspectRatio/);
   assert.match(source, /"1\.91:1"/);
+  assert.match(source, /"5:4"/, 'OpenAPI v1.1 also supports 5:4');
   // and a safe orientation fallback remains for any unsupported ratio.
   assert.match(source, /case "landscape": return "16:9"/);
   assert.match(source, /default: return "1:1"/);
@@ -53,6 +54,7 @@ test('generate-image no longer sends the undocumented fields the API ignores', (
 test('generate-image parses the v1.1 structured error envelope', () => {
   // { success:false, error:{ code, message, request_id } }
   assert.match(source, /graphisteErrorMessage\(resp\.status, data, text\)/);
+  assert.match(source, /envelope\.success === false/);
   assert.match(source, /const apiError = \(body as/);
   assert.match(source, /apiError\.code/);
   assert.match(source, /apiError\.message/);
