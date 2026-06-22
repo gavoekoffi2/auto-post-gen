@@ -2,7 +2,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 
-const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "*")
+const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
@@ -99,11 +99,18 @@ serve(async (req) => {
     const resendApiKey = Deno.env.get("RESEND_API_KEY");
     const fromAddress = Deno.env.get("RESEND_FROM") || "Pro Social AI <no-reply@example.com>";
 
+    if (!resendApiKey) {
+      console.error("RESEND_API_KEY is not configured — validation emails will NOT be sent (dry-run).");
+    }
+
     const { data: pendingPosts, error: postsError } = await supabase
       .from("posts")
       .select("id,title,content,image_url,platforms,scheduled_for,validation_token,validation_token_created_at,user_id")
       .eq("status", "pending")
-      .not("validation_token", "is", null);
+      .not("validation_token", "is", null)
+      // Only posts we haven't already emailed — previously every run re-emailed
+      // all pending posts.
+      .is("validation_email_sent_at", null);
 
     if (postsError) throw postsError;
 
@@ -186,11 +193,13 @@ serve(async (req) => {
           html: emailHtml,
         });
 
-        // Refresh tokens' created_at so they expire 24h from sending.
+        // Mark these posts as emailed so we don't re-send them. We deliberately
+        // do NOT reset validation_token_created_at here — doing so kept the 24h
+        // token TTL from ever expiring.
         const postIds = userPosts.map((p) => p.id);
         await supabase
           .from("posts")
-          .update({ validation_token_created_at: new Date().toISOString() })
+          .update({ validation_email_sent_at: new Date().toISOString() })
           .in("id", postIds);
 
         results.push({ userId, email: profile.email, postsCount: userPosts.length, status: "sent" });
@@ -201,7 +210,7 @@ serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({ success: true, results }),
+      JSON.stringify({ success: true, emailsConfigured: !!resendApiKey, results }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (error) {

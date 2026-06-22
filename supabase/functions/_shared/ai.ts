@@ -118,10 +118,12 @@ export async function chatText(opts: ChatCompletionOptions): Promise<string> {
 }
 
 function isImageUrl(value: unknown): value is string {
+  // Only accept data: image URLs or http(s) URLs that actually end in an image
+  // extension. The previous catch-all `^https?://\S+` matched any URL, so a
+  // model returning a text/citation link was mistaken for an image.
   return typeof value === "string" && (
     value.startsWith("data:image/") ||
-    /^https?:\/\/\S+\.(png|jpe?g|webp|gif)(\?\S*)?$/i.test(value) ||
-    /^https?:\/\/\S+/i.test(value)
+    /^https?:\/\/\S+\.(png|jpe?g|webp|gif)(\?\S*)?$/i.test(value)
   );
 }
 

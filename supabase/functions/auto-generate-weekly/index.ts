@@ -5,7 +5,7 @@ import { chatText, getOpenRouterKey, getTextModel } from "../_shared/ai.ts";
 import { buildInspirationBlock, researchInspiration } from "../_shared/research.ts";
 import { rehostToUserAssets, startPosterJob } from "../_shared/graphiste.ts";
 
-const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "*")
+const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
@@ -121,13 +121,22 @@ serve(async (req) => {
         );
 
         const now = new Date();
-        const weekNumber = isoWeekNumber(now);
+        const weekNumber = isoWeekNumber(now); // only used to vary the content angle
 
+        // Idempotency keyed on the SCHEDULED window, not the calendar week of
+        // "now". Posts are scheduled 1-7 days ahead, so keying on week_number of
+        // "now" made the next run think the upcoming week was empty and generate
+        // a SECOND full batch — duplicate content, double AI spend and double
+        // auto-publishing. Instead count what is already queued (not yet
+        // published) for the next 7 days and only top up the difference.
+        const windowEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
         const { data: existingPosts } = await supabase
           .from("posts")
           .select("id")
           .eq("user_id", profile.id)
-          .eq("week_number", weekNumber);
+          .in("status", ["pending", "validated", "publishing"])
+          .gte("scheduled_for", now.toISOString())
+          .lt("scheduled_for", windowEnd.toISOString());
 
         const postsToGenerate = Math.max(0, postsNeeded - (existingPosts?.length || 0));
 
@@ -258,7 +267,15 @@ Génère uniquement le texte du post, sans titre ni explication.`;
 
           const scheduledDate = new Date(now);
           const currentDay = scheduledDate.getDay();
-          const daysUntilTarget = ((targetDayNumber - currentDay + 7) % 7) || 7;
+          let daysUntilTarget = (targetDayNumber - currentDay + 7) % 7;
+          if (daysUntilTarget === 0) {
+            // Target day is today: keep today only if the chosen time is still
+            // ahead; otherwise push to next week. (The old `|| 7` always pushed
+            // a same-day target a full week out, dropping this week's post.)
+            const todayAtTime = new Date(now);
+            todayAtTime.setHours(hour, minute, 0, 0);
+            if (todayAtTime.getTime() <= now.getTime()) daysUntilTarget = 7;
+          }
           scheduledDate.setDate(scheduledDate.getDate() + daysUntilTarget);
           scheduledDate.setHours(hour, minute, 0, 0);
 

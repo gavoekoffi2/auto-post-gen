@@ -19,7 +19,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { AIQuotaError, chatCompletion, getOpenRouterKey, getTextModel } from "../_shared/ai.ts";
 import { buildInspirationBlock, researchInspiration } from "../_shared/research.ts";
 
-const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "*")
+const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
@@ -113,20 +113,6 @@ function buildFallbackContent(params: {
   ]);
 }
 
-async function recordGenerationUsage(
-  supabase: ReturnType<typeof createClient>,
-  userId: string,
-  status: "success" | "fallback" | "error",
-  error?: string,
-) {
-  await supabase.from("generation_usage").insert({
-    user_id: userId,
-    function_name: "generate-content",
-    status,
-    error: error ? error.slice(0, 500) : null,
-  });
-}
-
 serve(async (req) => {
   const corsHeaders = buildCorsHeaders(req.headers.get("origin"));
 
@@ -187,22 +173,41 @@ serve(async (req) => {
     const prompt = typeof body.prompt === "string" ? body.prompt.slice(0, 2000) : "";
     const userPreferences: UserPreferences = body.userPreferences || {};
 
-    // Rate limit
-    const since = new Date(Date.now() - RATE_LIMIT_WINDOW_MS).toISOString();
-    const { count: usageCount } = await supabase
-      .from("generation_usage")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", userId)
-      .eq("function_name", "generate-content")
-      .gte("created_at", since);
-
-    if ((usageCount ?? 0) >= RATE_LIMIT_MAX) {
-      return new Response(
+    // Rate limit — atomic reservation via consume_generation_quota. This closes
+    // the burst/parallel bypass the old "count then later insert" check had (a
+    // user could fire many requests in parallel and all passed the count).
+    const limitResponse = () =>
+      new Response(
         JSON.stringify({
           error: `Limite de ${RATE_LIMIT_MAX} générations par heure atteinte. Réessayez plus tard.`,
         }),
         { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
+    const { data: quotaOk, error: quotaErr } = await supabase.rpc("consume_generation_quota", {
+      p_user: userId,
+      p_function: "generate-content",
+      p_max: RATE_LIMIT_MAX,
+      p_window_seconds: Math.floor(RATE_LIMIT_WINDOW_MS / 1000),
+    });
+    if (quotaErr) {
+      // RPC unavailable (e.g. migration not yet applied): degrade to the legacy
+      // non-atomic count check + insert rather than failing the request.
+      console.error("consume_generation_quota failed, using fallback check:", quotaErr.message);
+      const since = new Date(Date.now() - RATE_LIMIT_WINDOW_MS).toISOString();
+      const { count } = await supabase
+        .from("generation_usage")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .eq("function_name", "generate-content")
+        .gte("created_at", since);
+      if ((count ?? 0) >= RATE_LIMIT_MAX) return limitResponse();
+      await supabase.from("generation_usage").insert({
+        user_id: userId,
+        function_name: "generate-content",
+        status: "reserved",
+      });
+    } else if (quotaOk === false) {
+      return limitResponse();
     }
 
     const postType = POST_TYPES[Math.floor(Math.random() * POST_TYPES.length)];
@@ -359,15 +364,11 @@ Réponds UNIQUEMENT avec le texte du post, sans titre ni explication, sans guill
 
     if (!generatedContent) {
       const payload = fallbackContent(fallbackReason || "AI returned empty content");
-      await recordGenerationUsage(supabase, userId, "fallback", payload.warning);
       return new Response(
         JSON.stringify(payload),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
-
-    // Record success
-    await recordGenerationUsage(supabase, userId, "success");
 
     return new Response(
       JSON.stringify({
@@ -380,19 +381,6 @@ Réponds UNIQUEMENT avec le texte du post, sans titre ni explication, sans guill
     );
   } catch (error) {
     console.error("Error in generate-content:", error);
-    try {
-      // Best-effort failure logging; never let it mask the real error.
-      await supabase
-        .from("generation_usage")
-        .insert({
-          user_id: userId,
-          function_name: "generate-content",
-          status: "error",
-          error: error instanceof Error ? error.message : String(error),
-        });
-    } catch (_) {
-      // ignore logging failure
-    }
     return new Response(
       JSON.stringify({
         error: error instanceof Error ? error.message : "Unknown error",

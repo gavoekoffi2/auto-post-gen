@@ -14,7 +14,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 
 const AYRSHARE_BASE = "https://app.ayrshare.com/api";
 
-const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "*")
+const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);

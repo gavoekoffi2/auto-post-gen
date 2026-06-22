@@ -45,13 +45,21 @@ serve(async (req) => {
       console.error("Storage cleanup failed for", userId, storageError);
     }
 
-    // 2. Delete app data. The auth.users delete cascades to public tables
-    // that reference it via ON DELETE CASCADE, but we run explicit deletes
-    // first so the order is deterministic and we can return a useful error.
-    await admin.from("social_connections").delete().eq("user_id", userId);
-    await admin.from("generation_usage").delete().eq("user_id", userId);
-    await admin.from("posts").delete().eq("user_id", userId);
-    await admin.from("profiles").delete().eq("id", userId);
+    // 2. Delete app data. The auth.users delete cascades to public tables that
+    // reference it, but we run explicit deletes first so the order is
+    // deterministic. We check each step's error and ABORT before deleting the
+    // auth user, so we never leave orphaned rows the user can no longer reach.
+    const deletions: Array<{ table: string; run: PromiseLike<{ error: unknown }> }> = [
+      { table: "social_comments", run: admin.from("social_comments").delete().eq("user_id", userId) },
+      { table: "social_connections", run: admin.from("social_connections").delete().eq("user_id", userId) },
+      { table: "generation_usage", run: admin.from("generation_usage").delete().eq("user_id", userId) },
+      { table: "posts", run: admin.from("posts").delete().eq("user_id", userId) },
+      { table: "profiles", run: admin.from("profiles").delete().eq("id", userId) },
+    ];
+    for (const { table, run } of deletions) {
+      const { error } = await run;
+      if (error) throw new Error(`Failed to delete ${table}: ${(error as { message?: string }).message ?? String(error)}`);
+    }
 
     // 3. Finally remove the auth.users row.
     const { error: deleteUserError } = await admin.auth.admin.deleteUser(userId);

@@ -23,8 +23,9 @@ import {
 } from "../_shared/postiz.ts";
 import { zernioCreatePost, zernioListAccounts } from "../_shared/zernio.ts";
 import { resumePosterJob } from "../_shared/graphiste.ts";
+import { fetchImageBytes } from "../_shared/safeFetch.ts";
 
-const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "*")
+const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
@@ -261,7 +262,7 @@ async function ensurePublicImage(
   const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
   if (supabaseUrl && imageUrl.startsWith(supabaseUrl)) return imageUrl;
 
-  let blob: Blob;
+  let bytes: Uint8Array;
   let contentType = "image/jpeg";
 
   if (imageUrl.startsWith("data:")) {
@@ -271,29 +272,29 @@ async function ensurePublicImage(
     const meta = imageUrl.slice(5, commaIdx); // e.g. "image/png;base64"
     const payload = imageUrl.slice(commaIdx + 1);
     const isBase64 = meta.includes(";base64");
-    contentType = meta.split(";")[0] || contentType;
+    contentType = (meta.split(";")[0] || contentType).toLowerCase();
+    if (contentType.includes("svg")) throw new Error("Refusing SVG image");
     if (isBase64) {
       const bin = atob(payload);
-      const bytes = new Uint8Array(bin.length);
+      bytes = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      blob = new Blob([bytes], { type: contentType });
     } else {
-      blob = new Blob([decodeURIComponent(payload)], { type: contentType });
+      bytes = new TextEncoder().encode(decodeURIComponent(payload));
     }
+    if (bytes.byteLength > 10 * 1024 * 1024) throw new Error("Image too large");
   } else {
-    // Otherwise, fetch the image and re-upload to user-assets/<userId>/
-    // so we control its lifetime.
-    const resp = await fetch(imageUrl);
-    if (!resp.ok) throw new Error(`Failed to download image: ${resp.status}`);
-    blob = await resp.blob();
-    contentType = blob.type || contentType;
+    // posts.image_url is user-writable, so this fetch is SSRF-guarded
+    // (https-only, blocks private/metadata hosts, content-type + size cap).
+    const fetched = await fetchImageBytes(imageUrl);
+    bytes = fetched.bytes;
+    contentType = fetched.contentType;
   }
 
-  const ext = (contentType.split("/")[1] || "jpg").split(";")[0];
+  const ext = (contentType.split("/")[1] || "jpg").split(";")[0].replace(/[^a-z0-9]/gi, "") || "jpg";
   const path = `${userId}/published-${Date.now()}.${ext}`;
   const { error: upErr } = await supabase.storage
     .from("user-assets")
-    .upload(path, blob, { contentType, upsert: true });
+    .upload(path, bytes, { contentType, upsert: true });
   if (upErr) throw upErr;
   const { data } = supabase.storage.from("user-assets").getPublicUrl(path);
   return data.publicUrl;
@@ -848,8 +849,10 @@ serve(async (req) => {
 
     const nowIso = new Date().toISOString();
     // Cap the per-run batch so a stuck queue can't exhaust the function
-    // runtime; remaining items are picked up on the next cron tick.
-    const CRON_BATCH_SIZE = 50;
+    // runtime; remaining items are picked up on the next cron tick. Kept small
+    // because each post can also resume a poster job + make a publish call, all
+    // sequential, and the edge runtime limit is ~150s.
+    const CRON_BATCH_SIZE = 12;
     const { data: due } = await supabase
       .from("posts")
       .select("id")

@@ -14,7 +14,7 @@ import { getSocialImageSpec, type SocialImageSpec } from "../_shared/socialImage
 // target platforms (see _shared/socialImageSpecs.ts) so a LinkedIn post never
 // comes back as a TikTok-shaped image and vice-versa.
 
-const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "*")
+const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
@@ -33,6 +33,11 @@ function buildCorsHeaders(origin: string | null) {
 }
 
 const MAX_PAYLOAD_BYTES = 64 * 1024;
+
+// Each image is a paid Graphiste GPT "premium 2K" poster — the expensive
+// operation. Cap how many a single user can mint per hour (covers normal use
+// plus a few regenerations). Enforced atomically via consume_generation_quota.
+const IMAGE_RATE_LIMIT_MAX = 30;
 
 const GRAPHISTE_GPT_DEFAULT_URL =
   "https://bbfzfgcdioewzbmlgaqy.supabase.co/functions/v1/api-v1/v1/posters/generate";
@@ -565,6 +570,27 @@ serve(async (req) => {
       if (!r.imageUrl) return stillProcessing(resumeJobId, resumeStatusUrl);
       imageUrl = r.imageUrl;
     } else {
+      // Per-user rate limit (only the initial generation, not resume polls).
+      // Best-effort: if the quota RPC is unavailable, allow rather than block.
+      const { data: quotaOk, error: quotaErr } = await supabase.rpc("consume_generation_quota", {
+        p_user: userId,
+        p_function: "generate-image",
+        p_max: IMAGE_RATE_LIMIT_MAX,
+        p_window_seconds: 3600,
+      });
+      if (quotaErr) {
+        console.error("consume_generation_quota (image) failed, allowing:", quotaErr.message);
+      } else if (quotaOk === false) {
+        return jsonResponse(
+          {
+            error: `Limite de ${IMAGE_RATE_LIMIT_MAX} images par heure atteinte. Réessayez plus tard.`,
+            code: "rate_limited",
+            format,
+          },
+          429,
+        );
+      }
+
       // Initial request: load brand preferences and kick off generation.
       const { data: profile } = await supabase
         .from("profiles")
@@ -668,7 +694,7 @@ serve(async (req) => {
     if (postId) {
       const { error: updateErr } = await supabase
         .from("posts")
-        .update({ image_url: imageUrl })
+        .update({ image_url: imageUrl, image_status: "done", image_job_id: null })
         .eq("id", postId)
         .eq("user_id", userId);
       if (updateErr) console.error("Failed to attach image to post:", updateErr);

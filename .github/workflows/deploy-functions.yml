@@ -40,8 +40,8 @@ jobs:
             echo "Add it in repo Settings -> Secrets and variables -> Actions to enable deploys."
             exit 1
           fi
-          supabase functions deploy generate-image --project-ref "$PROJECT_REF"
-          supabase functions deploy generate-content --project-ref "$PROJECT_REF"
-          supabase functions deploy publish-post --project-ref "$PROJECT_REF"
-          supabase functions deploy zernio-status --project-ref "$PROJECT_REF"
-          supabase functions deploy zernio-connect --project-ref "$PROJECT_REF"
+          # Deploy ALL edge functions (the previous list of 5 left core flows —
+          # auto-generate-weekly, publish-post cron, send-validation-email,
+          # validate-post, delete-account, sync-comments, comment-reply and the
+          # oauth-* callbacks — undeployed, so they 404'd in production).
+          supabase functions deploy --project-ref "$PROJECT_REF"

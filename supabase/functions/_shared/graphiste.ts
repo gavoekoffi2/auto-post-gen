@@ -19,6 +19,7 @@
 // cron-side counterpart and shares only the same external API contract.
 //
 import { getSocialImageSpec, type SocialImageSpec } from "./socialImageSpecs.ts";
+import { fetchImageBytes } from "./safeFetch.ts";
 
 const GRAPHISTE_GPT_DEFAULT_URL =
   "https://bbfzfgcdioewzbmlgaqy.supabase.co/functions/v1/api-v1/v1/posters/generate";
@@ -353,13 +354,10 @@ export async function rehostToUserAssets(
       bytes = new TextEncoder().encode(decodeURIComponent(payload));
     }
   } else {
-    const resp = await fetch(imageUrl);
-    if (!resp.ok) throw new Error(`image fetch ${resp.status}`);
-    contentType = (resp.headers.get("content-type") || "image/png").toLowerCase();
-    if (!contentType.startsWith("image/") || contentType.includes("svg")) {
-      throw new Error(`unexpected content-type ${contentType}`);
-    }
-    bytes = new Uint8Array(await resp.arrayBuffer());
+    // SSRF-guarded fetch (https-only, blocks private/metadata hosts, size cap).
+    const fetched = await fetchImageBytes(imageUrl);
+    bytes = fetched.bytes;
+    contentType = fetched.contentType;
   }
 
   const ext = (contentType.split("/")[1] || "png").split(";")[0].replace(/[^a-z0-9]/gi, "") || "png";

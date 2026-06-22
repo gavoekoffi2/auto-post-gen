@@ -78,7 +78,17 @@ export default function SettingsDialog({ isOpen, onOpenChange, userProfile, onPr
           id: session.user.id,
           email: session.user.email,
           sector: formData.sector,
-          content_types: [formData.contentType],
+          // This quick dialog edits one "primary" content type. Merge it with
+          // any others already saved (e.g. set on the full Profile page) instead
+          // of collapsing the array to a single value and losing the rest.
+          content_types: formData.contentType
+            ? [
+                formData.contentType,
+                ...((userProfile?.content_types || []).filter(
+                  (c) => c && c !== formData.contentType,
+                )),
+              ]
+            : (userProfile?.content_types || []),
           tone: formData.tone,
           post_frequency: parseInt(formData.frequency),
           description: formData.description,
@@ -86,7 +96,9 @@ export default function SettingsDialog({ isOpen, onOpenChange, userProfile, onPr
           platforms: formData.platforms.length > 0 ? formData.platforms : ['Instagram'],
           logo_url: formData.useCustomVisuals ? formData.logoUrl : null,
           use_custom_images: formData.useCustomImages,
-          custom_image_urls: formData.useCustomImages ? formData.customImageUrls : [],
+          // Never erase the uploaded library when the toggle is off — just stop
+          // using it (toggling off previously wiped custom_image_urls).
+          custom_image_urls: formData.customImageUrls,
         },
         { onConflict: 'id' }
       );

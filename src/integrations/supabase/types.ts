@@ -32,6 +32,7 @@ export type Database = {
           title: string
           updated_at: string | null
           user_id: string
+          validation_email_sent_at: string | null
           validation_status: string | null
           validation_token: string | null
           validation_token_created_at: string | null
@@ -57,6 +58,7 @@ export type Database = {
           title: string
           updated_at?: string | null
           user_id: string
+          validation_email_sent_at?: string | null
           validation_status?: string | null
           validation_token?: string | null
           validation_token_created_at?: string | null
@@ -82,6 +84,7 @@ export type Database = {
           title?: string
           updated_at?: string | null
           user_id?: string
+          validation_email_sent_at?: string | null
           validation_status?: string | null
           validation_token?: string | null
           validation_token_created_at?: string | null
