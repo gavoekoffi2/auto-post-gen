@@ -97,3 +97,32 @@ test('CI deploys all edge functions, not a hand-picked subset', () => {
     'should not deploy only a subset',
   );
 });
+
+test('public endpoints are IP rate-limited', () => {
+  const validatePost = read('supabase/functions/validate-post/index.ts');
+  const sendContact = read('supabase/functions/send-contact/index.ts');
+  const rlMigration = read('supabase/migrations/20260620010000_public_rate_limit.sql');
+  assert.match(validatePost, /hitIpRateLimit\(/);
+  assert.match(sendContact, /hitIpRateLimit\(/);
+  assert.match(rlMigration, /CREATE OR REPLACE FUNCTION public\.hit_ip_rate_limit/);
+  assert.match(rlMigration, /pg_advisory_xact_lock/);
+});
+
+test('password change re-authenticates with the current password', () => {
+  const account = read('src/components/AccountSettings.tsx');
+  assert.match(account, /signInWithPassword\(/);
+  assert.match(account, /currentPassword/);
+  // re-auth must happen before updateUser
+  assert.ok(
+    account.indexOf('signInWithPassword') < account.indexOf('updateUser'),
+    'must re-authenticate before changing the password',
+  );
+});
+
+test('email validation requires an explicit click (no auto-validate on load)', () => {
+  const validatePage = read('src/pages/ValidatePost.tsx');
+  // No useEffect-driven validation on mount.
+  assert.equal(validatePage.includes('useEffect'), false);
+  assert.match(validatePage, /status === "confirm"/);
+  assert.match(validatePage, /onClick=\{validate\}/);
+});

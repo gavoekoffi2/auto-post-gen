@@ -25,6 +25,7 @@ interface AccountSettingsProps {
 
 export function AccountSettings({ userEmail }: AccountSettingsProps) {
   const navigate = useNavigate();
+  const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [changingPassword, setChangingPassword] = useState(false);
@@ -33,8 +34,12 @@ export function AccountSettings({ userEmail }: AccountSettingsProps) {
   const CONFIRM_WORD = "SUPPRIMER";
 
   const handlePasswordChange = async () => {
-    if (newPassword.length < 6) {
-      toast.error("Le mot de passe doit contenir au moins 6 caractères");
+    if (!currentPassword) {
+      toast.error("Veuillez saisir votre mot de passe actuel");
+      return;
+    }
+    if (newPassword.length < 8) {
+      toast.error("Le nouveau mot de passe doit contenir au moins 8 caractères");
       return;
     }
 
@@ -45,13 +50,25 @@ export function AccountSettings({ userEmail }: AccountSettingsProps) {
 
     setChangingPassword(true);
     try {
+      // Re-authenticate first so a stolen/unlocked session can't silently
+      // change the password and lock out the owner.
+      const { error: reauthError } = await supabase.auth.signInWithPassword({
+        email: userEmail,
+        password: currentPassword,
+      });
+      if (reauthError) {
+        toast.error("Mot de passe actuel incorrect");
+        return;
+      }
+
       const { error } = await supabase.auth.updateUser({
         password: newPassword,
       });
 
       if (error) throw error;
-      
+
       toast.success("Mot de passe mis à jour !");
+      setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
     } catch (error: unknown) {
@@ -108,11 +125,23 @@ export function AccountSettings({ userEmail }: AccountSettingsProps) {
 
         <div className="space-y-4 max-w-md">
           <div className="space-y-2">
+            <Label>Mot de passe actuel</Label>
+            <Input
+              type="password"
+              placeholder="••••••••"
+              className="glass-card"
+              autoComplete="current-password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+            />
+          </div>
+          <div className="space-y-2">
             <Label>Nouveau mot de passe</Label>
             <Input
               type="password"
               placeholder="••••••••"
               className="glass-card"
+              autoComplete="new-password"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
             />
@@ -123,13 +152,14 @@ export function AccountSettings({ userEmail }: AccountSettingsProps) {
               type="password"
               placeholder="••••••••"
               className="glass-card"
+              autoComplete="new-password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
             />
           </div>
           <Button
             onClick={handlePasswordChange}
-            disabled={changingPassword || !newPassword || !confirmPassword}
+            disabled={changingPassword || !currentPassword || !newPassword || !confirmPassword}
           >
             {changingPassword ? "Mise à jour..." : "Mettre à jour"}
           </Button>

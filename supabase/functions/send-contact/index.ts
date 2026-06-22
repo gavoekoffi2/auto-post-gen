@@ -10,6 +10,8 @@
 //   CONTACT_TO      — where messages land (defaults to RESEND_FROM address).
 //
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
+import { clientIp, hitIpRateLimit } from "../_shared/rateLimit.ts";
 
 const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "")
   .split(",")
@@ -81,6 +83,18 @@ serve(async (req) => {
     }
     if (subject.length > 200) {
       return json({ error: "Sujet trop long." }, 400);
+    }
+
+    // Per-IP rate limit (defends Resend cost / sender reputation against bots
+    // that skip the honeypot). Best-effort: skipped if Supabase creds absent.
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (supabaseUrl && serviceKey) {
+      const supabase = createClient(supabaseUrl, serviceKey);
+      const ip = clientIp(req);
+      if (!(await hitIpRateLimit(supabase, `contact:${ip}`, 5, 3600))) {
+        return json({ error: "Trop de messages envoyés. Réessayez plus tard." }, 429);
+      }
     }
 
     const resendApiKey = Deno.env.get("RESEND_API_KEY");

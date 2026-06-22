@@ -1,6 +1,7 @@
 // deno-lint-ignore-file no-explicit-any
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
+import { clientIp, hitIpRateLimit } from "../_shared/rateLimit.ts";
 
 const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "")
   .split(",")
@@ -59,6 +60,15 @@ serve(async (req) => {
     }
 
     const supabase = createClient(supabaseUrl, serviceKey);
+
+    // Per-IP rate limit on this public, token-by-URL endpoint.
+    const ip = clientIp(req);
+    if (!(await hitIpRateLimit(supabase, `validate-post:${ip}`, 60, 3600))) {
+      return new Response(
+        JSON.stringify({ error: "Trop de tentatives. Réessayez plus tard." }),
+        { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
 
     const { data: post, error } = await supabase
       .from("posts")
