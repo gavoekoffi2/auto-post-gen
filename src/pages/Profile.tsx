@@ -420,15 +420,22 @@ export default function Profile() {
             <Card className="glass-card p-6">
               <h2 className="text-lg font-semibold mb-4">Réseaux sociaux</h2>
               <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                {['Instagram', 'Facebook', 'Twitter', 'LinkedIn', 'TikTok'].map((platform) => (
-                  <div key={platform} className="flex items-center space-x-2">
+                {[
+                  { id: 'Instagram' },
+                  { id: 'Facebook' },
+                  { id: 'Twitter' },
+                  { id: 'LinkedIn' },
+                  { id: 'TikTok', comingSoon: true },
+                ].map(({ id, comingSoon }) => (
+                  <div key={id} className="flex items-center space-x-2">
                     <Checkbox
-                      id={`platform-${platform}`}
-                      checked={profile.platforms.includes(platform)}
-                      onCheckedChange={() => togglePlatform(platform)}
+                      id={`platform-${id}`}
+                      checked={profile.platforms.includes(id)}
+                      disabled={comingSoon}
+                      onCheckedChange={() => togglePlatform(id)}
                     />
-                    <label htmlFor={`platform-${platform}`} className="text-sm cursor-pointer">
-                      {platform}
+                    <label htmlFor={`platform-${id}`} className={`text-sm ${comingSoon ? 'text-muted-foreground' : 'cursor-pointer'}`}>
+                      {id}{comingSoon ? ' (bientôt)' : ''}
                     </label>
                   </div>
                 ))}

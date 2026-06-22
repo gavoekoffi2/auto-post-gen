@@ -126,3 +126,17 @@ test('email validation requires an explicit click (no auto-validate on load)', (
   assert.match(validatePage, /status === "confirm"/);
   assert.match(validatePage, /onClick=\{validate\}/);
 });
+
+test('free-beta monthly usage caps exist for text and image generation', () => {
+  assert.match(genContent, /MONTHLY_LIMIT_MAX/);
+  assert.match(genContent, /Limite mensuelle/);
+  assert.match(genImage, /IMAGE_MONTHLY_MAX/);
+});
+
+test('TikTok is gated as "coming soon" in the platform pickers', () => {
+  for (const p of ['src/pages/Profile.tsx', 'src/pages/Onboarding.tsx', 'src/components/SettingsDialog.tsx']) {
+    const src = read(p);
+    assert.match(src, /id: 'TikTok', comingSoon: true/);
+    assert.match(src, /disabled=\{comingSoon\}/);
+  }
+});

@@ -40,6 +40,9 @@ function buildCorsHeaders(origin: string | null) {
 // Per-user rate limit
 const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 const RATE_LIMIT_MAX = 20;
+// Soft monthly cap per user (cost control for the free beta).
+const MONTHLY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+const MONTHLY_LIMIT_MAX = 200;
 const MAX_PAYLOAD_BYTES = 64 * 1024;
 
 // Pool of post structures. One is picked at random per generation to
@@ -172,6 +175,22 @@ serve(async (req) => {
 
     const prompt = typeof body.prompt === "string" ? body.prompt.slice(0, 2000) : "";
     const userPreferences: UserPreferences = body.userPreferences || {};
+
+    // Soft monthly cap (cost control for the free beta), checked before the
+    // hourly atomic reservation below.
+    const monthSince = new Date(Date.now() - MONTHLY_WINDOW_MS).toISOString();
+    const { count: monthCount } = await supabase
+      .from("generation_usage")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .eq("function_name", "generate-content")
+      .gte("created_at", monthSince);
+    if ((monthCount ?? 0) >= MONTHLY_LIMIT_MAX) {
+      return new Response(
+        JSON.stringify({ error: `Limite mensuelle de ${MONTHLY_LIMIT_MAX} générations atteinte.` }),
+        { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
 
     // Rate limit — atomic reservation via consume_generation_quota. This closes
     // the burst/parallel bypass the old "count then later insert" check had (a

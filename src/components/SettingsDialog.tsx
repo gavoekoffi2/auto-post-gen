@@ -303,20 +303,27 @@ export default function SettingsDialog({ isOpen, onOpenChange, userProfile, onPr
           <div className="space-y-4">
             <h3 className="font-semibold text-lg">Réseaux sociaux</h3>
             <div className="space-y-3">
-              {['Instagram', 'Facebook', 'Twitter', 'LinkedIn', 'TikTok'].map((platform) => (
-                <div key={platform} className="flex items-center space-x-2">
+              {[
+                { id: 'Instagram' },
+                { id: 'Facebook' },
+                { id: 'Twitter' },
+                { id: 'LinkedIn' },
+                { id: 'TikTok', comingSoon: true },
+              ].map(({ id, comingSoon }) => (
+                <div key={id} className="flex items-center space-x-2">
                   <Checkbox
-                    id={`settings-${platform}`}
-                    checked={formData.platforms.includes(platform)}
+                    id={`settings-${id}`}
+                    checked={formData.platforms.includes(id)}
+                    disabled={comingSoon}
                     onCheckedChange={(checked) => {
                       const newPlatforms = checked
-                        ? [...formData.platforms, platform]
-                        : formData.platforms.filter(p => p !== platform);
+                        ? [...formData.platforms, id]
+                        : formData.platforms.filter(p => p !== id);
                       setFormData({ ...formData, platforms: newPlatforms });
                     }}
                   />
-                  <label htmlFor={`settings-${platform}`} className="text-sm cursor-pointer">
-                    {platform}
+                  <label htmlFor={`settings-${id}`} className={`text-sm ${comingSoon ? 'text-muted-foreground' : 'cursor-pointer'}`}>
+                    {id}{comingSoon ? ' (bientôt)' : ''}
                   </label>
                 </div>
               ))}

@@ -38,6 +38,8 @@ const MAX_PAYLOAD_BYTES = 64 * 1024;
 // operation. Cap how many a single user can mint per hour (covers normal use
 // plus a few regenerations). Enforced atomically via consume_generation_quota.
 const IMAGE_RATE_LIMIT_MAX = 30;
+// Soft monthly cap per user (cost control for the free beta).
+const IMAGE_MONTHLY_MAX = 200;
 
 const GRAPHISTE_GPT_DEFAULT_URL =
   "https://bbfzfgcdioewzbmlgaqy.supabase.co/functions/v1/api-v1/v1/posters/generate";
@@ -570,6 +572,21 @@ serve(async (req) => {
       if (!r.imageUrl) return stillProcessing(resumeJobId, resumeStatusUrl);
       imageUrl = r.imageUrl;
     } else {
+      // Soft monthly cap (cost control for the free beta).
+      const monthSince = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      const { count: monthCount } = await supabase
+        .from("generation_usage")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .eq("function_name", "generate-image")
+        .gte("created_at", monthSince);
+      if ((monthCount ?? 0) >= IMAGE_MONTHLY_MAX) {
+        return jsonResponse(
+          { error: `Limite mensuelle de ${IMAGE_MONTHLY_MAX} images atteinte.`, code: "rate_limited", format },
+          429,
+        );
+      }
+
       // Per-user rate limit (only the initial generation, not resume polls).
       // Best-effort: if the quota RPC is unavailable, allow rather than block.
       const { data: quotaOk, error: quotaErr } = await supabase.rpc("consume_generation_quota", {
