@@ -14,7 +14,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Lock, Trash2, Mail } from "lucide-react";
+import { Lock, Trash2, Mail, Download } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
@@ -30,8 +30,30 @@ export function AccountSettings({ userEmail }: AccountSettingsProps) {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [changingPassword, setChangingPassword] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [confirmText, setConfirmText] = useState("");
   const CONFIRM_WORD = "SUPPRIMER";
+
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("export-account-data", {});
+      if (error) throw error;
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "mes-donnees-pro-social-ai.json";
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Vos données ont été téléchargées.");
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Erreur lors de l'export";
+      toast.error(message);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const handlePasswordChange = async () => {
     if (!currentPassword) {
@@ -164,6 +186,22 @@ export function AccountSettings({ userEmail }: AccountSettingsProps) {
             {changingPassword ? "Mise à jour..." : "Mettre à jour"}
           </Button>
         </div>
+      </Card>
+
+      {/* Data export (GDPR) */}
+      <Card className="glass-card p-6">
+        <div className="flex items-center gap-2 mb-4">
+          <Download className="w-5 h-5 text-primary" />
+          <h2 className="text-lg font-semibold">Mes données</h2>
+        </div>
+        <p className="text-sm text-muted-foreground mb-4">
+          Téléchargez une copie de vos données (profil, posts, commentaires,
+          comptes connectés) au format JSON.
+        </p>
+        <Button variant="outline" className="glass-card" onClick={handleExport} disabled={exporting}>
+          <Download className="w-4 h-4 mr-2" />
+          {exporting ? "Préparation…" : "Télécharger mes données"}
+        </Button>
       </Card>
 
       {/* Delete Account */}

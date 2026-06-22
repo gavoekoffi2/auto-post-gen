@@ -1,0 +1,23 @@
+name: CI
+
+# Runs on every pull request (and pushes to main) so lint, tests and the
+# production build are gated BEFORE merge — previously they only ran at deploy
+# time, after code had already landed on main.
+on:
+  pull_request: {}
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
