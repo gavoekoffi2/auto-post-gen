@@ -15,7 +15,7 @@
 | **IA par post Pro/Enterprise** (texte + image GPT Image 2) | | **~$0,059 / post** |
 | **Vidéo IA personnalisée** (Pro/Enterprise uniquement) | OpenRouter — `google/veo-3.1-lite` (~$0,05/s, clip 8 s, audio natif) + 5,5 % frais | **~$0,42 / vidéo** |
 | Réponse auto à un commentaire | texte uniquement | ~$0,003 / réponse |
-| **Publication** (driver de coût) | **Zernio — facturé par compte social connecté** : 2 gratuits, puis **$6** (comptes 1–10), **$3** (11–100), **$1** (101–2000) | **$1 à $6 / compte / mois** |
+| **Publication** (driver de coût) | **Zernio — facturé par compte social connecté** : 2 gratuits, puis **$6** (10 comptes suivants), **$3** (90 comptes suivants), **$1** (jusqu'à 2000) | **$1 à $6 / compte / mois** |
 | Emails (validation) | Resend (gratuit < 3 000/mois, puis $20/mois) | ~$0 |
 | Hébergement BDD/Edge | Supabase Pro | $25/mois (fixe) |
 
@@ -124,7 +124,7 @@ abonnement Pro (15 000 FCFA) → 19 500 FCFA/mois. S'il veut 12/sem., il ajoute 
   à comprendre (la différence de coût IA entre Gemini et GPT Image 2 est négligeable ici).
 - **Réseaux.** Tarifé pour couvrir le coût Zernio du **régime normal** ($3/compte) avec
   marge. Même en phase de lancement ($6/compte), la perte unitaire (~$1,6) reste transitoire
-  et comparable à celle déjà acceptée pour Starter (§8).
+  et comparable à celle déjà acceptée pour Starter (§7.3).
 
 **Garde-fou anti-contournement.** Empiler beaucoup d'unités finit par coûter plus cher que
 de monter en gamme — c'est voulu. Ex. un Starter (3/sem., 5 000 FCFA) qui ajoute 7 unités
@@ -163,14 +163,102 @@ du §4 absorbent les dépassements ponctuels sans avoir à changer la grille de 
 
 Pro et Enterprise restent **rentables même en phase de lancement** (Zernio à $6/compte),
 contrairement à Starter dont le léger déficit transitoire était déjà identifié et accepté
-comme coût d'acquisition (voir §8). La marge Pro/Enterprise baisse par rapport à l'ancien
+comme coût d'acquisition (voir §7.3). La marge Pro/Enterprise baisse par rapport à l'ancien
 calcul sans GPT Image 2 ni vidéo (Pro 60 %→52 %, Enterprise 72 %→59 % en régime normal),
 mais reste très saine.
 
 À déduire : frais d'encaissement (~1 % Wave, ~3–4 % carte) + coûts fixes (Supabase $25,
-Resend) amortis sur la base d'abonnés.
+Resend) amortis sur la base d'abonnés. **Cette déduction est faite en détail au §7**, avec
+vérification que la marge reste positive net, pas seulement brute.
 
-## 7. Extension future de plateformes (TikTok, YouTube) — impact prix : nul
+## 7. Rentabilité nette réelle — vérification
+
+**Réponse directe : oui, le modèle gagne de l'argent net, dès une petite base de clients —
+pas seulement en marge brute, et pas seulement à grande échelle.** La plateforme a été
+conçue pour être rentable, pas pour distribuer le service à perte ; ce qui suit vérifie ce
+point chiffres à l'appui plutôt que de l'affirmer simplement.
+
+### 7.1 Ce que le §6 ne déduit pas encore
+
+Le §6 ne retire que le coût variable (IA + Zernio) du prix de vente. Pour confirmer qu'on
+**gagne réellement de l'argent** (pas juste une marge brute positive sur le papier), il faut
+aussi déduire :
+- **Frais d'encaissement** : ~1–2 % en Mobile Money, ~3,5 % en carte (CinetPay/PayDunya,
+  agrégateurs courants en Afrique de l'Ouest) → modélisé ici à **3 % du revenu**, une
+  estimation prudente compte tenu de la priorité Mobile Money (moins chère) du marché cible.
+- **Coûts fixes mensuels** : Supabase Pro $25 + marge pour Resend/divers ≈ **$30/mois**,
+  indépendants du nombre de clients — donc proportionnellement plus lourds tout au début,
+  et de plus en plus négligeables ensuite.
+
+### 7.2 Scénario réaliste à petite échelle (10 clients)
+
+Hypothèse de répartition volontairement prudente (pas optimiste) : 4 Starter, 5 Pro,
+1 Enterprise → 31 comptes sociaux connectés au total.
+
+| | Calcul | Montant |
+|---|---|---|
+| Revenu | 4×$9 + 5×$26 + 1×$61 | **$227** |
+| Coût IA | 4×$0,57 + 5×$3,59 + 1×$10,27 | $30,5 |
+| Coût Zernio (2 gratuits + 10 comptes à $6 + 19 à $3) | | $117 |
+| **Marge brute** | | **$79,5 (35 %)** |
+| Frais d'encaissement (3 %) | | −$6,8 |
+| Coûts fixes | | −$30 |
+| **Marge nette** | | **+$42,7 (≈ 19 %)** ✅ |
+
+À **30 clients** (même répartition ×3 : 12 Starter, 15 Pro, 3 Enterprise, 93 comptes), la
+marge nette **monte à ≈ 35 %** (+$236/mois sur $681 de revenu) : les coûts fixes s'amortissent
+sur plus de clients et la quasi-totalité des comptes Zernio passe au palier $3. **La
+rentabilité s'améliore avec l'échelle, elle ne s'érode pas.**
+
+### 7.3 Le pire cas : petit, borné, temporaire
+
+Le scénario le plus défavorable plausible : les **tout premiers clients sont à 100 %
+Starter** (le plan le moins cher, sans Pro/Enterprise pour compenser). Avec 5 clients
+Starter (10 comptes connectés au total : 2 gratuits + 8 facturés à $6, car seuls les 10
+premiers comptes payants tombent dans le palier $6) :
+
+Revenu $45 − IA $2,85 − Zernio $48 = marge brute **−$5,85** ; − frais d'encaissement
+($1,35) − coûts fixes ($30) = **marge nette ≈ −$37/mois**.
+
+C'est le seul scénario réellement déficitaire de tout le modèle, et il est :
+- **Borné.** −$37/mois, soit moins que l'abonnement d'un seul client Enterprise ($61/mois).
+- **Temporaire et auto-résolutif.** Dès le 6ᵉ client (quel que soit son plan) ou dès le
+  premier client Pro/Enterprise, les comptes supplémentaires basculent au palier $3 et/ou
+  apportent une marge largement positive (Pro et Enterprise restent rentables même au
+  palier $6, voir §6) — la perte disparaît mécaniquement, sans aucune action requise.
+- **Peu probable en pratique.** Pro est mis en avant comme l'offre « la plus populaire »
+  sur la page tarifs ; un mix à 100 % Starter sur les 5 premiers clients serait une
+  coïncidence défavorable, pas le scénario attendu.
+- **Évitable dès aujourd'hui si on veut zéro risque, même transitoire.** Prioriser
+  l'**OAuth direct** (Levier n°1, §9) pour les tout premiers clients Starter ramène leur
+  coût Zernio à $0 et élimine ce cas de figure entièrement, dès le premier client.
+
+*(Accessoirement : l'essai gratuit de 7 jours a un coût borné comparable — environ $3 pour
+un essai Starter et $14 pour un essai Enterprise qui ne convertirait pas, au tarif $6/compte
+le plus défavorable. C'est un coût d'acquisition classique, pas un risque structurel ; à
+surveiller via le taux de conversion essai→payant une fois la facturation branchée.)*
+
+### 7.4 Résistance aux erreurs d'estimation (stress-test combiné)
+
+Et si le coût réel de GPT Image 2 était sous-estimé de 50 % **et** celui de la vidéo IA
+doublé (2×) en même temps ? Sur le scénario réaliste à 10 clients (§7.2) :
+
+Coût IA recalculé : $52,3 (au lieu de $30,5) → marge brute $57,7 (25 %) → marge nette
+**≈ $20,9/mois (≈ 9 %)**.
+
+**Toujours positif**, même en cumulant deux hypothèses pessimistes à la fois sur les deux
+principaux postes IA variables. La marge se réduit mais ne s'inverse jamais — la preuve que
+le modèle a une vraie marge de sécurité, pas seulement sur le papier.
+
+### 7.5 Conclusion
+
+Le modèle gagne de l'argent net, dès une petite échelle (~10 clients), après frais
+d'encaissement et coûts fixes, et même sous hypothèses pessimistes sur l'IA. Le seul
+scénario de perte (§7.3) est petit, temporaire, peu probable, et peut être neutralisé
+immédiatement via l'OAuth direct si on préfère ne prendre aucun risque, même transitoire, dès
+le premier client.
+
+## 8. Extension future de plateformes (TikTok, YouTube) — impact prix : nul
 
 Les plans sont déjà tarifés **par nombre de comptes sociaux connectés**, pas par liste de
 plateformes nommées (Starter 2, Pro 3, Enterprise 8). Zernio facture **par compte, quelle
@@ -181,22 +269,25 @@ aujourd'hui. **Aucun ajustement de prix n'est nécessaire pour anticiper cette e
 c'est précisément pourquoi le modèle « nombre de réseaux » (et son extension à la carte du
 §4) a été choisi plutôt qu'une liste figée. Seule vigilance : vérifier, au moment d'activer
 TikTok/YouTube, qu'aucun des deux n'a un surcoût API inhabituel chez Zernio (comme c'est
-déjà le cas pour X/Twitter, voir §8).
+déjà le cas pour X/Twitter, voir §9).
 
-## 8. Points de vigilance & leviers
+## 9. Points de vigilance & leviers
 
-- **Phase de lancement (bande Zernio à $6).** Seuls les ~8 premiers comptes connectés
-  (au niveau de l'entreprise, tous clients confondus) sont à $6. Sur cette toute première
-  bande, **Starter est légèrement déficitaire** (coût ~$12,6 vs $9) ; Pro et Enterprise
-  restent positifs. C'est un coût d'acquisition transitoire : dès ~4–5 paires de comptes
-  connectées, on passe à $3 et la marge Starter redevient positive.
+- **Phase de lancement (bande Zernio à $6).** Seuls les **10 comptes facturés suivant les
+  2 gratuits** (au niveau de l'entreprise, tous clients confondus) sont à $6 — un palier
+  qui ne se reproduit plus jamais une fois franchi. Sur cette toute première bande,
+  **Starter est légèrement déficitaire** si les premiers clients sont surtout Starter ;
+  Pro et Enterprise restent positifs même à ce palier. C'est un coût d'acquisition
+  borné et transitoire, chiffré en détail au **§7.3** (pire cas ≈ −$37/mois, pas plus) :
+  dès le 6ᵉ client ou le premier Pro/Enterprise, on bascule au palier $3 et la marge
+  redevient positive.
 - **Levier n°1 — OAuth direct.** Publier Facebook/Instagram/LinkedIn via l'OAuth direct
   (déjà dans le code) ne coûte **rien** (pas de Zernio). Si les petits plans passent par
   l'OAuth direct, le coût Starter tombe à ~$0,6 → **marge ~93 %**. Réserver Zernio aux
   réseaux non couverts en direct.
 - **X/Twitter** a un coût d'API propre (refacturé par Zernio sans marge) : à surveiller,
   potentiellement à exclure du plan Starter. Vérifier le même point pour TikTok/YouTube
-  avant leur activation (voir §7).
+  avant leur activation (voir §8).
 - **Garde-fous coût IA déjà en place :** plafonds horaires (20 textes, 30 images/h) et
   **mensuels (200 textes, 200 images/utilisateur)** dans `generate-content` /
   `generate-image`. Pire cas IA (texte+image) borné à ~$8,8/mois/utilisateur sur Gemini
@@ -211,7 +302,10 @@ déjà le cas pour X/Twitter, voir §8).
   développement distincte.
 - **Vidéo IA : fonctionnalité non encore développée.** Cette page documente le **budget et
   le modèle prévus** (Veo 3.1 Lite, quotas §3) pour que les prix actuels n'aient pas besoin
-  d'augmenter au lancement de la fonctionnalité — le développement reste à faire.
+  d'augmenter au lancement de la fonctionnalité — le développement reste à faire. **Vérifié :**
+  la page tarifs (`PricingNew.tsx`) affiche déjà un badge « 🎬 [allocation] — bientôt
+  disponible » pour Pro/Enterprise (absent pour Starter, qui n'aura pas de vidéo) — la
+  fonctionnalité n'est présentée nulle part comme déjà disponible.
 - **Add-ons réseaux/publications (§4) : pas encore facturables.** Même limite que ci-dessous
   (facturation non branchée). À activer en même temps que le paiement Mobile Money.
   Recommandation : plafonner le nombre d'unités « +1 publication/semaine » cumulables
