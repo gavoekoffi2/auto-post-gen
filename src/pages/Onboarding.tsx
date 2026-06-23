@@ -252,7 +252,7 @@ export default function Onboarding() {
                   <SelectContent>
                     <SelectItem value="2">2 posts/semaine (Starter)</SelectItem>
                     <SelectItem value="5">5 posts/semaine (Pro)</SelectItem>
-                    <SelectItem value="10">10 posts/semaine (Business)</SelectItem>
+                    <SelectItem value="10">10 posts/semaine (Enterprise)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
