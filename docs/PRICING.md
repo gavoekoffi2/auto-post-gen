@@ -86,39 +86,59 @@ Zernio de lancement le plus cher ($6/compte), Pro et Enterprise restent **rentab
 en dur côté serveur (ex. Pro : 5 vidéos/mois max, Enterprise : 18/mois max) — même logique
 que les plafonds mensuels déjà en place pour texte/image.
 
-## 4. Réseaux et publications supplémentaires — tarification à la carte
+## 4. Quotas de base & dépassements à la carte (prix dynamique)
 
-Chaque plan inclut un **quota de base** (réseaux connectés + publications/semaine). Au-delà,
-le prix devient **dynamique** : la personne paie des compléments mensuels plutôt que de
-devoir changer de plan pour un dépassement ponctuel. Mécanique proposée :
+### 4.1 Publications par semaine incluses (quota de base)
 
-- **Facturé en abonnement complémentaire mensuel**, pas au post à l'unité : plus simple à
-  comprendre, plus prévisible pour un paiement Mobile Money (souvent quasi-prépayé — une
-  facture surprise au compteur serait mal vécue dans ce marché).
-- **Cumulable** : on peut ajouter plusieurs lots le même mois.
-- **Toujours moins avantageux que l'upgrade de plan** en cas d'usage soutenu (l'à‑la‑carte
-  est pensé pour un dépassement ponctuel, pas pour remplacer Pro/Enterprise — voir
-  vigilance en §8).
+| Plan | **Publications / semaine incluses** | Réseaux sociaux inclus |
+|---|---|---|
+| **Starter** | **3** | 2 |
+| **Pro** ⭐ | **7** (1 par jour) | 3 |
+| **Enterprise** | **10** | 8 |
 
-| Add-on | Tarif | Coût réel (régime normal) | Marge |
+C'est le socle compris dans l'abonnement, sans surcoût. Il sert de référence pour le
+sélecteur de fréquence dans l'app (`Onboarding` / `Profile`).
+
+### 4.2 Aller au-delà : facturation dynamique, à l'unité
+
+Le client **n'est pas obligé de changer de plan** pour publier plus. Il peut **ajouter des
+publications par semaine**, et **le prix augmente avec le nombre ajouté** (facturation
+dynamique : on paie exactement ce qu'on ajoute, pas plus). Même principe pour les réseaux.
+
+| Add-on (mensuel, récurrent) | Tarif | Coût réel pour nous | Marge |
 |---|---|---|---|
-| **+1 réseau social connecté/mois** (tous plans) | **2 500 FCFA/mois** (~$4,4) | ~$3/compte (Zernio) | ~32 % |
-| **+10 publications/mois — Starter** (Gemini) | **2 500 FCFA/mois** (~$4,4) | ~$0,44 | ~91 % |
-| **+10 publications/mois — Pro/Enterprise** (GPT Image 2) | **3 000 FCFA/mois** (~$5,2) | ~$0,59 | ~89 % |
+| **+1 publication / semaine** (tous plans) | **1 500 FCFA/mois** (~$2,6) | ~$0,19–0,26/mois | **~90 %** |
+| **+1 réseau social connecté** (tous plans) | **2 500 FCFA/mois** (~$4,4) | ~$3/compte (Zernio) | ~32 % |
 
-Pourquoi ces montants : le réseau supplémentaire est tarifé pour couvrir le coût Zernio du
-**régime normal** ($3/compte) avec marge — même en phase de lancement ($6/compte), la perte
-unitaire (~$1,6) reste transitoire et comparable à celle déjà acceptée pour Starter (§8).
-Les publications supplémentaires coûtent quasiment rien en plus (le réseau est déjà
-connecté, seul le coût IA marginal s'applique) : leur prix reste donc volontairement *sous*
-le tarif moyen au post du plan de base, pour que ça reste perçu comme un bon plan plutôt
-qu'une pénalité, tout en gardant une marge confortable.
+**Exemple concret.** Un client **Pro** (7 pubs/sem. incluses) qui veut publier **10 fois par
+semaine** ajoute **3 unités** → 3 × 1 500 = **+4 500 FCFA/mois**, facturés en plus de son
+abonnement Pro (15 000 FCFA) → 19 500 FCFA/mois. S'il veut 12/sem., il ajoute 5 unités
+(+7 500 FCFA), etc. Le montant suit **linéairement** le nombre de publications ajoutées.
 
-**Conséquence pour les quotas de base affichés (mise à jour) :** Enterprise passe de
-« réseaux illimités » à **8 réseaux inclus** (très généreux — couvre Facebook, Instagram,
-LinkedIn, X, TikTok et YouTube avec marge), au-delà desquels l'add-on ci-dessus s'applique.
-« Illimité » sans plafond chiffré exposait à un risque réel : un client connectant par
-exemple 50 comptes coûterait jusqu'à $300/mois en Zernio (tarif de lancement) pour un plan
+**Pourquoi ces montants :**
+- **Publications.** Une publication de plus ne nous coûte presque rien : le réseau est déjà
+  connecté (pas de Zernio en plus), seul s'ajoute le coût IA marginal (~$0,044 Starter /
+  ~$0,059 Pro-Enterprise par post, soit ~$0,19–0,26/mois pour +1/semaine). On facture donc
+  un montant **bas et accessible** (1 500 FCFA), perçu comme un bon plan plutôt qu'une
+  pénalité, tout en gardant ~90 % de marge. Tarif **unique tous plans** pour rester simple
+  à comprendre (la différence de coût IA entre Gemini et GPT Image 2 est négligeable ici).
+- **Réseaux.** Tarifé pour couvrir le coût Zernio du **régime normal** ($3/compte) avec
+  marge. Même en phase de lancement ($6/compte), la perte unitaire (~$1,6) reste transitoire
+  et comparable à celle déjà acceptée pour Starter (§8).
+
+**Garde-fou anti-contournement.** Empiler beaucoup d'unités finit par coûter plus cher que
+de monter en gamme — c'est voulu. Ex. un Starter (3/sem., 5 000 FCFA) qui ajoute 7 unités
+pour atteindre 10/sem. paierait 5 000 + 10 500 = 15 500 FCFA, soit **plus** qu'un plan Pro
+(15 000 FCFA) qui inclut en plus un réseau supplémentaire, la vidéo IA et les analytics
+avancés. L'à‑la‑carte reste donc idéal pour un **petit dépassement**, et l'upgrade de plan
+redevient le meilleur choix dès que l'usage grimpe. Prévoir un **plafond d'add-ons** côté
+serveur (ex. +7 publications/sem. max en à‑la‑carte) au-delà duquel on invite à upgrader.
+
+**Quota réseaux — Enterprise.** Passe de « réseaux illimités » à **8 réseaux inclus** (très
+généreux — couvre Facebook, Instagram, LinkedIn, X, TikTok et YouTube avec marge), au-delà
+desquels l'add-on réseau s'applique. « Illimité » sans plafond chiffré exposait à un risque
+réel : un client connectant par exemple 50 comptes coûterait jusqu'à $300/mois en Zernio
+(tarif de lancement) pour un plan
 facturé $61 — un chiffre concret et un add-on évitent ce scénario tout en restant generous.
 
 ## 5. Prix recommandés (appliqués) — confirmés, aucune hausse nécessaire
@@ -194,9 +214,9 @@ déjà le cas pour X/Twitter, voir §8).
   d'augmenter au lancement de la fonctionnalité — le développement reste à faire.
 - **Add-ons réseaux/publications (§4) : pas encore facturables.** Même limite que ci-dessous
   (facturation non branchée). À activer en même temps que le paiement Mobile Money.
-  Recommandation : plafonner le nombre de lots « +10 publications » cumulables par mois
-  (ex. 2 max) pour qu'empiler des lots Pro reste toujours moins intéressant que d'upgrader
-  vers Enterprise.
+  Recommandation : plafonner le nombre d'unités « +1 publication/semaine » cumulables
+  (ex. +7/sem. max) pour qu'empiler de l'à‑la‑carte reste toujours moins intéressant que de
+  passer au plan supérieur (voir garde-fou §4.2).
 - **Facturation non encore branchée (beta gratuite).** Le plan est stocké dans
   `profiles.plan` et attribué manuellement
   (`UPDATE public.profiles SET plan='enterprise' WHERE id='<uuid>'`).

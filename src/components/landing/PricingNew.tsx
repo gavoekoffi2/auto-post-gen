@@ -270,7 +270,7 @@ export const PricingNew = () => {
             L'essai gratuit inclut toutes les fonctionnalités du plan choisi. Aucune carte bancaire requise.
           </p>
           <p className="text-xs text-muted-foreground/70">
-            Besoin de plus de réseaux ou de publications ? Des options additionnelles sont disponibles à la carte, sans changer de plan.
+            Besoin de publier plus ? Ajoutez des publications par semaine (dès 1 500 FCFA/mois) ou des réseaux à la carte, sans changer de plan — vous ne payez que ce que vous ajoutez.
           </p>
         </div>
       </div>
