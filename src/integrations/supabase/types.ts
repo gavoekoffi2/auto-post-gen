@@ -282,6 +282,7 @@ export type Database = {
           use_custom_images: boolean | null
           auto_reply_enabled: boolean | null
           auto_reply_instructions: string | null
+          plan: string
         }
         Insert: {
           activity_keywords?: string[] | null
@@ -319,6 +320,7 @@ export type Database = {
           use_custom_images?: boolean | null
           auto_reply_enabled?: boolean | null
           auto_reply_instructions?: string | null
+          plan?: string
         }
         Update: {
           activity_keywords?: string[] | null
@@ -356,6 +358,7 @@ export type Database = {
           use_custom_images?: boolean | null
           auto_reply_enabled?: boolean | null
           auto_reply_instructions?: string | null
+          plan?: string
         }
         Relationships: []
       }

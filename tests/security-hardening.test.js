@@ -127,6 +127,26 @@ test('email validation requires an explicit click (no auto-validate on load)', (
   assert.match(validatePage, /onClick=\{validate\}/);
 });
 
+test('AI comment auto-reply is gated to the Enterprise plan (server-side)', () => {
+  const sync = read('supabase/functions/sync-comments/index.ts');
+  const planMig = read('supabase/migrations/20260623000000_user_plan.sql');
+  // The executor checks the plan, not just the enabled flag.
+  assert.match(sync, /AUTO_REPLY_PLANS/);
+  assert.match(sync, /enterprise/);
+  assert.match(sync, /canAutoReply/);
+  // Both provider paths use the gate; the bare auto_reply_enabled check is gone.
+  assert.equal(/if \(profile && \(profile as any\)\.auto_reply_enabled\)/.test(sync), false);
+  assert.equal((sync.match(/canAutoReply\(profile as any\)/g) || []).length, 2);
+  // The plan column exists and is protected from client self-upgrade.
+  assert.match(planMig, /ADD COLUMN IF NOT EXISTS plan/);
+  assert.match(planMig, /guard_profile_plan/);
+  assert.match(planMig, /current_user IN \('authenticated', 'anon'\)/);
+  // The UI locks the toggle for non-Enterprise users.
+  const commentsUi = read('src/pages/Comments.tsx');
+  assert.match(commentsUi, /isEnterprise/);
+  assert.match(commentsUi, /isEnterprise \? autoReply : false/);
+});
+
 test('free-beta monthly usage caps exist for text and image generation', () => {
   assert.match(genContent, /MONTHLY_LIMIT_MAX/);
   assert.match(genContent, /Limite mensuelle/);
