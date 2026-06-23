@@ -13,6 +13,7 @@ const plans = [
     annualUSD: 7,
     icon: Sparkles,
     gradient: "from-blue-400 to-blue-500",
+    comingSoonVideo: null,
     features: [
       { text: "3 posts par semaine", included: true },
       { text: "2 réseaux sociaux", included: true },
@@ -37,6 +38,7 @@ const plans = [
     annualUSD: 22,
     icon: Zap,
     gradient: "from-primary to-accent",
+    comingSoonVideo: "1 vidéo IA personnalisée par semaine",
     features: [
       { text: "1 post par jour (7/semaine)", included: true },
       { text: "3 réseaux sociaux", included: true },
@@ -61,9 +63,10 @@ const plans = [
     annualUSD: 50,
     icon: Crown,
     gradient: "from-amber-500 to-orange-500",
+    comingSoonVideo: "Jusqu'à 4 vidéos IA personnalisées par semaine",
     features: [
       { text: "Jusqu'à 10 posts/semaine", included: true },
-      { text: "Tous les réseaux sociaux", included: true },
+      { text: "8 réseaux sociaux inclus", included: true },
       { text: "IA premium (modèles avancés)", included: true },
       { text: "Images IA haute qualité", included: true },
       { text: "Fréquence personnalisable", included: true },
@@ -204,6 +207,15 @@ export const PricingNew = () => {
                   </div>
                 )}
 
+                {/* Upcoming AI video badge */}
+                {plan.comingSoonVideo && (
+                  <div className="my-4 px-3 py-2 rounded-xl bg-violet-500/10 border border-violet-500/20">
+                    <p className="text-sm text-violet-400 font-semibold text-center">
+                      🎬 {plan.comingSoonVideo} — bientôt disponible
+                    </p>
+                  </div>
+                )}
+
                 {/* Features */}
                 <ul className="space-y-3 mb-8">
                   {plan.features.map((feature, i) => (
@@ -256,6 +268,9 @@ export const PricingNew = () => {
           </p>
           <p className="text-xs text-muted-foreground/70">
             L'essai gratuit inclut toutes les fonctionnalités du plan choisi. Aucune carte bancaire requise.
+          </p>
+          <p className="text-xs text-muted-foreground/70">
+            Besoin de plus de réseaux ou de publications ? Des options additionnelles sont disponibles à la carte, sans changer de plan.
           </p>
         </div>
       </div>
