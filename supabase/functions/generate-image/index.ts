@@ -36,11 +36,13 @@ const MAX_PAYLOAD_BYTES = 64 * 1024;
 
 const GRAPHISTE_GPT_DEFAULT_URL =
   "https://bbfzfgcdioewzbmlgaqy.supabase.co/functions/v1/api-v1/v1/posters/generate";
-// Keep each Edge Function invocation short. Graphiste GPT can take several
-// minutes, but Supabase/Netlify/browser requests should not be held that long.
-// One call either catches fast jobs or returns processing + job_id/status_url;
-// the dashboard then re-polls the same job without starting a paid generation.
-const GRAPHISTE_TOTAL_TIMEOUT_MS = 60_000;
+// The primary path is a synchronous Graphiste GPT call that returns the
+// finished poster directly; the API waits up to ~110s before falling back to an
+// async job, so allow a little headroom above that for one round-trip. If the
+// API does fall back to a job, the per-call poll budget stays short so the
+// dashboard can re-poll the same job (without starting a new paid generation)
+// instead of one request being held open for minutes.
+const GRAPHISTE_TOTAL_TIMEOUT_MS = 120_000;
 const GRAPHISTE_POLL_BUDGET_MS = 35_000;
 
 type GraphistePosterResult = {
@@ -403,9 +405,15 @@ async function tryGraphisteGptPoster(params: {
 
   // Per the documented contract (v1.1): domain + subject are required; quality is
   // forced to premium server-side; aspect_ratio + resolution control the output
-  // format (without them the API silently defaults every poster to 9:16). We use
-  // mode "async" — recommended for Supabase — so the API returns a job to poll
-  // instead of holding a long synchronous connection.
+  // format (without them the API silently defaults every poster to 9:16).
+  //
+  // We use mode "sync": the API waits up to ~110s and returns the finished
+  // poster directly in a single call (data.image_url). This avoids the fragile
+  // async-polling dance (job_id handoff + status-endpoint guessing) that left
+  // the UI spinning forever when a finished job was never detected. Only if a
+  // poster genuinely exceeds ~110s does the API fall back to HTTP 202 + job_id,
+  // which we then poll — so slow posters still work, but the common case is one
+  // reliable round-trip.
   const requestBody: Record<string, unknown> = {
     domain: graphisteDomain(params.sector, params.description, params.postContent),
     subject: buildGraphisteSubject(params),
@@ -413,7 +421,7 @@ async function tryGraphisteGptPoster(params: {
     quality: "premium",
     aspect_ratio: graphisteAspectRatio(params.spec),
     resolution: "2K",
-    mode: "async",
+    mode: "sync",
   };
   if (colors.length) requestBody.colors = colors;
   if (params.logoUrl && /^https?:\/\//i.test(params.logoUrl)) {

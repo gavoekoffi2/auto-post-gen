@@ -43,7 +43,10 @@ type UserProfile = {
 // publish-post stores the per-platform outcome as a JSON array in
 // posts.publish_error. Turn it into a short, human-readable reason.
 
-const IMAGE_GENERATION_TIMEOUT_MS = 90_000;
+// The backend now generates synchronously and returns the finished poster in a
+// single call (it waits up to ~110s on Graphiste GPT). Give that one round-trip
+// enough headroom so the UI does not abort a poster that is about to arrive.
+const IMAGE_GENERATION_TIMEOUT_MS = 130_000;
 const MAX_GRAPHISTE_POLL_ATTEMPTS = 12;
 const GRAPHISTE_POLL_INTERVAL_MS = 10000;
 

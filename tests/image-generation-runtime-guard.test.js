@@ -9,8 +9,8 @@ const dashboard = readFileSync(join(__dirname, '..', 'src/pages/Dashboard.tsx'),
 const edge = readFileSync(join(__dirname, '..', 'supabase/functions/generate-image/index.ts'), 'utf8');
 const script = readFileSync(join(__dirname, '..', 'scripts/test-image-gen.sh'), 'utf8');
 
-test('dashboard image generation has a short client-side timeout and always clears loading state', () => {
-  assert.match(dashboard, /IMAGE_GENERATION_TIMEOUT_MS\s*=\s*90_000/);
+test('dashboard image generation has a bounded client-side timeout and always clears loading state', () => {
+  assert.match(dashboard, /IMAGE_GENERATION_TIMEOUT_MS\s*=\s*130_000/);
   assert.match(dashboard, /invokeGenerateImageWithTimeout/);
   assert.match(dashboard, /Promise\.race/);
   assert.match(dashboard, /clearTimeout\(timeoutId\)/);
@@ -19,9 +19,11 @@ test('dashboard image generation has a short client-side timeout and always clea
   assert.match(dashboard, /toast\.dismiss\(loadingToast\)/);
 });
 
-test('edge keeps calls short and returns job state for slow premium Graphiste posters', () => {
-  assert.match(dashboard, /IMAGE_GENERATION_TIMEOUT_MS\s*=\s*90_000/);
-  assert.match(edge, /GRAPHISTE_TOTAL_TIMEOUT_MS\s*=\s*60_000/);
+test('edge generates synchronously and still returns job state for slow premium Graphiste posters', () => {
+  assert.match(dashboard, /IMAGE_GENERATION_TIMEOUT_MS\s*=\s*130_000/);
+  // Sync round-trip needs headroom above the API's ~110s wait; the per-call
+  // poll budget stays short for the async fallback.
+  assert.match(edge, /GRAPHISTE_TOTAL_TIMEOUT_MS\s*=\s*120_000/);
   assert.match(edge, /GRAPHISTE_POLL_BUDGET_MS\s*=\s*35_000/);
   assert.match(edge, /elapsed_ms/);
   assert.match(edge, /request_id/);

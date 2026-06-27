@@ -25,7 +25,9 @@ test('generate-image sends the documented Graphiste GPT v1.1 contract fields', (
   assert.match(source, /title:\s*titleFromPost\(/);
   assert.match(source, /aspect_ratio:\s*graphisteAspectRatio\(params\.spec\)/);
   assert.match(source, /resolution:\s*"2K"/);
-  assert.match(source, /mode:\s*"async"/);
+  // Primary path is synchronous (one round-trip returns the finished poster);
+  // the API falls back to an async job only for posters slower than ~110s.
+  assert.match(source, /mode:\s*"sync"/);
   assert.match(source, /"Idempotency-Key":\s*crypto\.randomUUID\(\)/);
   assert.match(source, /domain:\s*graphisteDomain\(params\.sector, params\.description, params\.postContent\)/);
   assert.match(source, /requestBody\.colors = colors/);
