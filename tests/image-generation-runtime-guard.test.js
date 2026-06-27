@@ -9,8 +9,8 @@ const dashboard = readFileSync(join(__dirname, '..', 'src/pages/Dashboard.tsx'),
 const edge = readFileSync(join(__dirname, '..', 'supabase/functions/generate-image/index.ts'), 'utf8');
 const script = readFileSync(join(__dirname, '..', 'scripts/test-image-gen.sh'), 'utf8');
 
-test('dashboard image generation has a client-side timeout and always clears loading state', () => {
-  assert.match(dashboard, /IMAGE_GENERATION_TIMEOUT_MS\s*=\s*390000/);
+test('dashboard image generation has a short client-side timeout and always clears loading state', () => {
+  assert.match(dashboard, /IMAGE_GENERATION_TIMEOUT_MS\s*=\s*90_000/);
   assert.match(dashboard, /invokeGenerateImageWithTimeout/);
   assert.match(dashboard, /Promise\.race/);
   assert.match(dashboard, /clearTimeout\(timeoutId\)/);
@@ -19,17 +19,16 @@ test('dashboard image generation has a client-side timeout and always clears loa
   assert.match(dashboard, /toast\.dismiss\(loadingToast\)/);
 });
 
-test('edge and dashboard allow very slow premium Graphiste poster jobs to run for up to 6 minutes', () => {
-  assert.match(dashboard, /IMAGE_GENERATION_TIMEOUT_MS\s*=\s*390000/);
-  assert.match(edge, /GRAPHISTE_TOTAL_TIMEOUT_MS\s*=\s*360_000/);
-  assert.match(edge, /GRAPHISTE_POLL_BUDGET_MS\s*=\s*340_000/);
+test('edge keeps calls short and returns job state for slow premium Graphiste posters', () => {
+  assert.match(dashboard, /IMAGE_GENERATION_TIMEOUT_MS\s*=\s*90_000/);
+  assert.match(edge, /GRAPHISTE_TOTAL_TIMEOUT_MS\s*=\s*60_000/);
+  assert.match(edge, /GRAPHISTE_POLL_BUDGET_MS\s*=\s*35_000/);
   assert.match(edge, /elapsed_ms/);
   assert.match(edge, /request_id/);
   assert.match(edge, /job_id/);
-  assert.doesNotMatch(edge, /55_000/);
-  assert.doesNotMatch(edge, /45_000/);
-  assert.doesNotMatch(edge, /240_000/);
-  assert.doesNotMatch(edge, /220_000/);
+  assert.doesNotMatch(edge, /360_000/);
+  assert.doesNotMatch(edge, /340_000/);
+  assert.doesNotMatch(edge, /390000/);
 });
 
 test('E2E image script sends the real Supabase bearer token header', () => {
@@ -49,7 +48,7 @@ test('edge returns a processing state with job_id/status_url instead of losing a
 
 test('dashboard automatically polls an existing Graphiste job without starting a new paid generation', () => {
   assert.match(dashboard, /pollGraphisteJobUntilReady/);
-  assert.match(dashboard, /MAX_GRAPHISTE_POLL_ATTEMPTS\s*=\s*8/);
+  assert.match(dashboard, /MAX_GRAPHISTE_POLL_ATTEMPTS\s*=\s*12/);
   assert.match(dashboard, /graphisteJobId:\s*current\.job_id/);
   assert.match(dashboard, /graphisteStatusUrl:\s*current\.status_url/);
   assert.match(dashboard, /current\?\.processing/);

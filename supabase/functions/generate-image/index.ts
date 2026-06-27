@@ -36,8 +36,12 @@ const MAX_PAYLOAD_BYTES = 64 * 1024;
 
 const GRAPHISTE_GPT_DEFAULT_URL =
   "https://bbfzfgcdioewzbmlgaqy.supabase.co/functions/v1/api-v1/v1/posters/generate";
-const GRAPHISTE_TOTAL_TIMEOUT_MS = 360_000;
-const GRAPHISTE_POLL_BUDGET_MS = 340_000;
+// Keep each Edge Function invocation short. Graphiste GPT can take several
+// minutes, but Supabase/Netlify/browser requests should not be held that long.
+// One call either catches fast jobs or returns processing + job_id/status_url;
+// the dashboard then re-polls the same job without starting a paid generation.
+const GRAPHISTE_TOTAL_TIMEOUT_MS = 60_000;
+const GRAPHISTE_POLL_BUDGET_MS = 35_000;
 
 type GraphistePosterResult = {
   imageUrl: string | null;
