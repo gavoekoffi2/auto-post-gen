@@ -696,15 +696,25 @@ serve(async (req) => {
           bytes = new Uint8Array(await fetched.arrayBuffer());
         }
       } catch (verifyErr) {
-        console.error("generate-image: could not verify a real raster poster:", verifyErr);
-        return new Response(
-          JSON.stringify({
-            error: "Graphiste GPT n'a pas retourné une vraie image d'affiche exploitable. Réessayez.",
-            code: "no_final_image",
-            format,
-          }),
-          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-        );
+        // The URL was already vetted as a non-SVG raster poster by
+        // extractGraphisteImageUrl. A failure here means only that *we* could
+        // not re-fetch it server-side (transient network, the host blocking
+        // server-side fetches, an odd content-type header) — it does NOT mean
+        // the poster itself is bad. For a remote http(s) URL, return it as-is so
+        // the browser can still load it, instead of discarding a real, paid
+        // generation. Only a malformed data: URL is genuinely unusable.
+        console.error("generate-image: could not re-host poster, returning source URL:", verifyErr);
+        if (imageUrl.startsWith("data:")) {
+          return new Response(
+            JSON.stringify({
+              error: "Graphiste GPT n'a pas retourné une vraie image d'affiche exploitable. Réessayez.",
+              code: "no_final_image",
+              format,
+            }),
+            { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+        }
+        bytes = null; // skip upload; fall through to return the original URL
       }
       // Upload (best-effort: keep the verified source URL/data if upload fails).
       if (bytes) {
