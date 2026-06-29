@@ -654,7 +654,15 @@ serve(async (req) => {
       });
       if (graphiste.warning) console.warn("Graphiste GPT:", graphiste.warning);
 
-      if (graphiste.status === "failed") return noFinalImage(graphiste.warning || undefined);
+      // Surface the specific, actionable reason (e.g. "Crédits Graphiste GPT
+      // insuffisants (402)", "Clé invalide (401)", "Trop de requêtes (429)")
+      // directly to the user instead of a generic "no final image" message, so
+      // the real cause is visible without digging in the logs.
+      if (graphiste.status === "failed") {
+        return graphiste.warning
+          ? jsonResponse({ error: graphiste.warning, code: "graphiste_error", format })
+          : noFinalImage();
+      }
       if (!graphiste.imageUrl) {
         // Still generating: hand the job to the client so it can resume polling
         // without any single invocation running near the 150s edge limit.

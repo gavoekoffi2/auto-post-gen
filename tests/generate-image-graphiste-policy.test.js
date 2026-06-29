@@ -76,6 +76,16 @@ test('generate-image fails with a clear, actionable error instead of saving junk
   assert.match(source, /GRAPHISTE_GPT_API_KEY/);
 });
 
+test('generate-image surfaces the specific Graphiste failure (credits/key/rate) to the user', () => {
+  // On a hard failure, return the precise reason (402/401/429 …) as the primary
+  // error, not a generic message with the cause buried in the logs.
+  assert.match(source, /code:\s*"graphiste_error"/);
+  assert.match(source, /graphiste\.warning\s*\n?\s*\?\s*jsonResponse\(\{ error: graphiste\.warning/);
+  // those precise messages exist and stay actionable.
+  assert.match(source, /Crédits Graphiste GPT insuffisants \(402\)/);
+  assert.match(source, /Clé Graphiste GPT invalide ou manquante \(401\)/);
+});
+
 test('generate-image uses the documented business default and async polling', () => {
   assert.match(source, /postContent = ""/);
   assert.equal(source.includes('return "service";'), false);
