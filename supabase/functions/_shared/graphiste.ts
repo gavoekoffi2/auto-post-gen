@@ -20,6 +20,7 @@
 //
 import { getSocialImageSpec, type SocialImageSpec } from "./socialImageSpecs.ts";
 import { fetchImageBytes } from "./safeFetch.ts";
+import { extractJobId, extractStatusUrl, jobFailed } from "./graphisteParse.ts";
 
 const GRAPHISTE_GPT_DEFAULT_URL =
   "https://bbfzfgcdioewzbmlgaqy.supabase.co/functions/v1/api-v1/v1/posters/generate";
@@ -172,41 +173,6 @@ function extractPosterImageUrl(value: unknown): string | null {
     }
   }
   return null;
-}
-
-function extractFromNested(value: unknown, getter: (o: Record<string, unknown>) => unknown): string | null {
-  if (!value || typeof value !== "object") return null;
-  const obj = value as Record<string, unknown>;
-  const direct = getter(obj);
-  if (typeof direct === "string" && direct.trim()) return direct.trim();
-  // Some APIs return a numeric job id; keep it rather than dropping the job.
-  if (typeof direct === "number" && Number.isFinite(direct)) return String(direct);
-  for (const key of ["data", "result", "job", "request", "generation"]) {
-    const nested = extractFromNested(obj[key], getter);
-    if (nested) return nested;
-  }
-  return null;
-}
-
-function extractJobId(value: unknown): string | null {
-  return extractFromNested(value, (o) =>
-    o.job_id || o.jobId || o.request_id || o.requestId || o.id || o.task_id || o.taskId);
-}
-
-function extractStatusUrl(value: unknown): string | null {
-  return extractFromNested(value, (o) =>
-    o.statusUrl || o.status_url || o.pollUrl || o.poll_url || o.checkUrl || o.check_url);
-}
-
-function jobFailed(value: unknown): boolean {
-  if (!value || typeof value !== "object") return false;
-  const obj = value as Record<string, unknown>;
-  const status = typeof obj.status === "string" ? obj.status.toLowerCase() : "";
-  if (["failed", "error", "canceled", "cancelled"].includes(status)) return true;
-  for (const key of ["data", "result", "job"]) {
-    if (jobFailed(obj[key])) return true;
-  }
-  return false;
 }
 
 function statusCandidates(endpoint: string, statusUrl: string | null, jobId: string | null): string[] {

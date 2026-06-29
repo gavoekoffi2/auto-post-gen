@@ -87,6 +87,22 @@ test('generate-image uses the documented business default and async polling', ()
   assert.match(source, /graphisteJobFailed/);
 });
 
+test('generate-image extracts the canonical data.job_id, never the trace request_id', () => {
+  // The v1.1 envelope has a top-level request_id (trace id) plus data.job_id.
+  // Grabbing request_id as the job id makes GET /v1/posters/{id} 404 on resume.
+  assert.doesNotMatch(source, /obj\.job_id \|\| obj\.jobId \|\| obj\.request_id/,
+    'must not treat the top-level request_id as a job id');
+  assert.match(source, /obj\.job_id \|\| obj\.jobId \|\| obj\.task_id \|\| obj\.taskId \|\| obj\.id/);
+});
+
+test('generate-image persists the in-flight job on the row so a slow poster is not orphaned', () => {
+  // When handing the job back to the client, also save it on the post row, so a
+  // poster that finishes after the client gives up can be resumed on next load.
+  assert.match(source, /image_job_id: jobId, image_status_url: statusUrl, image_status: "processing"/);
+  // and the success path clears the job + stale status url.
+  assert.match(source, /image_status: "done", image_job_id: null, image_status_url: null/);
+});
+
 test('generate-image is resumable: short bounded polls + job handoff (no 150s blocking call)', () => {
   assert.match(source, /function pollGraphisteJob\(/);
   assert.match(source, /function resumeGraphisteJob\(/);

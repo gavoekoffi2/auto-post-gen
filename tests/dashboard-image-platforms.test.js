@@ -33,3 +33,17 @@ test('dashboard resumes long poster jobs and surfaces clear errors', () => {
   assert.equal(source.includes('visuel de secours'), false);
   assert.equal(source.includes('affiche professionnelle de secours'), false);
 });
+
+test('dashboard resumes in-flight poster jobs persisted on the row, on page load', () => {
+  // The Post type carries the persisted job fields read back from the row.
+  assert.match(source, /image_status\?: string \| null/);
+  assert.match(source, /image_job_id\?: string \| null/);
+  assert.match(source, /image_status_url\?: string \| null/);
+  // On load, posts still "processing" with a saved job are resumed (bounded).
+  assert.match(source, /const resumePendingImage = async \(post: Post\) =>/);
+  assert.match(source, /p\.image_status === "processing" && \(p\.image_job_id \|\| p\.image_status_url\)/);
+  assert.match(source, /void resumePendingImage\(p\)/);
+  // resume forwards the saved job id / status url so no new (paid) job starts.
+  assert.match(source, /jobId: post\.image_job_id \|\| undefined/);
+  assert.match(source, /statusUrl: post\.image_status_url \|\| undefined/);
+});

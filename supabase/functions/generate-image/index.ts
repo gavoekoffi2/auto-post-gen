@@ -108,8 +108,13 @@ function sleep(ms: number): Promise<void> {
 function extractGraphisteJobId(value: unknown): string | null {
   if (!value || typeof value !== "object") return null;
   const obj = value as Record<string, unknown>;
-  const direct = obj.job_id || obj.jobId || obj.request_id || obj.requestId || obj.id || obj.task_id || obj.taskId;
+  // The canonical field is data.job_id. Do NOT accept request_id here: the
+  // v1.1 envelope carries a top-level request_id (an API trace id, not a
+  // pollable job) that would otherwise be grabbed before we recurse into
+  // `data` — producing an id that 404s on GET /v1/posters/{id}.
+  const direct = obj.job_id || obj.jobId || obj.task_id || obj.taskId || obj.id;
   if (typeof direct === "string" && direct.trim()) return direct.trim();
+  if (typeof direct === "number" && Number.isFinite(direct)) return String(direct);
   for (const key of ["data", "result", "job", "request", "generation"]) {
     const nested = extractGraphisteJobId(obj[key]);
     if (nested) return nested;
@@ -550,8 +555,21 @@ serve(async (req) => {
         format,
       });
     // Still generating → hand the job back so the client resumes polling.
-    const stillProcessing = (jobId: string | null, statusUrl: string | null) =>
-      jsonResponse({ status: "processing", jobId, statusUrl, format });
+    // Also persist the in-flight job on the post row (best-effort) so a slow
+    // poster that finishes AFTER the client gives up is not orphaned: the row
+    // keeps image_job_id/image_status_url and can be resumed later (on the next
+    // dashboard load, or at publish time). Mirrors the auto-post (cron) path.
+    const stillProcessing = async (jobId: string | null, statusUrl: string | null) => {
+      if (postId && (jobId || statusUrl)) {
+        const { error: persistErr } = await supabase
+          .from("posts")
+          .update({ image_job_id: jobId, image_status_url: statusUrl, image_status: "processing" })
+          .eq("id", postId)
+          .eq("user_id", userId);
+        if (persistErr) console.error("Failed to persist in-flight poster job:", persistErr.message);
+      }
+      return jsonResponse({ status: "processing", jobId, statusUrl, format });
+    };
 
     // The poster engine is Graphiste GPT only — there is no local fallback.
     // If the key is missing, fail clearly and save nothing.
@@ -569,7 +587,7 @@ serve(async (req) => {
       // Resume an in-flight job: short bounded poll, then hand back if needed.
       const r = await resumeGraphisteJob(resumeJobId, resumeStatusUrl, 45_000);
       if (r.status === "failed") return noFinalImage("job failed");
-      if (!r.imageUrl) return stillProcessing(resumeJobId, resumeStatusUrl);
+      if (!r.imageUrl) return await stillProcessing(resumeJobId, resumeStatusUrl);
       imageUrl = r.imageUrl;
     } else {
       // Soft monthly cap (cost control for the free beta).
@@ -641,7 +659,7 @@ serve(async (req) => {
         // Still generating: hand the job to the client so it can resume polling
         // without any single invocation running near the 150s edge limit.
         if (graphiste.jobId || graphiste.statusUrl) {
-          return stillProcessing(graphiste.jobId, graphiste.statusUrl);
+          return await stillProcessing(graphiste.jobId, graphiste.statusUrl);
         }
         return noFinalImage(graphiste.warning || undefined);
       }
@@ -711,7 +729,7 @@ serve(async (req) => {
     if (postId) {
       const { error: updateErr } = await supabase
         .from("posts")
-        .update({ image_url: imageUrl, image_status: "done", image_job_id: null })
+        .update({ image_url: imageUrl, image_status: "done", image_job_id: null, image_status_url: null })
         .eq("id", postId)
         .eq("user_id", userId);
       if (updateErr) console.error("Failed to attach image to post:", updateErr);

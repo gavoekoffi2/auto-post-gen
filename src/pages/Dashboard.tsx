@@ -28,6 +28,9 @@ type Post = {
   title: string;
   content: string;
   image_url?: string;
+  image_status?: string | null;
+  image_job_id?: string | null;
+  image_status_url?: string | null;
   status: PostStatus;
   publish_error?: string | null;
 };
@@ -167,11 +170,55 @@ export default function Dashboard() {
       });
 
       setPosts(transformedPosts);
+
+      // Resume any poster jobs that were still rendering when the page was last
+      // closed (or whose generation outran the client's polling budget). The
+      // edge function persists the job on the row, so we can pick the finished
+      // poster back up here instead of losing it. Bounded to avoid a thundering
+      // herd if many posts are mid-generation.
+      const pendingImagePosts = transformedPosts
+        .filter((p) => !p.image_url && p.image_status === "processing" && (p.image_job_id || p.image_status_url))
+        .slice(0, 4);
+      for (const p of pendingImagePosts) {
+        void resumePendingImage(p);
+      }
     } catch (error) {
       console.error('Error loading data:', error);
       toast.error('Erreur lors du chargement des données');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Re-poll a poster job that is already in flight (persisted on the post row)
+  // and attach the finished image when it lands. Used on page load so slow
+  // posters appear automatically alongside the text, without a manual retry.
+  const resumePendingImage = async (post: Post) => {
+    if (generatingImageIds.has(post.id)) return;
+    setGeneratingImageIds((prev) => new Set(prev).add(post.id));
+    try {
+      const res = await generatePosterImage({
+        postId: post.id,
+        platforms: post.platforms || (post.platform ? [post.platform] : []),
+        jobId: post.image_job_id || undefined,
+        statusUrl: post.image_status_url || undefined,
+      });
+      if (res.imageUrl) {
+        const url = res.imageUrl;
+        setPosts((prev) =>
+          prev.map((p) => (p.id === post.id ? { ...p, image_url: url, image_status: "done" } : p)),
+        );
+      }
+      // On error/timeout we leave the row as-is; the "Régénérer l'affiche"
+      // button stays available and a later load will retry the same job.
+    } catch (err) {
+      console.error("Resume pending image failed:", err);
+    } finally {
+      setGeneratingImageIds((prev) => {
+        const next = new Set(prev);
+        next.delete(post.id);
+        return next;
+      });
     }
   };
 

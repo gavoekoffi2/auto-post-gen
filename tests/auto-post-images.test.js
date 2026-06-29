@@ -50,3 +50,13 @@ test('shared Graphiste client honours the documented v1.1 async contract', () =>
   assert.match(graphiste, /refusing SVG data URL/);
   assert.match(graphiste, /user-assets/);
 });
+
+test('shared Graphiste client uses the single shared response parser (no duplicated job-id logic)', () => {
+  // job-id / status-url / failure parsing lives in one tested module so the
+  // request_id-vs-job_id fix cannot drift between the cron and interactive paths.
+  assert.match(graphiste, /from "\.\/graphisteParse\.ts"/);
+  assert.match(graphiste, /extractJobId/);
+  assert.match(graphiste, /extractStatusUrl/);
+  // the buggy local getter that accepted request_id must be gone from here.
+  assert.doesNotMatch(graphiste, /o\.request_id \|\| o\.requestId/);
+});
