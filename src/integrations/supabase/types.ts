@@ -233,6 +233,57 @@ export type Database = {
         }
         Relationships: []
       }
+      video_jobs: {
+        Row: {
+          aspect: string | null
+          created_at: string | null
+          error_message: string | null
+          external_task_id: string | null
+          id: string
+          params: Json
+          post_id: string | null
+          progress: number
+          provider: string
+          status: string
+          subject: string | null
+          updated_at: string | null
+          user_id: string
+          video_url: string | null
+        }
+        Insert: {
+          aspect?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          external_task_id?: string | null
+          id?: string
+          params?: Json
+          post_id?: string | null
+          progress?: number
+          provider?: string
+          status?: string
+          subject?: string | null
+          updated_at?: string | null
+          user_id: string
+          video_url?: string | null
+        }
+        Update: {
+          aspect?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          external_task_id?: string | null
+          id?: string
+          params?: Json
+          post_id?: string | null
+          progress?: number
+          provider?: string
+          status?: string
+          subject?: string | null
+          updated_at?: string | null
+          user_id?: string
+          video_url?: string | null
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           activity_keywords: string[] | null

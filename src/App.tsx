@@ -23,6 +23,7 @@ const Terms = lazy(() => import("./pages/Terms"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const ValidatePost = lazy(() => import("./pages/ValidatePost"));
 const Comments = lazy(() => import("./pages/Comments"));
+const Videos = lazy(() => import("./pages/Videos"));
 
 const queryClient = new QueryClient();
 
@@ -92,6 +93,14 @@ const App = () => (
               element={
                 <ProtectedRoute>
                   <Comments />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/videos"
+              element={
+                <ProtectedRoute>
+                  <Videos />
                 </ProtectedRoute>
               }
             />

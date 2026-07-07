@@ -12,6 +12,18 @@ verify_jwt = true
 [functions.generate-image]
 verify_jwt = true
 
+# generate-video enqueues an async video render on the external
+# MoneyPrinterTurbo microservice. User JWT verified in-function; it returns
+# a job id immediately without waiting for the render.
+[functions.generate-video]
+verify_jwt = true
+
+# video-status refreshes video job state. verify_jwt = false because it
+# supports BOTH a user JWT (single job, checked in-function) and a
+# CRON_SECRET header (batch sweep of active jobs).
+[functions.video-status]
+verify_jwt = false
+
 # auto-generate-weekly is a cron-only entry point. Protected by CRON_SECRET.
 [functions.auto-generate-weekly]
 verify_jwt = false
