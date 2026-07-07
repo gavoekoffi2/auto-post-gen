@@ -35,7 +35,9 @@ environment variables in the Supabase dashboard before deploying.
 | --- | --- | --- |
 | `OPENROUTER_API_KEY` | `generate-content`, `generate-image`, `auto-generate-weekly` | LLM access (OpenAI-compatible API). |
 | `OPENROUTER_TEXT_MODEL` *(optional)* | `generate-content`, `auto-generate-weekly` | Defaults to `google/gemini-2.5-flash`. |
-| `OPENROUTER_IMAGE_MODEL` *(optional)* | `generate-image` | First image model in the fallback chain. Defaults to `openai/gpt-5.4-image-2` / GPT Image 2 (must be an **image-output** model). |
+| `OPENROUTER_IMAGE_MODEL` *(optional)* | `generate-image` | First image model in the OpenRouter **fallback** chain. Defaults to `openai/gpt-5.4-image-2` / GPT Image 2 (must be an **image-output** model). |
+| `GRAPHISTE_GPT_API_KEY` *(recommended)* | `generate-image` | Premium poster engine (structured social-media posters). When set, it is the **primary** image engine. When absent, errored, or too slow, `generate-image` automatically falls back to the OpenRouter image models above — so image generation never fails silently. **If image generation is broken while text works, this missing secret is the most likely cause.** |
+| `GRAPHISTE_GPT_API_URL` *(optional)* | `generate-image` | Override the Graphiste GPT poster endpoint. Defaults to the built-in URL. |
 | `APP_NAME` / `APP_PUBLIC_URL` *(optional)* | all AI calls | Sent as `X-Title` and `HTTP-Referer` to OpenRouter so usage shows up cleanly in their dashboard. |
 | `IMAGE_GENERATION_TIMEOUT_MS` *(optional)* | `generate-image` | Per-model timeout for image generation. Defaults to 60000. |
 | `TAVILY_API_KEY` *(optional upgrade)* | `generate-content` | Premium web-search source. The function already uses **free** Google News RSS + DuckDuckGo by default — Tavily just adds higher quality results when configured. Free tier 1k queries/month at https://tavily.com. |
