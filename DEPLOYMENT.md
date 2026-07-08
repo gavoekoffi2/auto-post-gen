@@ -77,6 +77,7 @@ Configure these in the Supabase dashboard, sending the header
 | Mondays, 08:00 UTC | `POST /functions/v1/send-validation-email` | Emails any user with `pending` posts so they can validate them. |
 | Every 15 minutes | `POST /functions/v1/publish-post` (no body) | Publishes any `validated` post whose `scheduled_for` is in the past. |
 | Every 15–30 minutes | `POST /functions/v1/sync-comments` (no body) | Pulls new comments on published posts into the inbox and (if the user enabled it) auto-replies with the AI. Requires a comment-capable provider (Ayrshare Premium). |
+| Every 1–2 minutes | `POST /functions/v1/video-status` (no body) | Batch-refreshes active video jobs on MoneyPrinterTurbo: advances progress and, when a render is done, downloads the file, stores it in Supabase Storage and flips the job to `done`. This is what lets video generation finish **without an open browser tab**; the dashboard reflects it live via Supabase Realtime. Requires `MONEYPRINTER_API_URL`. |
 
 ## 3. Social network publishing — the truth
 

@@ -87,6 +87,14 @@ test('edge functions are registered with the right JWT policy', () => {
   assert.match(config, /\[functions\.video-status\]\nverify_jwt = false/);
 });
 
+test('frontend subscribes to Realtime so cron-driven job updates appear live', () => {
+  assert.match(videosPage, /supabase\s*\n?\s*\.channel\(/);
+  assert.match(videosPage, /postgres_changes/);
+  assert.match(videosPage, /table:\s*"video_jobs"/);
+  assert.match(videosPage, /filter:\s*`user_id=eq\.\$\{session\.user\.id\}`/);
+  assert.match(videosPage, /removeChannel/);
+});
+
 test('frontend exposes a real video generation UI (not a coming-soon placeholder)', () => {
   assert.match(app, /path="\/videos"/);
   assert.match(videosPage, /generate-video/);

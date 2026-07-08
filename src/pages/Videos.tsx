@@ -96,6 +96,45 @@ export default function Videos() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Live updates via Supabase Realtime. When the cron poller (video-status in
+  // CRON_SECRET mode) advances a job — even while this tab was closed — the
+  // change streams in here and the UI reflects it without a manual refresh.
+  // This complements the polling loop below (which also drives the download +
+  // upload when no cron is configured).
+  useEffect(() => {
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    let cancelled = false;
+    (async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session || cancelled) return;
+      channel = supabase
+        .channel("video_jobs_realtime")
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "video_jobs", filter: `user_id=eq.${session.user.id}` },
+          (payload) => {
+            const row = payload.new as Partial<VideoJob> & { id?: string };
+            if (!row?.id) return;
+            upsertJob({
+              id: row.id,
+              status: row.status as VideoJob["status"],
+              subject: row.subject ?? undefined,
+              aspect: row.aspect ?? undefined,
+              progress: row.progress,
+              video_url: row.video_url ?? undefined,
+              error_message: row.error_message ?? undefined,
+              created_at: row.created_at ?? undefined,
+            } as Partial<VideoJob> & { id: string });
+          },
+        )
+        .subscribe();
+    })();
+    return () => {
+      cancelled = true;
+      if (channel) void supabase.removeChannel(channel);
+    };
+  }, []);
+
   // Resume polling for any job that is still active after a reload.
   useEffect(() => {
     for (const job of jobs) {
@@ -380,8 +419,9 @@ export default function Videos() {
             )}
           </Button>
           <p className="text-xs text-muted-foreground">
-            Le rendu prend généralement 1 à 4 minutes. Tu peux quitter cette page : la vidéo
-            se retrouvera ici une fois prête (garde l'onglet ouvert pour le suivi en direct).
+            Le rendu prend généralement 1 à 4 minutes. Tu peux fermer cette page : le suivi
+            continue côté serveur (cron) et la vidéo apparaîtra ici, prête, à ton retour. Si
+            l'onglet reste ouvert, la progression se met à jour en direct.
           </p>
         </Card>
 
