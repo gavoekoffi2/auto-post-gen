@@ -21,6 +21,7 @@ export type Database = {
           created_at: string | null
           id: string
           image_url: string | null
+          video_url: string | null
           platforms: string[]
           publish_error: string | null
           published_at: string | null
@@ -43,6 +44,7 @@ export type Database = {
           created_at?: string | null
           id?: string
           image_url?: string | null
+          video_url?: string | null
           platforms?: string[]
           publish_error?: string | null
           published_at?: string | null
@@ -65,6 +67,7 @@ export type Database = {
           created_at?: string | null
           id?: string
           image_url?: string | null
+          video_url?: string | null
           platforms?: string[]
           publish_error?: string | null
           published_at?: string | null

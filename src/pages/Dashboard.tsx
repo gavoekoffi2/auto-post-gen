@@ -28,6 +28,7 @@ type Post = {
   title: string;
   content: string;
   image_url?: string;
+  video_url?: string | null;
   status: PostStatus;
   publish_error?: string | null;
 };
@@ -828,7 +829,15 @@ export default function Dashboard() {
                         )}
                       </div>
                      )}
-                     {post.image_url ? (
+                     {post.video_url ? (
+                       <div className="mb-4 rounded-lg overflow-hidden bg-black">
+                         <video
+                           src={post.video_url}
+                           controls
+                           className="w-full h-48 object-contain bg-black"
+                         />
+                       </div>
+                     ) : post.image_url ? (
                        <div className="mb-4 rounded-lg overflow-hidden bg-muted">
                          <img
                            src={post.image_url}

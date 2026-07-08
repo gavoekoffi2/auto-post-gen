@@ -61,6 +61,7 @@ interface PostRow {
   content: string;
   platforms: string[] | null;
   image_url: string | null;
+  video_url: string | null;
 }
 
 interface SocialConnectionRow {
@@ -543,6 +544,7 @@ async function publishViaZernio(
   platforms: string[],
   content: string,
   imageUrl: string | null,
+  videoUrl: string | null,
   requestId: string,
 ): Promise<{ results: PublishResult[]; providerPostId: string | null }> {
   const results: PublishResult[] = [];
@@ -559,7 +561,7 @@ async function publishViaZernio(
     }
     if (targets.length === 0) return { results, providerPostId: null };
 
-    const res = await zernioCreatePost({ content, imageUrl, platforms: targets, requestId });
+    const res = await zernioCreatePost({ content, imageUrl, videoUrl, platforms: targets, requestId });
     for (const result of res.results) {
       results.push(
         result.status === "ok"
@@ -652,12 +654,18 @@ async function publishPost(
     }
   }
 
+  // Generated videos already live at a public Supabase Storage URL
+  // (user-assets), so they need no rehosting. A video takes precedence over
+  // an image for the same post.
+  const videoUrl: string | null = post.video_url || null;
+
   if (zernio?.profile_key) {
     const zr = await publishViaZernio(
       zernio.profile_key,
       platforms,
       post.content,
-      stableImageUrl,
+      videoUrl ? null : stableImageUrl,
+      videoUrl,
       post.id,
     );
     results.push(...zr.results);
