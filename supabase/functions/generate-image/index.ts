@@ -8,6 +8,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { getSocialImageSpec, type SocialImageSpec } from "../_shared/socialImageSpecs.ts";
+import { generateImageUrl } from "../_shared/ai.ts";
 // Image generation for Pro Social AI must produce real poster layouts.
 // Keep this endpoint dedicated to Graphiste GPT poster output rather than
 // generic image providers. The chosen output format always follows the post's
@@ -488,6 +489,37 @@ async function tryGraphisteGptPoster(params: {
   }
 }
 
+// OpenRouter image fallback. Graphiste GPT is the premium poster engine, but
+// it is a slow, occasionally-unavailable third-party service (and its key may
+// not be configured at all). When Graphiste can't deliver a finished poster,
+// we fall back to the OpenRouter image models — the same OPENROUTER_API_KEY
+// that text generation already uses — so image generation never fails
+// silently. The output is a single social-media visual sized to the post's
+// target format; it is more generic than a Graphiste poster but always real.
+async function tryOpenRouterFallback(params: {
+  postContent: string;
+  sector: string;
+  description: string;
+  companyName: string;
+  spec: SocialImageSpec;
+}): Promise<{ imageUrl: string | null; warning: string | null }> {
+  const prompt = [
+    `Génère une affiche marketing premium pour les réseaux sociaux au format ${params.spec.label} (${orientationLabel(params.spec.orientation)}, ratio ${graphisteAspectRatio(params.spec)}).`,
+    buildGraphisteSubject(params),
+  ].join("\n").slice(0, 1800);
+  try {
+    const { imageUrl, lastError } = await generateImageUrl(prompt);
+    // Reuse the same strict raster check so an SVG/placeholder never counts.
+    if (imageUrl && isImageUrl(imageUrl)) return { imageUrl, warning: null };
+    return {
+      imageUrl: null,
+      warning: lastError || "OpenRouter n'a retourné aucune image exploitable.",
+    };
+  } catch (err) {
+    return { imageUrl: null, warning: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 serve(async (req) => {
   const corsHeaders = buildCorsHeaders(req.headers.get("origin"));
   if (req.method === "OPTIONS") {
@@ -578,61 +610,60 @@ serve(async (req) => {
       resolution: "2K",
     };
 
-    // The poster engine is Graphiste GPT only — there is no local fallback.
-    // If the key is missing, fail clearly and save nothing.
-    if (!Deno.env.get("GRAPHISTE_GPT_API_KEY")) {
-      return new Response(
-        JSON.stringify({
-          error: "Génération d'affiche indisponible : le secret GRAPHISTE_GPT_API_KEY n'est pas configuré dans Supabase (Edge Functions → Secrets).",
-          code: "missing_api_key",
-          format,
-        }),
-        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    }
+    const graphisteKeyPresent = Boolean(Deno.env.get("GRAPHISTE_GPT_API_KEY"));
 
-    let graphiste: GraphistePosterResult;
-    if (isGraphisteStatusPoll) {
-      graphiste = await tryGraphisteGptStatus({
-        jobId: graphisteJobId,
-        statusUrl: graphisteStatusUrl,
-      });
-    } else {
-      // Pull the user's brand preferences from their profile so every
-      // image respects the same visual identity.
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select(
-          "image_people_type, image_style, brand_primary_color, brand_secondary_color, brand_accent_color, brand_font, sector, description, company_name, logo_url",
-        )
-        .eq("id", userId)
-        .maybeSingle();
+    // Brand/profile context — needed by both the Graphiste poster and the
+    // OpenRouter fallback so every image respects the same visual identity.
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select(
+        "image_people_type, image_style, brand_primary_color, brand_secondary_color, brand_accent_color, brand_font, sector, description, company_name, logo_url",
+      )
+      .eq("id", userId)
+      .maybeSingle();
+    const primary = profile?.brand_primary_color || "#8B5CF6";
+    const secondary = profile?.brand_secondary_color || "#3B82F6";
+    const accent = profile?.brand_accent_color || "#F59E0B";
+    const sector = profile?.sector || "";
+    const description = profile?.description || "";
+    const companyName = profile?.company_name || "Entreprise";
 
-      const primary = profile?.brand_primary_color || "#8B5CF6";
-      const secondary = profile?.brand_secondary_color || "#3B82F6";
-      const accent = profile?.brand_accent_color || "#F59E0B";
-      const sector = profile?.sector || "";
-      const description = profile?.description || "";
+    let imageUrl: string | null = null;
+    let provider = "graphiste-gpt";
+    let usedFallback = false;
+    let graphisteMeta: Pick<GraphistePosterResult, "request_id" | "job_id" | "status_url" | "elapsed_ms"> = {};
+    let lastWarning: string | null = null;
 
-      graphiste = await tryGraphisteGptPoster({
-        postContent,
-        sector,
-        description,
-        companyName: profile?.company_name || "Entreprise",
-        primary,
-        secondary,
-        accent,
-        logoUrl: profile?.logo_url || null,
-        spec,
-      });
-    }
-    if (graphiste.warning) console.warn("Graphiste GPT unavailable:", { warning: graphiste.warning, request_id: graphiste.request_id, job_id: graphiste.job_id, elapsed_ms: graphiste.elapsed_ms });
+    // 1) Premium path: Graphiste GPT posters, only when its key is configured.
+    if (graphisteKeyPresent) {
+      const graphiste: GraphistePosterResult = isGraphisteStatusPoll
+        ? await tryGraphisteGptStatus({ jobId: graphisteJobId, statusUrl: graphisteStatusUrl })
+        : await tryGraphisteGptPoster({
+            postContent,
+            sector,
+            description,
+            companyName,
+            primary,
+            secondary,
+            accent,
+            logoUrl: profile?.logo_url || null,
+            spec,
+          });
+      graphisteMeta = {
+        request_id: graphiste.request_id,
+        job_id: graphiste.job_id,
+        status_url: graphiste.status_url,
+        elapsed_ms: graphiste.elapsed_ms,
+      };
+      lastWarning = graphiste.warning;
+      if (graphiste.warning) console.warn("Graphiste GPT unavailable:", { warning: graphiste.warning, ...graphisteMeta });
 
-    if (!graphiste.imageUrl) {
-      // Slow Graphiste jobs are not failures. Return the job handle so the
-      // dashboard can poll this Edge Function again without starting another
-      // paid generation.
-      if (graphiste.processing && (graphiste.job_id || graphiste.status_url)) {
+      if (graphiste.imageUrl) {
+        imageUrl = graphiste.imageUrl;
+      } else if (graphiste.processing && (graphiste.job_id || graphiste.status_url)) {
+        // A genuine premium job is still rendering — return the job handle so
+        // the dashboard can poll this Edge Function again without starting
+        // another paid generation. Don't downgrade a job that may still finish.
         return new Response(
           JSON.stringify({
             processing: true,
@@ -647,25 +678,43 @@ serve(async (req) => {
           { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
-      // No real Graphiste GPT poster: do NOT save anything (no SVG, no
-      // placeholder). Surface a clear, actionable error instead.
-      console.warn("generate-image: no final Graphiste GPT image:", graphiste.warning);
+      // Otherwise Graphiste failed outright (no key-level, error, or no
+      // pollable job) → fall through to the OpenRouter fallback below.
+    }
+
+    // 2) OpenRouter fallback: guarantees a real image whenever Graphiste is
+    //    missing, errored, or produced no pollable job. Never a silent failure.
+    if (!imageUrl) {
+      const fb = await tryOpenRouterFallback({ postContent, sector, description, companyName, spec });
+      if (fb.warning) {
+        lastWarning = fb.warning;
+        console.warn("OpenRouter image fallback failed:", fb.warning);
+      }
+      if (fb.imageUrl) {
+        imageUrl = fb.imageUrl;
+        provider = "openrouter";
+        usedFallback = true;
+      }
+    }
+
+    // 3) Both engines failed → clear, actionable error. Save nothing (no SVG,
+    //    no placeholder).
+    if (!imageUrl) {
+      console.warn("generate-image: no image from Graphiste or OpenRouter:", lastWarning);
       return new Response(
         JSON.stringify({
-          error: "Graphiste GPT n'a pas retourné d'affiche finale. Réessayez ; si le problème persiste, vérifiez la clé GRAPHISTE_GPT_API_KEY et le service Graphiste GPT.",
+          error: "La génération d'affiche a échoué : ni Graphiste GPT ni le générateur OpenRouter de secours n'ont produit d'image. Vérifiez les secrets GRAPHISTE_GPT_API_KEY et OPENROUTER_API_KEY dans Supabase, puis réessayez.",
           code: "no_final_image",
-          detail: graphiste.warning || undefined,
-          request_id: graphiste.request_id || undefined,
-          job_id: graphiste.job_id || undefined,
-          status_url: graphiste.status_url || undefined,
-          elapsed_ms: graphiste.elapsed_ms,
+          detail: lastWarning || undefined,
+          request_id: graphisteMeta.request_id || undefined,
+          job_id: graphisteMeta.job_id || undefined,
+          status_url: graphisteMeta.status_url || undefined,
+          elapsed_ms: graphisteMeta.elapsed_ms,
           format,
         }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
-
-    let imageUrl = graphiste.imageUrl;
 
     // Re-host to user-assets/ for a permanent URL, and verify it is a real
     // raster image (never an SVG/placeholder) before saving it anywhere.
@@ -699,7 +748,7 @@ serve(async (req) => {
         console.error("generate-image: could not verify a real raster poster:", verifyErr);
         return new Response(
           JSON.stringify({
-            error: "Graphiste GPT n'a pas retourné une vraie image d'affiche exploitable. Réessayez.",
+            error: `${provider === "openrouter" ? "OpenRouter" : "Graphiste GPT"} n'a pas retourné une vraie image d'affiche exploitable. Réessayez.`,
             code: "no_final_image",
             format,
           }),
@@ -735,7 +784,16 @@ serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({ imageUrl, provider: "graphiste-gpt", fallback: false, request_id: graphiste.request_id || undefined, job_id: graphiste.job_id || undefined, status_url: graphiste.status_url || undefined, elapsed_ms: graphiste.elapsed_ms, format }),
+      JSON.stringify({
+        imageUrl,
+        provider,
+        fallback: usedFallback,
+        request_id: graphisteMeta.request_id || undefined,
+        job_id: graphisteMeta.job_id || undefined,
+        status_url: graphisteMeta.status_url || undefined,
+        elapsed_ms: graphisteMeta.elapsed_ms,
+        format,
+      }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err) {

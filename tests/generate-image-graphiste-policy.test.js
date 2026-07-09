@@ -7,13 +7,20 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const source = readFileSync(join(__dirname, '..', 'supabase/functions/generate-image/index.ts'), 'utf8');
 
-test('generate-image uses Graphiste GPT premium only — no generic/Gemini/OpenRouter providers', () => {
-  assert.equal(source.includes('generateImageUrl('), false, 'must not call a generic image generator');
-  assert.equal(source.includes('getOpenRouterKey'), false);
-  assert.equal(/Gemini|gemini|OPENROUTER/.test(source), false);
+test('generate-image uses Graphiste GPT premium as the primary engine, with an OpenRouter fallback', () => {
+  // Graphiste GPT stays the premium poster engine (premium quality, no fast/cheap mode)…
   assert.match(source, /quality:\s*"premium"/);
   assert.equal(source.includes('mode: "fast"'), false);
   assert.equal(source.includes('quality: "fast"'), false);
+  // …but image generation must never fail silently when Graphiste is missing,
+  // errored, or produced no pollable job: fall back to the OpenRouter image
+  // models (same OPENROUTER_API_KEY that text generation already uses).
+  assert.match(source, /generateImageUrl/, 'must call the OpenRouter image fallback');
+  assert.match(source, /tryOpenRouterFallback/);
+  assert.match(source, /provider = "openrouter"/);
+  // The fallback is only a fallback: Graphiste is still tried first when its key is present.
+  assert.match(source, /graphisteKeyPresent/);
+  assert.match(source, /if \(!imageUrl\)/, 'OpenRouter runs only when Graphiste produced no image');
 });
 
 test('generate-image sends the documented Graphiste GPT v1.1 contract fields', () => {
@@ -64,16 +71,21 @@ test('generate-image never builds or saves a local SVG poster as a success', () 
   assert.equal(source.includes('buildProfessionalPosterSvgDataUrl'), false);
   assert.equal(source.includes('professional-poster-fallback'), false);
   assert.equal(source.includes('data:image/svg+xml'), false, 'never emits an SVG data URL');
-  assert.match(source, /provider:\s*"graphiste-gpt"/);
+  assert.match(source, /provider = "graphiste-gpt"/, 'Graphiste stays the default provider label');
   // SVGs/placeholders are actively rejected when extracting/verifying images.
   assert.match(source, /contentType\.includes\("svg"\)/);
   assert.match(source, /reference-templates/);
 });
 
 test('generate-image fails with a clear, actionable error instead of saving junk', () => {
-  assert.match(source, /code:\s*"missing_api_key"/);
+  // When BOTH Graphiste and the OpenRouter fallback fail, surface one clear,
+  // actionable error naming both secrets — never save an SVG/placeholder.
   assert.match(source, /code:\s*"no_final_image"/);
   assert.match(source, /GRAPHISTE_GPT_API_KEY/);
+  assert.match(source, /OPENROUTER_API_KEY/, 'error should point at the fallback key too');
+  // No more "missing_api_key" dead-end: a missing Graphiste key now routes to
+  // the OpenRouter fallback instead of failing outright.
+  assert.equal(source.includes('code: "missing_api_key"'), false);
 });
 
 test('generate-image uses the documented business default and async polling', () => {

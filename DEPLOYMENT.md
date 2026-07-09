@@ -35,7 +35,11 @@ environment variables in the Supabase dashboard before deploying.
 | --- | --- | --- |
 | `OPENROUTER_API_KEY` | `generate-content`, `generate-image`, `auto-generate-weekly` | LLM access (OpenAI-compatible API). |
 | `OPENROUTER_TEXT_MODEL` *(optional)* | `generate-content`, `auto-generate-weekly` | Defaults to `google/gemini-2.5-flash`. |
-| `OPENROUTER_IMAGE_MODEL` *(optional)* | `generate-image` | First image model in the fallback chain. Defaults to `openai/gpt-5.4-image-2` / GPT Image 2 (must be an **image-output** model). |
+| `OPENROUTER_IMAGE_MODEL` *(optional)* | `generate-image` | First image model in the OpenRouter **fallback** chain. Defaults to `openai/gpt-5.4-image-2` / GPT Image 2 (must be an **image-output** model). |
+| `GRAPHISTE_GPT_API_KEY` *(recommended)* | `generate-image` | Premium poster engine (structured social-media posters). When set, it is the **primary** image engine. When absent, errored, or too slow, `generate-image` automatically falls back to the OpenRouter image models above — so image generation never fails silently. **If image generation is broken while text works, this missing secret is the most likely cause.** |
+| `GRAPHISTE_GPT_API_URL` *(optional)* | `generate-image` | Override the Graphiste GPT poster endpoint. Defaults to the built-in URL. |
+| `MONEYPRINTER_API_URL` *(required for video)* | `generate-video`, `video-status` | Public URL of the external MoneyPrinterTurbo microservice (Python/ffmpeg) that renders videos. Deploy it separately — see [`moneyprinter/README.md`](moneyprinter/README.md). Without it, video generation returns a clear "service not configured" error. The Pexels + LLM keys live in the microservice's own `config.toml`, not here. |
+| `MONEYPRINTER_API_KEY` *(optional)* | `generate-video`, `video-status` | Shared secret sent as a Bearer token, only if you put the microservice behind an auth proxy. |
 | `APP_NAME` / `APP_PUBLIC_URL` *(optional)* | all AI calls | Sent as `X-Title` and `HTTP-Referer` to OpenRouter so usage shows up cleanly in their dashboard. |
 | `IMAGE_GENERATION_TIMEOUT_MS` *(optional)* | `generate-image` | Per-model timeout for image generation. Defaults to 60000. |
 | `TAVILY_API_KEY` *(optional upgrade)* | `generate-content` | Premium web-search source. The function already uses **free** Google News RSS + DuckDuckGo by default — Tavily just adds higher quality results when configured. Free tier 1k queries/month at https://tavily.com. |
@@ -73,6 +77,7 @@ Configure these in the Supabase dashboard, sending the header
 | Mondays, 08:00 UTC | `POST /functions/v1/send-validation-email` | Emails any user with `pending` posts so they can validate them. |
 | Every 15 minutes | `POST /functions/v1/publish-post` (no body) | Publishes any `validated` post whose `scheduled_for` is in the past. |
 | Every 15–30 minutes | `POST /functions/v1/sync-comments` (no body) | Pulls new comments on published posts into the inbox and (if the user enabled it) auto-replies with the AI. Requires a comment-capable provider (Ayrshare Premium). |
+| Every 1–2 minutes | `POST /functions/v1/video-status` (no body) | Batch-refreshes active video jobs on MoneyPrinterTurbo: advances progress and, when a render is done, downloads the file, stores it in Supabase Storage and flips the job to `done`. This is what lets video generation finish **without an open browser tab**; the dashboard reflects it live via Supabase Realtime. Requires `MONEYPRINTER_API_URL`. |
 
 ## 3. Social network publishing — the truth
 

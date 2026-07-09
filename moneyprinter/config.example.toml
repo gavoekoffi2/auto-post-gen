@@ -1,0 +1,42 @@
+# MoneyPrinterTurbo configuration for the auto-post-gen video microservice.
+#
+# Copy this to `config.toml` INSIDE the MoneyPrinterTurbo container/repo
+# (MoneyPrinterTurbo reads ./config.toml). Fill in the keys marked TODO.
+# Docs: https://github.com/harry0703/MoneyPrinterTurbo
+#
+# This project uses MoneyPrinterTurbo as a PURE GENERATION ENGINE. Do NOT
+# enable its built-in "Upload-Post" / publishing module — publishing is
+# handled entirely by auto-post-gen (see the publish-post Edge Function).
+
+[app]
+  # ---- LLM provider (writes the video script) --------------------------
+  # You already have an OpenRouter key for text/image generation; reuse it.
+  # MoneyPrinterTurbo speaks the OpenAI-compatible protocol, so point it at
+  # OpenRouter. (Alternatively set llm_provider = "openai" with the same base.)
+  llm_provider = "openai"
+  openai_api_key = "TODO_OPENROUTER_OR_OPENAI_KEY"
+  openai_base_url = "https://openrouter.ai/api/v1"
+  openai_model_name = "google/gemini-2.5-flash"
+
+  # ---- Stock footage provider ------------------------------------------
+  # Create a free key at https://www.pexels.com/api/ and paste it here.
+  pexels_api_keys = ["TODO_PEXELS_API_KEY"]
+  # Optional secondary source:
+  # pixabay_api_keys = ["TODO_PIXABAY_API_KEY"]
+
+  # ---- Text-to-speech ---------------------------------------------------
+  # Edge TTS is free and needs no key (default). Leave as-is unless you want
+  # Azure/other. Voices are chosen per-request by auto-post-gen (voice_name).
+  tts_server = "azure-tts-v1"
+
+  # ---- Subtitles --------------------------------------------------------
+  subtitle_provider = "edge"
+
+  # ---- Hosting / networking --------------------------------------------
+  # Keep the API reachable from Supabase Edge Functions. Bind to 0.0.0.0 and
+  # the platform-provided port (Railway/Fly set $PORT). See the deploy docs.
+  listen_host = "0.0.0.0"
+  listen_port = 8080
+
+  # ---- Do NOT enable the native publisher ------------------------------
+  # Leave any upload-post / social-publishing settings disabled/empty.

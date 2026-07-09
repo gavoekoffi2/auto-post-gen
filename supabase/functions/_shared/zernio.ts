@@ -76,6 +76,10 @@ export async function zernioListAccounts(profileId?: string | null): Promise<Zer
 export interface ZernioPublishInput {
   content: string;
   imageUrl?: string | null;
+  // When set, the post is published as a VIDEO (TikTok, YouTube Shorts,
+  // Instagram Reels, …). Takes precedence over imageUrl.
+  videoUrl?: string | null;
+  thumbnailUrl?: string | null;
   platforms: Array<{ platform: string; accountId: string }>;
   requestId?: string; // sent as x-request-id for safe-retry idempotency
 }
@@ -138,7 +142,15 @@ export async function zernioCreatePost(
     publishNow: true,
     platforms: input.platforms,
   };
-  if (input.imageUrl) body.mediaItems = [{ url: input.imageUrl, type: "image" }];
+  // Video wins over image: a post carrying a generated video is published as
+  // a video media item (Zernio format: { type: "video", url, thumbnail? }).
+  if (input.videoUrl) {
+    const videoItem: Record<string, unknown> = { url: input.videoUrl, type: "video" };
+    if (input.thumbnailUrl) videoItem.thumbnail = input.thumbnailUrl;
+    body.mediaItems = [videoItem];
+  } else if (input.imageUrl) {
+    body.mediaItems = [{ url: input.imageUrl, type: "image" }];
+  }
 
   const h = headers({ "Content-Type": "application/json" });
   if (input.requestId) h["x-request-id"] = input.requestId;

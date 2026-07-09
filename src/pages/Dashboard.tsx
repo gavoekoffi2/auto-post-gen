@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Calendar, TrendingUp, CheckCircle, Clock, Edit2, Sparkles, Settings, Share2, Calendar as CalendarIcon, Trash2, User, BarChart3, Send, ImageIcon, Loader2, MessageSquare, RefreshCw } from "lucide-react";
+import { Calendar, TrendingUp, CheckCircle, Clock, Edit2, Sparkles, Settings, Share2, Calendar as CalendarIcon, Trash2, User, BarChart3, Send, ImageIcon, Loader2, MessageSquare, RefreshCw, Clapperboard } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,6 +28,7 @@ type Post = {
   title: string;
   content: string;
   image_url?: string;
+  video_url?: string | null;
   status: PostStatus;
   publish_error?: string | null;
 };
@@ -596,6 +597,10 @@ export default function Dashboard() {
     navigate('/comments');
   };
 
+  const handleVideos = () => {
+    navigate('/videos');
+  };
+
   const handleProfile = () => {
     navigate('/profile');
   };
@@ -671,6 +676,10 @@ export default function Dashboard() {
               <Button onClick={handleComments} variant="outline" size="sm" className="glass-card">
                 <MessageSquare className="w-4 h-4 mr-2" />
                 Commentaires
+              </Button>
+              <Button onClick={handleVideos} variant="outline" size="sm" className="glass-card">
+                <Clapperboard className="w-4 h-4 mr-2" />
+                Vidéos
               </Button>
               <Button onClick={handleProfile} variant="outline" size="sm" className="glass-card">
                 <User className="w-4 h-4 mr-2" />
@@ -820,7 +829,15 @@ export default function Dashboard() {
                         )}
                       </div>
                      )}
-                     {post.image_url ? (
+                     {post.video_url ? (
+                       <div className="mb-4 rounded-lg overflow-hidden bg-black">
+                         <video
+                           src={post.video_url}
+                           controls
+                           className="w-full h-48 object-contain bg-black"
+                         />
+                       </div>
+                     ) : post.image_url ? (
                        <div className="mb-4 rounded-lg overflow-hidden bg-muted">
                          <img
                            src={post.image_url}
