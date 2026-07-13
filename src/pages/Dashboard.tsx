@@ -61,6 +61,30 @@ function formatPublishError(raw?: string | null): string | null {
   return String(raw).slice(0, 200);
 }
 
+// Client-side ceiling on a single generate-image invoke. The edge function
+// bounds itself well under this; the race is a last-resort guard so a hung
+// gateway/network call can never freeze the dashboard spinner forever.
+const IMAGE_GENERATION_TIMEOUT_MS = 90_000;
+
+type GenerateImageInvoke = { data: Record<string, unknown> | null; error: unknown };
+
+async function invokeGenerateImageWithTimeout(
+  body: Record<string, unknown>,
+): Promise<GenerateImageInvoke | "timeout"> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<"timeout">((resolve) => {
+    timeoutId = setTimeout(() => resolve("timeout"), IMAGE_GENERATION_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([
+      supabase.functions.invoke("generate-image", { body }) as Promise<GenerateImageInvoke>,
+      timeout,
+    ]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 // Image generation is resumable: the edge function does a short bounded poll and
 // hands back a job id when a premium poster is still rendering. We re-call it
 // with that job id until the poster is ready, an error is returned, or we hit a
@@ -72,7 +96,18 @@ async function generatePosterImage(
   let body: Record<string, unknown> = initialBody;
   // Up to ~7 calls; each call internally polls ~40-45s → several minutes total.
   for (let attempt = 0; attempt < 7; attempt++) {
-    const { data, error } = await supabase.functions.invoke("generate-image", { body });
+    const raced = await invokeGenerateImageWithTimeout(body);
+    if (raced === "timeout") {
+      // The edge call went unresponsive. If we were resuming an existing job
+      // (jobId present) retrying is free — it is only a status poll. But if
+      // this was the INITIAL call, a paid job may already have started server
+      // side; the edge function persists it on the post row, so we stop here
+      // instead of racing a second paid generation. The dashboard resumes the
+      // persisted job on the next load.
+      if (body.jobId || body.statusUrl) continue;
+      break;
+    }
+    const { data, error } = raced;
     if (error) throw error;
     if (data?.error) return { error: data.error as string, detail: data.detail as string | undefined };
     if (data?.imageUrl) return { imageUrl: data.imageUrl as string };
