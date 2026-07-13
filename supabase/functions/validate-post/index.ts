@@ -1,25 +1,9 @@
 // deno-lint-ignore-file no-explicit-any
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { buildCorsHeaders } from "../_shared/cors.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { clientIp, hitIpRateLimit } from "../_shared/rateLimit.ts";
 
-const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
-
-function buildCorsHeaders(origin: string | null) {
-  const allowed =
-    allowedOrigins.includes("*") || (origin && allowedOrigins.includes(origin));
-  return {
-    "Access-Control-Allow-Origin":
-      allowed && origin ? origin : allowedOrigins[0] === "*" ? "*" : allowedOrigins[0],
-    "Access-Control-Allow-Headers":
-      "authorization, x-client-info, apikey, content-type",
-    "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
-    Vary: "Origin",
-  };
-}
 
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 

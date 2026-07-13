@@ -10,27 +10,11 @@
 // trial) at https://app.ayrshare.com/.
 //
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { buildCorsHeaders } from "../_shared/cors.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 
 const AYRSHARE_BASE = "https://app.ayrshare.com/api";
 
-const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
-
-function buildCorsHeaders(origin: string | null) {
-  const wildcard = allowedOrigins.includes("*");
-  const allowed = wildcard || (origin && allowedOrigins.includes(origin));
-  return {
-    "Access-Control-Allow-Origin":
-      allowed && origin ? origin : wildcard ? "*" : allowedOrigins[0],
-    "Access-Control-Allow-Headers":
-      "authorization, x-client-info, apikey, content-type",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    Vary: "Origin",
-  };
-}
 
 serve(async (req) => {
   const corsHeaders = buildCorsHeaders(req.headers.get("origin"));

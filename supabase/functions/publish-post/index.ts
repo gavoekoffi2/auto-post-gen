@@ -14,6 +14,7 @@
 // invocations can't double-publish.
 //
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { buildCorsHeaders } from "../_shared/cors.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import {
   postizCreatePost,
@@ -25,23 +26,6 @@ import { zernioCreatePost, zernioListAccounts } from "../_shared/zernio.ts";
 import { resumePosterJob } from "../_shared/graphiste.ts";
 import { fetchImageBytes } from "../_shared/safeFetch.ts";
 
-const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
-
-function buildCorsHeaders(origin: string | null) {
-  const allowed =
-    allowedOrigins.includes("*") || (origin && allowedOrigins.includes(origin));
-  return {
-    "Access-Control-Allow-Origin":
-      allowed && origin ? origin : allowedOrigins[0] === "*" ? "*" : allowedOrigins[0],
-    "Access-Control-Allow-Headers":
-      "authorization, x-client-info, apikey, content-type",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    Vary: "Origin",
-  };
-}
 
 interface SocialConnection {
   id: string;

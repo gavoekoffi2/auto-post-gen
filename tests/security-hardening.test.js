@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -24,6 +24,26 @@ test('CORS fails closed: no wildcard default, ACAO omitted when origin not allow
   // No inline copy still defaults to wildcard either.
   for (const src of [genContent, genImage, publish]) {
     assert.equal(src.includes('"ALLOWED_ORIGINS") || "*"'), false);
+  }
+});
+
+test('every function uses the single shared fail-closed CORS helper (no local copies)', () => {
+  // Local buildCorsHeaders copies predated the fail-closed hardening (some
+  // sent allowedOrigins[0]/undefined as ACAO). They were unified into
+  // _shared/cors.ts; this pins that so drift cannot come back. OAuth
+  // callbacks are exempt: they are top-level redirects, not CORS calls.
+  const dirs = readdirSync(join(__dirname, '..', 'supabase/functions'))
+    .filter((d) => !d.startsWith('_') && existsSync(join(__dirname, '..', 'supabase/functions', d, 'index.ts')));
+  for (const d of dirs) {
+    const src = read(`supabase/functions/${d}/index.ts`);
+    assert.equal(
+      /function buildCorsHeaders/.test(src),
+      false,
+      `${d} must import buildCorsHeaders from _shared/cors.ts, not define its own`,
+    );
+    if (src.includes('Access-Control-Allow-Origin') || src.includes('buildCorsHeaders(')) {
+      assert.match(src, /from "\.\.\/_shared\/cors\.ts"/, `${d} must use the shared CORS helper`);
+    }
   }
 });
 

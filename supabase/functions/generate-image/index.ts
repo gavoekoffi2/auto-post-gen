@@ -6,6 +6,7 @@
 // the "regenerate image" endpoint from the dashboard.
 //
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { buildCorsHeaders } from "../_shared/cors.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { getSocialImageSpec, type SocialImageSpec } from "../_shared/socialImageSpecs.ts";
 // Image generation for Pro Social AI must produce real poster layouts.
@@ -14,23 +15,6 @@ import { getSocialImageSpec, type SocialImageSpec } from "../_shared/socialImage
 // target platforms (see _shared/socialImageSpecs.ts) so a LinkedIn post never
 // comes back as a TikTok-shaped image and vice-versa.
 
-const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
-
-function buildCorsHeaders(origin: string | null) {
-  const wildcard = allowedOrigins.includes("*");
-  const allowed = wildcard || (origin && allowedOrigins.includes(origin));
-  return {
-    "Access-Control-Allow-Origin":
-      allowed && origin ? origin : wildcard ? "*" : allowedOrigins[0],
-    "Access-Control-Allow-Headers":
-      "authorization, x-client-info, apikey, content-type",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    Vary: "Origin",
-  };
-}
 
 const MAX_PAYLOAD_BYTES = 64 * 1024;
 
