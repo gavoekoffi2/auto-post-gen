@@ -252,7 +252,7 @@ export default function Onboarding() {
                   <SelectContent>
                     <SelectItem value="2">2 posts/semaine (Starter)</SelectItem>
                     <SelectItem value="5">5 posts/semaine (Pro)</SelectItem>
-                    <SelectItem value="10">10 posts/semaine (Business)</SelectItem>
+                    <SelectItem value="10">10 posts/semaine (Enterprise)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -321,20 +321,27 @@ export default function Onboarding() {
               <div className="space-y-2">
                 <Label className="mb-3 block">Sélectionnez vos réseaux sociaux</Label>
                 <div className="space-y-3">
-                  {['Instagram', 'Facebook', 'Twitter', 'LinkedIn', 'TikTok'].map((platform) => (
-                    <div key={platform} className="flex items-center space-x-2">
+                  {[
+                    { id: 'Instagram' },
+                    { id: 'Facebook' },
+                    { id: 'Twitter' },
+                    { id: 'LinkedIn' },
+                    { id: 'TikTok', comingSoon: true },
+                  ].map(({ id, comingSoon }) => (
+                    <div key={id} className="flex items-center space-x-2">
                       <Checkbox
-                        id={`onboarding-${platform}`}
-                        checked={formData.platforms.includes(platform)}
+                        id={`onboarding-${id}`}
+                        checked={formData.platforms.includes(id)}
+                        disabled={comingSoon}
                         onCheckedChange={(checked) => {
                           const newPlatforms = checked
-                            ? [...formData.platforms, platform]
-                            : formData.platforms.filter(p => p !== platform);
+                            ? [...formData.platforms, id]
+                            : formData.platforms.filter(p => p !== id);
                           setFormData({ ...formData, platforms: newPlatforms });
                         }}
                       />
-                      <label htmlFor={`onboarding-${platform}`} className="text-sm cursor-pointer">
-                        {platform}
+                      <label htmlFor={`onboarding-${id}`} className={`text-sm ${comingSoon ? 'text-muted-foreground' : 'cursor-pointer'}`}>
+                        {id}{comingSoon ? ' (bientôt)' : ''}
                       </label>
                     </div>
                   ))}

@@ -12,8 +12,7 @@ test('dashboard exposes regenerate image and regenerate content actions on cards
   assert.match(source, /handleRegenerateContent/);
   assert.match(source, /Régénérer l(?:’|')affiche/);
   assert.match(source, /Régénérer le contenu/);
-  assert.match(source, /const applyGeneratedImage/);
-  assert.match(source, /current\?\.id === postId \? \{ \.\.\.current, image_url: imageUrl \} : current/);
+  assert.match(source, /current\?\.id === post\.id \? \{ \.\.\.current, image_url: url \} : current/);
 });
 
 test('edit dialog is large, scrollable, and uses a tall readable content editor', () => {

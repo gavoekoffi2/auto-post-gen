@@ -7,12 +7,13 @@ const plans = [
   {
     name: "Starter",
     description: "Idéal pour démarrer sur les réseaux",
-    monthlyPrice: 9,
-    annualPrice: 7,
-    monthlyCFA: 5400,
-    annualCFA: 4200,
+    monthlyFCFA: 5000,
+    annualFCFA: 4200,
+    monthlyUSD: 9,
+    annualUSD: 7,
     icon: Sparkles,
     gradient: "from-blue-400 to-blue-500",
+    comingSoonVideo: null,
     features: [
       { text: "3 posts par semaine", included: true },
       { text: "2 réseaux sociaux", included: true },
@@ -22,6 +23,7 @@ const plans = [
       { text: "Support par email", included: true },
       { text: "Analytics avancés", included: false },
       { text: "Posts personnalisables", included: false },
+      { text: "Réponses auto aux commentaires (IA)", included: false },
     ],
     cta: "Essai gratuit 7 jours",
     popular: false,
@@ -30,12 +32,13 @@ const plans = [
   {
     name: "Pro",
     description: "Pour les professionnels ambitieux",
-    monthlyPrice: 29,
-    annualPrice: 24,
-    monthlyCFA: 17400,
-    annualCFA: 14400,
+    monthlyFCFA: 15000,
+    annualFCFA: 12500,
+    monthlyUSD: 26,
+    annualUSD: 22,
     icon: Zap,
     gradient: "from-primary to-accent",
+    comingSoonVideo: "1 vidéo IA personnalisée par semaine",
     features: [
       { text: "1 post par jour (7/semaine)", included: true },
       { text: "3 réseaux sociaux", included: true },
@@ -45,6 +48,7 @@ const plans = [
       { text: "Analytics détaillés", included: true },
       { text: "Validation par email", included: true },
       { text: "Support prioritaire", included: true },
+      { text: "Réponses auto aux commentaires (IA)", included: false },
     ],
     cta: "Essai gratuit 7 jours",
     popular: true,
@@ -53,21 +57,23 @@ const plans = [
   {
     name: "Enterprise",
     description: "Pour les équipes et agences",
-    monthlyPrice: 79,
-    annualPrice: 66,
-    monthlyCFA: 47400,
-    annualCFA: 39600,
+    monthlyFCFA: 35000,
+    annualFCFA: 29000,
+    monthlyUSD: 61,
+    annualUSD: 50,
     icon: Crown,
     gradient: "from-amber-500 to-orange-500",
+    comingSoonVideo: "Jusqu'à 4 vidéos IA personnalisées par semaine",
     features: [
       { text: "Jusqu'à 10 posts/semaine", included: true },
-      { text: "Tous les réseaux sociaux", included: true },
-      { text: "IA premium (GPT-4o)", included: true },
+      { text: "8 réseaux sociaux inclus", included: true },
+      { text: "IA premium (modèles avancés)", included: true },
       { text: "Images IA haute qualité", included: true },
       { text: "Fréquence personnalisable", included: true },
       { text: "Analytics & rapports avancés", included: true },
       { text: "Manager de compte dédié", included: true },
       { text: "Support prioritaire 24/7", included: true },
+      { text: "Réponses automatiques aux commentaires (IA)", included: true },
     ],
     cta: "Essai gratuit 7 jours",
     popular: false,
@@ -135,8 +141,8 @@ export const PricingNew = () => {
         {/* Pricing cards */}
         <div className="grid md:grid-cols-3 gap-8 max-w-6xl mx-auto">
           {plans.map((plan, index) => {
-            const price = isAnnual ? plan.annualPrice : plan.monthlyPrice;
-            const cfa = isAnnual ? plan.annualCFA : plan.monthlyCFA;
+            const fcfa = isAnnual ? plan.annualFCFA : plan.monthlyFCFA;
+            const usd = isAnnual ? plan.annualUSD : plan.monthlyUSD;
 
             return (
               <div
@@ -177,18 +183,17 @@ export const PricingNew = () => {
 
                 {/* Price */}
                 <div className="mb-1">
-                  <div className="flex items-baseline gap-1">
+                  <div className="flex items-baseline gap-1 flex-wrap">
                     <span className="text-5xl font-bold text-foreground">
-                      ${price}
+                      {fcfa.toLocaleString("fr-FR")}
                     </span>
+                    <span className="text-xl font-semibold text-foreground">FCFA</span>
                     <span className="text-muted-foreground">/mois</span>
                   </div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    ({cfa.toLocaleString("fr-FR")} FCFA/mois)
-                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">≈ ${usd}/mois</p>
                   {isAnnual && (
                     <p className="text-xs text-green-400 mt-1 font-medium">
-                      Facturé ${price * 12}/an ({(cfa * 12).toLocaleString("fr-FR")} FCFA/an)
+                      Facturé {(fcfa * 12).toLocaleString("fr-FR")} FCFA/an (≈ ${usd * 12}/an)
                     </p>
                   )}
                 </div>
@@ -198,6 +203,15 @@ export const PricingNew = () => {
                   <div className="my-4 px-3 py-2 rounded-xl bg-green-500/10 border border-green-500/20">
                     <p className="text-sm text-green-400 font-semibold text-center">
                       🎉 7 jours d'essai gratuit
+                    </p>
+                  </div>
+                )}
+
+                {/* Upcoming AI video badge */}
+                {plan.comingSoonVideo && (
+                  <div className="my-4 px-3 py-2 rounded-xl bg-violet-500/10 border border-violet-500/20">
+                    <p className="text-sm text-violet-400 font-semibold text-center">
+                      🎬 {plan.comingSoonVideo} — bientôt disponible
                     </p>
                   </div>
                 )}
@@ -250,10 +264,13 @@ export const PricingNew = () => {
         {/* Bottom note */}
         <div className="text-center mt-12 space-y-2">
           <p className="text-sm text-muted-foreground">
-            Tous les prix sont en USD. Paiement sécurisé par carte bancaire ou Mobile Money.
+            Prix en FCFA — équivalent USD indiqué à titre indicatif. Paiement sécurisé par Mobile Money ou carte bancaire.
           </p>
           <p className="text-xs text-muted-foreground/70">
             L'essai gratuit inclut toutes les fonctionnalités du plan choisi. Aucune carte bancaire requise.
+          </p>
+          <p className="text-xs text-muted-foreground/70">
+            Besoin de publier plus ? Ajoutez des publications par semaine (dès 1 500 FCFA/mois) ou des réseaux à la carte, sans changer de plan — vous ne payez que ce que vous ajoutez.
           </p>
         </div>
       </div>

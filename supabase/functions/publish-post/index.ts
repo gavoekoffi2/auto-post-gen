@@ -14,6 +14,7 @@
 // invocations can't double-publish.
 //
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { buildCorsHeaders } from "../_shared/cors.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import {
   postizCreatePost,
@@ -22,24 +23,9 @@ import {
   toPostizIdentifier,
 } from "../_shared/postiz.ts";
 import { zernioCreatePost, zernioListAccounts } from "../_shared/zernio.ts";
+import { resumePosterJob } from "../_shared/graphiste.ts";
+import { fetchImageBytes } from "../_shared/safeFetch.ts";
 
-const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "*")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
-
-function buildCorsHeaders(origin: string | null) {
-  const allowed =
-    allowedOrigins.includes("*") || (origin && allowedOrigins.includes(origin));
-  return {
-    "Access-Control-Allow-Origin":
-      allowed && origin ? origin : allowedOrigins[0] === "*" ? "*" : allowedOrigins[0],
-    "Access-Control-Allow-Headers":
-      "authorization, x-client-info, apikey, content-type",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    Vary: "Origin",
-  };
-}
 
 interface SocialConnection {
   id: string;
@@ -61,6 +47,9 @@ interface PostRow {
   content: string;
   platforms: string[] | null;
   image_url: string | null;
+  image_job_id: string | null;
+  image_status_url: string | null;
+  image_status: string | null;
 }
 
 interface SocialConnectionRow {
@@ -257,7 +246,7 @@ async function ensurePublicImage(
   const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
   if (supabaseUrl && imageUrl.startsWith(supabaseUrl)) return imageUrl;
 
-  let blob: Blob;
+  let bytes: Uint8Array;
   let contentType = "image/jpeg";
 
   if (imageUrl.startsWith("data:")) {
@@ -267,29 +256,29 @@ async function ensurePublicImage(
     const meta = imageUrl.slice(5, commaIdx); // e.g. "image/png;base64"
     const payload = imageUrl.slice(commaIdx + 1);
     const isBase64 = meta.includes(";base64");
-    contentType = meta.split(";")[0] || contentType;
+    contentType = (meta.split(";")[0] || contentType).toLowerCase();
+    if (contentType.includes("svg")) throw new Error("Refusing SVG image");
     if (isBase64) {
       const bin = atob(payload);
-      const bytes = new Uint8Array(bin.length);
+      bytes = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      blob = new Blob([bytes], { type: contentType });
     } else {
-      blob = new Blob([decodeURIComponent(payload)], { type: contentType });
+      bytes = new TextEncoder().encode(decodeURIComponent(payload));
     }
+    if (bytes.byteLength > 10 * 1024 * 1024) throw new Error("Image too large");
   } else {
-    // Otherwise, fetch the image and re-upload to user-assets/<userId>/
-    // so we control its lifetime.
-    const resp = await fetch(imageUrl);
-    if (!resp.ok) throw new Error(`Failed to download image: ${resp.status}`);
-    blob = await resp.blob();
-    contentType = blob.type || contentType;
+    // posts.image_url is user-writable, so this fetch is SSRF-guarded
+    // (https-only, blocks private/metadata hosts, content-type + size cap).
+    const fetched = await fetchImageBytes(imageUrl);
+    bytes = fetched.bytes;
+    contentType = fetched.contentType;
   }
 
-  const ext = (contentType.split("/")[1] || "jpg").split(";")[0];
+  const ext = (contentType.split("/")[1] || "jpg").split(";")[0].replace(/[^a-z0-9]/gi, "") || "jpg";
   const path = `${userId}/published-${Date.now()}.${ext}`;
   const { error: upErr } = await supabase.storage
     .from("user-assets")
-    .upload(path, blob, { contentType, upsert: true });
+    .upload(path, bytes, { contentType, upsert: true });
   if (upErr) throw upErr;
   const { data } = supabase.storage.from("user-assets").getPublicUrl(path);
   return data.publicUrl;
@@ -600,6 +589,7 @@ async function publishViaZernio(
 async function publishPost(
   supabase: DbClient,
   postId: string,
+  resumeDeadlineMs?: number,
 ): Promise<{ post_id: string; results: PublishResult[]; skipped?: string }> {
   // Atomically claim the post: only succeed if it is still in the
   // 'validated' state, transitioning it to 'publishing'. This prevents
@@ -623,6 +613,44 @@ async function publishPost(
   }
 
   const post = claimed as PostRow;
+
+  // Automatic posts may carry a Graphiste GPT poster job that was started at
+  // generation time (auto-generate-weekly). By the time the post is due the
+  // job has long finished, so resume it now and attach the poster before
+  // publishing — this is what lets image-only networks (Instagram) work.
+  // Skipped once the batch's shared resume budget is spent, so a rare stuck
+  // job can't stall the whole publish run.
+  if (
+    !post.image_url &&
+    post.image_job_id &&
+    post.image_status !== "failed" &&
+    (resumeDeadlineMs === undefined || Date.now() < resumeDeadlineMs)
+  ) {
+    try {
+      // Normally finished long ago, so the first status poll returns instantly;
+      // the small ceiling only bites if a job is genuinely stuck.
+      const poster = await resumePosterJob(post.image_job_id, post.image_status_url ?? null, 15_000);
+      if (poster.imageUrl) {
+        // Persist a permanent copy (the source URL may expire) so the saved
+        // image_url stays valid for the dashboard and any re-publish.
+        let stable = poster.imageUrl;
+        try {
+          stable = await ensurePublicImage(supabase, poster.imageUrl, post.user_id);
+        } catch (rehostErr) {
+          console.error("rehost resumed poster failed:", rehostErr);
+        }
+        post.image_url = stable;
+        await supabase
+          .from("posts")
+          .update({ image_url: stable, image_status: "done" })
+          .eq("id", post.id);
+      } else if (poster.status === "failed") {
+        await supabase.from("posts").update({ image_status: "failed" }).eq("id", post.id);
+      }
+    } catch (err) {
+      console.error("resume poster job failed:", err);
+    }
+  }
 
   const { data: connectionsRaw } = await supabase
     .from("social_connections")
@@ -781,7 +809,7 @@ serve(async (req) => {
           );
         }
       }
-      const result = await publishPost(supabase, body.postId);
+      const result = await publishPost(supabase, body.postId, Date.now() + 20_000);
       return new Response(
         JSON.stringify({ success: true, ...result }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
@@ -805,8 +833,10 @@ serve(async (req) => {
 
     const nowIso = new Date().toISOString();
     // Cap the per-run batch so a stuck queue can't exhaust the function
-    // runtime; remaining items are picked up on the next cron tick.
-    const CRON_BATCH_SIZE = 50;
+    // runtime; remaining items are picked up on the next cron tick. Kept small
+    // because each post can also resume a poster job + make a publish call, all
+    // sequential, and the edge runtime limit is ~150s.
+    const CRON_BATCH_SIZE = 12;
     const { data: due } = await supabase
       .from("posts")
       .select("id")
@@ -815,10 +845,13 @@ serve(async (req) => {
       .order("scheduled_for", { ascending: true })
       .limit(CRON_BATCH_SIZE);
 
+    // Shared budget for resuming pending poster jobs across the whole batch,
+    // so even many unresolved jobs can't push the run past the edge limit.
+    const resumeDeadlineMs = Date.now() + 90_000;
     const results: any[] = [];
     for (const row of due || []) {
       try {
-        const r = await publishPost(supabase, row.id);
+        const r = await publishPost(supabase, row.id, resumeDeadlineMs);
         results.push(r);
       } catch (err) {
         results.push({ post_id: row.id, error: err instanceof Error ? err.message : String(err) });

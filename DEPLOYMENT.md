@@ -35,7 +35,9 @@ environment variables in the Supabase dashboard before deploying.
 | --- | --- | --- |
 | `OPENROUTER_API_KEY` | `generate-content`, `generate-image`, `auto-generate-weekly` | LLM access (OpenAI-compatible API). |
 | `OPENROUTER_TEXT_MODEL` *(optional)* | `generate-content`, `auto-generate-weekly` | Defaults to `google/gemini-2.5-flash`. |
-| `OPENROUTER_IMAGE_MODEL` *(optional)* | `generate-image` | First image model in the fallback chain. Defaults to `openai/gpt-5.4-image-2` / GPT Image 2 (must be an **image-output** model). |
+| `GRAPHISTE_GPT_API_KEY` | `generate-image`, `auto-generate-weekly` | **REQUIRED for poster/image generation — without it the app generates post TEXT but never an image** (the "seul le texte se génère" symptom). The poster engine is Graphiste GPT exclusively; there is NO fallback by design. Verify end-to-end with `GRAPHISTE_GPT_API_KEY=... node scripts/diagnose-graphiste.mjs` (checks key validity, credits, and runs a real generation). |
+| `GRAPHISTE_GPT_API_URL` *(optional)* | `generate-image`, `auto-generate-weekly` | Override the Graphiste GPT endpoint. Defaults to the documented v1.1 `posters/generate` URL. |
+| `OPENROUTER_IMAGE_MODEL` *(legacy, unused by the poster flow)* | — | Kept for the deprecated OpenRouter image chain in `_shared/ai.ts`. Poster generation does NOT use OpenRouter. |
 | `APP_NAME` / `APP_PUBLIC_URL` *(optional)* | all AI calls | Sent as `X-Title` and `HTTP-Referer` to OpenRouter so usage shows up cleanly in their dashboard. |
 | `IMAGE_GENERATION_TIMEOUT_MS` *(optional)* | `generate-image` | Per-model timeout for image generation. Defaults to 60000. |
 | `TAVILY_API_KEY` *(optional upgrade)* | `generate-content` | Premium web-search source. The function already uses **free** Google News RSS + DuckDuckGo by default — Tavily just adds higher quality results when configured. Free tier 1k queries/month at https://tavily.com. |
@@ -49,7 +51,7 @@ environment variables in the Supabase dashboard before deploying.
 | `SUPABASE_SERVICE_ROLE_KEY` | all server functions | (auto-provided) |
 | `CRON_SECRET` | `auto-generate-weekly`, `send-validation-email`, `publish-post` (cron) | Shared secret between Supabase Scheduler and the functions. Also used as the OAuth state HMAC secret if `OAUTH_STATE_SECRET` is unset. |
 | `OAUTH_STATE_SECRET` | all `oauth-*` functions | (Optional) Dedicated HMAC secret for OAuth state tokens; defaults to `CRON_SECRET`. |
-| `ALLOWED_ORIGINS` | all functions | Comma-separated list of origins (e.g. `https://app.example.com`). Defaults to `*` (DO NOT ship `*` to prod). |
+| `ALLOWED_ORIGINS` | all functions | Comma-separated list of origins (e.g. `https://app.example.com`). **Fails closed**: when unset, no `Access-Control-Allow-Origin` is emitted and browsers block cross-origin calls. Set `*` explicitly only for local development. |
 | `RESEND_API_KEY` | `send-validation-email` | Email delivery |
 | `RESEND_FROM` | `send-validation-email` | Verified sender (`Pro Social AI <no-reply@yourdomain.com>`) |
 | `APP_BASE_URL` | `send-validation-email`, validation links | Where to point the validation link (e.g. `https://app.example.com`) — should be the front-end origin, not the Supabase URL. |
@@ -60,7 +62,8 @@ environment variables in the Supabase dashboard before deploying.
 ### Frontend env (`.env`)
 
 `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_SUPABASE_PROJECT_ID`
-must be set. A sample is already committed in `.env`.
+must be set. Copy `.env.example` to `.env.local` and fill them in (no `.env`
+is committed; in CI/Netlify they come from GitHub Actions secrets).
 
 ### Cron jobs (Supabase Scheduler)
 

@@ -55,6 +55,10 @@ verify_jwt = false
 [functions.delete-account]
 verify_jwt = false
 
+# export-account-data validates the user JWT in-function (GDPR data export).
+[functions.export-account-data]
+verify_jwt = false
+
 # Ayrshare: third-party social-media management API. ayrshare-connect
 # provisions a per-user profile and returns a one-time JWT URL the
 # user opens to OAuth into all their social accounts at once.

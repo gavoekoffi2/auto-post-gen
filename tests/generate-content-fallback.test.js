@@ -17,7 +17,12 @@ test('generate-content never returns a 500 just because OpenRouter is unavailabl
     'missing OpenRouter key must not produce a non-2xx response for first users',
   );
   assert.match(source, /provider:\s*"local-content-fallback"/);
-  assert.match(source, /recordGenerationUsage\(supabase, userId, "fallback"/);
+});
+
+test('generate-content enforces an atomic per-user quota before spending on the AI', () => {
+  // The bypassable count-then-insert check was replaced by an atomic RPC.
+  assert.match(source, /consume_generation_quota/);
+  assert.match(source, /p_function:\s*"generate-content"/);
 });
 
 test('generate-content converts OpenRouter non-2xx into a usable local post fallback', () => {

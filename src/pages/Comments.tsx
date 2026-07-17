@@ -12,6 +12,8 @@ import {
   ArrowLeft,
   Bot,
   Check,
+  Crown,
+  Lock,
   MessageSquare,
   RefreshCw,
   Send,
@@ -39,7 +41,9 @@ const Comments = () => {
 
   const [autoReply, setAutoReply] = useState(false);
   const [instructions, setInstructions] = useState("");
+  const [plan, setPlan] = useState<string>("starter");
   const [savingSettings, setSavingSettings] = useState(false);
+  const isEnterprise = plan === "enterprise";
 
   const loadComments = async () => {
     const { data: userData } = await supabase.auth.getUser();
@@ -64,11 +68,12 @@ const Comments = () => {
     if (!userData?.user) return;
     const { data } = await supabase
       .from("profiles")
-      .select("auto_reply_enabled, auto_reply_instructions")
+      .select("auto_reply_enabled, auto_reply_instructions, plan")
       .eq("id", userData.user.id)
       .maybeSingle();
     setAutoReply(!!data?.auto_reply_enabled);
     setInstructions(data?.auto_reply_instructions || "");
+    setPlan((data as { plan?: string } | null)?.plan || "starter");
   };
 
   useEffect(() => {
@@ -166,7 +171,7 @@ const Comments = () => {
       const { error } = await supabase
         .from("profiles")
         .update({
-          auto_reply_enabled: autoReply,
+          auto_reply_enabled: isEnterprise ? autoReply : false,
           auto_reply_instructions: instructions || null,
         })
         .eq("id", userData.user.id);
@@ -216,7 +221,7 @@ const Comments = () => {
       </header>
 
       <main className="container mx-auto max-w-5xl px-4 py-6 space-y-6">
-        {/* Auto-reply settings */}
+        {/* Auto-reply settings — Enterprise-only feature */}
         <Card className="glass-card p-5">
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div className="flex items-start gap-3">
@@ -224,31 +229,57 @@ const Comments = () => {
                 <Bot className="w-5 h-5 text-white" />
               </span>
               <div>
-                <p className="font-medium">Réponses automatiques par IA</p>
+                <p className="font-medium flex items-center gap-2">
+                  Réponses automatiques par IA
+                  <Badge variant="secondary" className="gap-1">
+                    <Crown className="w-3 h-3" /> Enterprise
+                  </Badge>
+                </p>
                 <p className="text-xs text-muted-foreground max-w-lg mt-1">
                   Quand c'est activé, chaque nouveau commentaire synchronisé reçoit
                   automatiquement une réponse rédigée par l'IA dans le ton de votre marque.
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-3">
-              <span className="text-sm text-muted-foreground">{autoReply ? "Activé" : "Désactivé"}</span>
-              <Switch checked={autoReply} onCheckedChange={setAutoReply} />
+            {isEnterprise && (
+              <div className="flex items-center gap-3">
+                <span className="text-sm text-muted-foreground">{autoReply ? "Activé" : "Désactivé"}</span>
+                <Switch checked={autoReply} onCheckedChange={setAutoReply} />
+              </div>
+            )}
+          </div>
+
+          {isEnterprise ? (
+            <>
+              <Textarea
+                className="mt-4"
+                placeholder="Consignes optionnelles pour l'IA (ex: toujours proposer de contacter le support par MP, ne jamais donner de prix...)"
+                value={instructions}
+                onChange={(e) => setInstructions(e.target.value)}
+                rows={2}
+              />
+              <div className="mt-3 flex justify-end">
+                <Button onClick={handleSaveSettings} disabled={savingSettings} size="sm" variant="outline" className="glass-card">
+                  <Check className="w-4 h-4 mr-2" />
+                  Enregistrer
+                </Button>
+              </div>
+            </>
+          ) : (
+            <div className="mt-4 flex items-center gap-3 rounded-lg border border-border/60 bg-muted/40 p-3">
+              <Lock className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+              <p className="text-sm text-muted-foreground flex-1">
+                Les réponses automatiques par IA sont réservées au plan{" "}
+                <span className="font-medium text-foreground">Enterprise</span>. Vous pouvez
+                toujours répondre manuellement (avec l'aide de l'IA) ci-dessous.
+              </p>
+              <a href="/#pricing">
+                <Button size="sm" className="bg-gradient-to-r from-primary to-secondary whitespace-nowrap">
+                  Voir les tarifs
+                </Button>
+              </a>
             </div>
-          </div>
-          <Textarea
-            className="mt-4"
-            placeholder="Consignes optionnelles pour l'IA (ex: toujours proposer de contacter le support par MP, ne jamais donner de prix...)"
-            value={instructions}
-            onChange={(e) => setInstructions(e.target.value)}
-            rows={2}
-          />
-          <div className="mt-3 flex justify-end">
-            <Button onClick={handleSaveSettings} disabled={savingSettings} size="sm" variant="outline" className="glass-card">
-              <Check className="w-4 h-4 mr-2" />
-              Enregistrer
-            </Button>
-          </div>
+          )}
         </Card>
 
         {/* Filters */}

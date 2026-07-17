@@ -28,6 +28,9 @@ type Post = {
   title: string;
   content: string;
   image_url?: string;
+  image_status?: string | null;
+  image_job_id?: string | null;
+  image_status_url?: string | null;
   status: PostStatus;
   publish_error?: string | null;
 };
@@ -42,49 +45,6 @@ type UserProfile = {
 
 // publish-post stores the per-platform outcome as a JSON array in
 // posts.publish_error. Turn it into a short, human-readable reason.
-
-const IMAGE_GENERATION_TIMEOUT_MS = 90_000;
-const MAX_GRAPHISTE_POLL_ATTEMPTS = 12;
-const GRAPHISTE_POLL_INTERVAL_MS = 10000;
-
-type GenerateImageResult = {
-  data?: {
-    imageUrl?: string;
-    error?: string;
-    detail?: string;
-    code?: string;
-    processing?: boolean;
-    job_id?: string;
-    status_url?: string;
-    message?: string;
-    format?: { label?: string; aspectRatio?: string };
-  } | null;
-  error?: unknown;
-};
-
-function imageTimeoutError(): Error {
-  return new Error("La génération d'affiche prend trop longtemps. Le post est sauvegardé : cliquez sur Régénérer l'affiche dans un instant.");
-}
-
-function waitForGraphistePoll(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function invokeGenerateImageWithTimeout(body: Record<string, unknown>): Promise<GenerateImageResult> {
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  try {
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutId = setTimeout(() => reject(imageTimeoutError()), IMAGE_GENERATION_TIMEOUT_MS);
-    });
-    return await Promise.race([
-      supabase.functions.invoke('generate-image', { body }),
-      timeoutPromise,
-    ]) as GenerateImageResult;
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
-  }
-}
-
 function formatPublishError(raw?: string | null): string | null {
   if (!raw) return null;
   try {
@@ -99,6 +59,72 @@ function formatPublishError(raw?: string | null): string | null {
     // Not JSON (legacy plain string) — fall through.
   }
   return String(raw).slice(0, 200);
+}
+
+// Client-side ceiling on a single generate-image invoke. The edge function
+// bounds itself well under this; the race is a last-resort guard so a hung
+// gateway/network call can never freeze the dashboard spinner forever.
+const IMAGE_GENERATION_TIMEOUT_MS = 90_000;
+
+type GenerateImageInvoke = { data: Record<string, unknown> | null; error: unknown };
+
+async function invokeGenerateImageWithTimeout(
+  body: Record<string, unknown>,
+): Promise<GenerateImageInvoke | "timeout"> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<"timeout">((resolve) => {
+    timeoutId = setTimeout(() => resolve("timeout"), IMAGE_GENERATION_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([
+      supabase.functions.invoke("generate-image", { body }) as Promise<GenerateImageInvoke>,
+      timeout,
+    ]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+// Image generation is resumable: the edge function does a short bounded poll and
+// hands back a job id when a premium poster is still rendering. We re-call it
+// with that job id until the poster is ready, an error is returned, or we hit a
+// generous overall budget — so slow 2K posters finish without any single call
+// running near Supabase's request timeout.
+async function generatePosterImage(
+  initialBody: Record<string, unknown>,
+): Promise<{ imageUrl?: string; error?: string; detail?: string }> {
+  let body: Record<string, unknown> = initialBody;
+  // Up to ~7 calls; each call internally polls ~40-45s → several minutes total.
+  for (let attempt = 0; attempt < 7; attempt++) {
+    const raced = await invokeGenerateImageWithTimeout(body);
+    if (raced === "timeout") {
+      // The edge call went unresponsive. If we were resuming an existing job
+      // (jobId present) retrying is free — it is only a status poll. But if
+      // this was the INITIAL call, a paid job may already have started server
+      // side; the edge function persists it on the post row, so we stop here
+      // instead of racing a second paid generation. The dashboard resumes the
+      // persisted job on the next load.
+      if (body.jobId || body.statusUrl) continue;
+      break;
+    }
+    const { data, error } = raced;
+    if (error) throw error;
+    if (data?.error) return { error: data.error as string, detail: data.detail as string | undefined };
+    if (data?.imageUrl) return { imageUrl: data.imageUrl as string };
+    if (data?.status === "processing" && (data.jobId || data.statusUrl)) {
+      body = {
+        postId: initialBody.postId,
+        platforms: initialBody.platforms,
+        jobId: data.jobId,
+        statusUrl: data.statusUrl,
+      };
+      continue;
+    }
+    break;
+  }
+  return {
+    error: "La génération de l'affiche prend plus de temps que prévu. Cliquez sur « Régénérer l'affiche » pour réessayer.",
+  };
 }
 
 export default function Dashboard() {
@@ -118,57 +144,6 @@ export default function Dashboard() {
   const [regeneratingContentIds, setRegeneratingContentIds] = useState<Set<string>>(new Set());
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [hasConnection, setHasConnection] = useState<boolean | null>(null);
-
-  const clearGeneratingImage = (postId: string) => {
-    setGeneratingImageIds((prev) => {
-      const next = new Set(prev);
-      next.delete(postId);
-      return next;
-    });
-  };
-
-  const applyGeneratedImage = (postId: string, imageUrl: string) => {
-    setPosts((prev) =>
-      prev.map((p) => (p.id === postId ? { ...p, image_url: imageUrl } : p)),
-    );
-    setEditingPost((current) =>
-      current?.id === postId ? { ...current, image_url: imageUrl } : current,
-    );
-  };
-
-  const pollGraphisteJobUntilReady = async (
-    postId: string,
-    platforms: string[],
-    result: NonNullable<GenerateImageResult["data"]>,
-    imageSpec: ReturnType<typeof getSocialImageSpec>,
-  ) => {
-    let current = result;
-    toast.info("Affiche Graphiste GPT encore en génération : je continue automatiquement...");
-    for (let attempt = 0; attempt < MAX_GRAPHISTE_POLL_ATTEMPTS; attempt++) {
-      if (!current?.processing || (!current.job_id && !current.status_url)) return false;
-      await waitForGraphistePoll(GRAPHISTE_POLL_INTERVAL_MS);
-      const { data, error } = await invokeGenerateImageWithTimeout({
-        postId,
-        platforms,
-        graphisteJobId: current.job_id,
-        graphisteStatusUrl: current.status_url,
-      });
-      if (error) throw error;
-      current = data || null;
-      if (current?.imageUrl) {
-        applyGeneratedImage(postId, current.imageUrl);
-        toast.success(`Affiche IA générée (${imageSpec.label}, ${imageSpec.aspectRatio})`);
-        return true;
-      }
-      if (current?.error && !current.processing) {
-        if (current.detail) console.warn("Image error detail:", current.detail);
-        toast.error(current.error);
-        return false;
-      }
-    }
-    toast.warning("L'affiche est encore en préparation. Cliquez sur Régénérer l’affiche dans quelques instants.");
-    return false;
-  };
 
   useEffect(() => {
     checkAuthAndLoadData();
@@ -230,11 +205,55 @@ export default function Dashboard() {
       });
 
       setPosts(transformedPosts);
+
+      // Resume any poster jobs that were still rendering when the page was last
+      // closed (or whose generation outran the client's polling budget). The
+      // edge function persists the job on the row, so we can pick the finished
+      // poster back up here instead of losing it. Bounded to avoid a thundering
+      // herd if many posts are mid-generation.
+      const pendingImagePosts = transformedPosts
+        .filter((p) => !p.image_url && p.image_status === "processing" && (p.image_job_id || p.image_status_url))
+        .slice(0, 4);
+      for (const p of pendingImagePosts) {
+        void resumePendingImage(p);
+      }
     } catch (error) {
       console.error('Error loading data:', error);
       toast.error('Erreur lors du chargement des données');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Re-poll a poster job that is already in flight (persisted on the post row)
+  // and attach the finished image when it lands. Used on page load so slow
+  // posters appear automatically alongside the text, without a manual retry.
+  const resumePendingImage = async (post: Post) => {
+    if (generatingImageIds.has(post.id)) return;
+    setGeneratingImageIds((prev) => new Set(prev).add(post.id));
+    try {
+      const res = await generatePosterImage({
+        postId: post.id,
+        platforms: post.platforms || (post.platform ? [post.platform] : []),
+        jobId: post.image_job_id || undefined,
+        statusUrl: post.image_status_url || undefined,
+      });
+      if (res.imageUrl) {
+        const url = res.imageUrl;
+        setPosts((prev) =>
+          prev.map((p) => (p.id === post.id ? { ...p, image_url: url, image_status: "done" } : p)),
+        );
+      }
+      // On error/timeout we leave the row as-is; the "Régénérer l'affiche"
+      // button stays available and a later load will retry the same job.
+    } catch (err) {
+      console.error("Resume pending image failed:", err);
+    } finally {
+      setGeneratingImageIds((prev) => {
+        const next = new Set(prev);
+        next.delete(post.id);
+        return next;
+      });
     }
   };
 
@@ -460,23 +479,21 @@ export default function Dashboard() {
       void (async () => {
         try {
           const imageSpec = getSocialImageSpec(defaultPlatforms);
-          const { data: imgData, error: imgError } = await invokeGenerateImageWithTimeout({
+          const res = await generatePosterImage({
             postContent: data.content,
             peopleType: userProfile?.image_people_type || 'african',
             postId: savedPost.id,
             platforms: defaultPlatforms,
           });
-          if (imgError) throw imgError;
-          if (imgData?.imageUrl) {
-            applyGeneratedImage(savedPost.id, imgData.imageUrl);
+          if (res.error) {
+            if (res.detail) console.warn("Image error detail:", res.detail);
+            toast.error(res.error);
+          } else if (res.imageUrl) {
+            const url = res.imageUrl;
+            setPosts((prev) =>
+              prev.map((p) => (p.id === savedPost.id ? { ...p, image_url: url } : p)),
+            );
             toast.success(`Affiche IA ajoutée (${imageSpec.label}, ${imageSpec.aspectRatio})`);
-          } else if (imgData?.processing) {
-            await pollGraphisteJobUntilReady(savedPost.id, defaultPlatforms, imgData, imageSpec);
-          } else if (imgData?.error) {
-            if (imgData.detail) console.warn("Image error detail:", imgData.detail);
-            toast.error(imgData.error);
-          } else {
-            toast.error("Affiche non générée. Cliquez sur 'Régénérer l'affiche' pour réessayer.");
           }
         } catch (imgErr) {
           console.error('Image gen failed:', imgErr);
@@ -484,7 +501,11 @@ export default function Dashboard() {
             "Image non générée. Cliquez sur 'Régénérer image' sur le post pour réessayer.",
           );
         } finally {
-          clearGeneratingImage(savedPost.id);
+          setGeneratingImageIds((prev) => {
+            const next = new Set(prev);
+            next.delete(savedPost.id);
+            return next;
+          });
         }
       })();
     } catch (error: unknown) {
@@ -504,22 +525,25 @@ export default function Dashboard() {
     try {
       const regenPlatforms = post.platforms || (post.platform ? [post.platform] : []);
       const imageSpec = getSocialImageSpec(regenPlatforms);
-      const { data, error } = await invokeGenerateImageWithTimeout({
+      const res = await generatePosterImage({
         postContent: post.content,
         peopleType: userProfile?.image_people_type || 'african',
         postId: post.id,
         platforms: regenPlatforms,
       });
       toast.dismiss(loadingToast);
-      if (error) throw error;
-      if (data?.imageUrl) {
-        applyGeneratedImage(post.id, data.imageUrl);
+      if (res.error) {
+        if (res.detail) console.warn("Image error detail:", res.detail);
+        toast.error(res.error);
+      } else if (res.imageUrl) {
+        const url = res.imageUrl;
+        setPosts((prev) =>
+          prev.map((p) => (p.id === post.id ? { ...p, image_url: url } : p)),
+        );
+        setEditingPost((current) =>
+          current?.id === post.id ? { ...current, image_url: url } : current,
+        );
         toast.success(`Affiche IA générée (${imageSpec.label}, ${imageSpec.aspectRatio})`);
-      } else if (data?.processing) {
-        await pollGraphisteJobUntilReady(post.id, regenPlatforms, data, imageSpec);
-      } else if (data?.error) {
-        if (data.detail) console.warn("Image error detail:", data.detail);
-        toast.error(data.error);
       } else {
         toast.error("Affiche non générée");
       }
@@ -528,7 +552,11 @@ export default function Dashboard() {
       const message = err instanceof Error ? err.message : "Erreur de génération d'image";
       toast.error(message);
     } finally {
-      clearGeneratingImage(post.id);
+      setGeneratingImageIds((prev) => {
+        const next = new Set(prev);
+        next.delete(post.id);
+        return next;
+      });
     }
   };
 

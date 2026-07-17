@@ -1,23 +1,11 @@
 // deno-lint-ignore-file no-explicit-any
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { buildCorsHeaders } from "../_shared/cors.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { chatText, getOpenRouterKey, getTextModel } from "../_shared/ai.ts";
 import { buildInspirationBlock, researchInspiration } from "../_shared/research.ts";
+import { rehostToUserAssets, startPosterJob } from "../_shared/graphiste.ts";
 
-const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "*")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
-
-function buildCorsHeaders(origin: string | null) {
-  const allowed = allowedOrigins.includes("*") || (origin && allowedOrigins.includes(origin));
-  return {
-    "Access-Control-Allow-Origin": allowed && origin ? origin : (allowedOrigins[0] === "*" ? "*" : allowedOrigins[0]),
-    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    Vary: "Origin",
-  };
-}
 
 // ISO 8601 week number (1..53)
 function isoWeekNumber(date: Date): number {
@@ -95,6 +83,12 @@ serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
+    // Wall-clock budget for the whole run. Post creation is never skipped, but
+    // once this passes we stop kicking (blocking) poster jobs so the image work
+    // can't push the cron past the edge runtime limit; those posts just go out
+    // text-only. publish-post still publishes everything on schedule.
+    const posterDeadline = Date.now() + 90_000;
+
     const { data: profiles, error: profilesError } = await supabase
       .from("profiles")
       .select("*")
@@ -114,13 +108,22 @@ serve(async (req) => {
         );
 
         const now = new Date();
-        const weekNumber = isoWeekNumber(now);
+        const weekNumber = isoWeekNumber(now); // only used to vary the content angle
 
+        // Idempotency keyed on the SCHEDULED window, not the calendar week of
+        // "now". Posts are scheduled 1-7 days ahead, so keying on week_number of
+        // "now" made the next run think the upcoming week was empty and generate
+        // a SECOND full batch — duplicate content, double AI spend and double
+        // auto-publishing. Instead count what is already queued (not yet
+        // published) for the next 7 days and only top up the difference.
+        const windowEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
         const { data: existingPosts } = await supabase
           .from("posts")
           .select("id")
           .eq("user_id", profile.id)
-          .eq("week_number", weekNumber);
+          .in("status", ["pending", "validated", "publishing"])
+          .gte("scheduled_for", now.toISOString())
+          .lt("scheduled_for", windowEnd.toISOString());
 
         const postsToGenerate = Math.max(0, postsNeeded - (existingPosts?.length || 0));
 
@@ -136,6 +139,21 @@ serve(async (req) => {
         const platforms: string[] = Array.isArray(profile.platforms) && profile.platforms.length > 0
           ? profile.platforms
           : ["Instagram"];
+
+        // Time of day the user picked for automatic posts (defaults to 10:00).
+        const [rawHour, rawMinute] = String(profile.preferred_time || "10:00")
+          .split(":")
+          .map((n) => parseInt(n, 10));
+        const hour = Number.isFinite(rawHour) ? Math.min(23, Math.max(0, rawHour)) : 10;
+        const minute = Number.isFinite(rawMinute) ? Math.min(59, Math.max(0, rawMinute)) : 0;
+
+        // How many of this run's posts orient toward the company's service
+        // (promo). The rest are pure value (no promotion). Clamp to what we
+        // actually generate now so it never exceeds the weekly frequency.
+        const promoThisRun = Math.min(
+          Math.max(0, profile.promo_posts_per_week ?? 1),
+          postsToGenerate,
+        );
 
         // Research the business ONCE per user and reuse the inspiration for
         // every post generated this week. This grounds automatic posts in
@@ -161,30 +179,52 @@ serve(async (req) => {
         let generated = 0;
 
         for (let i = 0; i < postsToGenerate; i++) {
-          const angle = AUTO_ANGLES[(i + weekNumber) % AUTO_ANGLES.length];
+          const isPromo = i < promoThisRun;
           const avoidBlock = generatedThisRun.length
             ? `\nNE répète NI le sujet NI l'accroche de ces posts déjà générés cette semaine:\n${
                 generatedThisRun.map((c, k) => `${k + 1}. ${c.slice(0, 150)}`).join("\n")
               }\n`
             : "";
 
-          const contentPrompt = `Tu es un expert en création de contenu pour les réseaux sociaux, spécialisé dans le métier décrit ci-dessous. Reste STRICTEMENT dans ce domaine d'activité, ne généralise pas vers d'autres sujets.
+          // Most posts are pure value (no promotion); a small, user-chosen
+          // number are oriented toward the company's service.
+          const contentPrompt = isPromo
+            ? `Tu es un expert en marketing pour les réseaux sociaux, spécialisé dans le métier décrit ci-dessous. Reste STRICTEMENT dans ce domaine d'activité.
 
 PROFIL DU CLIENT:
 - Nom de l'entreprise: ${companyName}
 - Secteur: ${sector}
 ${description ? `- Description de l'activité: ${description}` : ""}
 - Ton: ${profile.tone || "Professionnel"}
+${inspirationBlock}
+OBJECTIF DE CE POST: présenter ce que propose ${companyName} et donner envie de faire appel à ses services.
 
-ANGLE IMPOSÉ POUR CE POST: ${angle}
+RÈGLES:
+- 100% en français
+- 60-100 mots
+- 2-3 émojis pertinents
+- Commence par un bénéfice concret pour le client (jamais par "Nous sommes...")
+- Présente clairement le service ou la valeur que ${companyName} apporte, sans promesses irréalistes
+- Écris "${companyName}" tel quel, jamais entre crochets ni en placeholder
+- Termine par un appel à l'action clair et naturel (contacter, écrire, réserver…)
+${avoidBlock}
+Génère uniquement le texte du post, sans titre ni explication.`
+            : `Tu es un expert en création de contenu pour les réseaux sociaux, spécialisé dans le métier décrit ci-dessous. Reste STRICTEMENT dans ce domaine d'activité, ne généralise pas vers d'autres sujets.
+
+PROFIL DU CLIENT:
+- Secteur: ${sector}
+${description ? `- Description de l'activité: ${description}` : ""}
+- Ton: ${profile.tone || "Professionnel"}
+
+ANGLE IMPOSÉ POUR CE POST: ${AUTO_ANGLES[(i + weekNumber) % AUTO_ANGLES.length]}
 ${inspirationBlock}
 RÈGLES:
 - 100% en français
 - 60-100 mots
 - 2-3 émojis pertinents
 - Apporte une valeur CONCRÈTE et SPÉCIFIQUE à ce métier (un conseil, un chiffre ou un fait qu'un vrai connaisseur donnerait) — surtout pas du générique applicable à n'importe quelle entreprise
-- Écris "${companyName}" tel quel, jamais entre crochets ni en placeholder
-- Termine par une question engageante ou un appel à l'action
+- Ce post sert à AIDER l'audience, pas à promouvoir l'entreprise : aucune promotion, aucun prix, aucune offre. Tu peux mentionner "${companyName}" une seule fois maximum, naturellement, et uniquement si c'est pertinent.
+- Termine par une question engageante
 ${avoidBlock}
 Génère uniquement le texte du post, sans titre ni explication.`;
 
@@ -214,15 +254,32 @@ Génère uniquement le texte du post, sans titre ni explication.`;
 
           const scheduledDate = new Date(now);
           const currentDay = scheduledDate.getDay();
-          const daysUntilTarget = ((targetDayNumber - currentDay + 7) % 7) || 7;
+          let daysUntilTarget = (targetDayNumber - currentDay + 7) % 7;
+          if (daysUntilTarget === 0) {
+            // Target day is today: keep today only if the chosen time is still
+            // ahead; otherwise push to next week. (The old `|| 7` always pushed
+            // a same-day target a full week out, dropping this week's post.)
+            const todayAtTime = new Date(now);
+            todayAtTime.setHours(hour, minute, 0, 0);
+            if (todayAtTime.getTime() <= now.getTime()) daysUntilTarget = 7;
+          }
           scheduledDate.setDate(scheduledDate.getDate() + daysUntilTarget);
-          scheduledDate.setHours(10, 0, 0, 0);
+          scheduledDate.setHours(hour, minute, 0, 0);
 
-          const { error: insertError } = await supabase
+          // Pick the visual. A custom image library wins (free, instant);
+          // otherwise we kick off a Graphiste GPT poster job further below.
+          const customImages: string[] = profile.use_custom_images && Array.isArray(profile.custom_image_urls)
+            ? profile.custom_image_urls.filter((u: unknown): u is string => typeof u === "string" && !!u)
+            : [];
+          const customImage = customImages.length
+            ? customImages[Math.floor(Math.random() * customImages.length)]
+            : null;
+
+          const { data: inserted, error: insertError } = await supabase
             .from("posts")
             .insert({
               user_id: profile.id,
-              title: "Contenu automatique",
+              title: isPromo ? "Post promotionnel" : "Contenu automatique",
               content: generatedContent,
               platforms,
               // When auto_publish is on, mark as validated so the publisher
@@ -230,12 +287,60 @@ Génère uniquement le texte du post, sans titre ni explication.`;
               status: "validated",
               week_number: weekNumber,
               scheduled_for: scheduledDate.toISOString(),
-            });
+              image_url: customImage,
+            })
+            .select("id")
+            .single();
 
-          if (insertError) {
+          if (insertError || !inserted) {
             console.error(`Insert error for ${profile.id}:`, insertError);
-          } else {
-            generated += 1;
+            continue;
+          }
+          generated += 1;
+
+          // No custom image → start an async Graphiste GPT poster. The job
+          // finishes within minutes; publish-post resumes it and attaches the
+          // poster before the post (scheduled days from now) is published, so
+          // image-only networks like Instagram work. Best-effort: a failure
+          // here just leaves the post text-only.
+          if (!customImage && Deno.env.get("GRAPHISTE_GPT_API_KEY") && Date.now() < posterDeadline) {
+            try {
+              const poster = await startPosterJob({
+                postContent: generatedContent,
+                sector,
+                description,
+                companyName,
+                primary: profile.brand_primary_color || "#8B5CF6",
+                secondary: profile.brand_secondary_color || "#3B82F6",
+                accent: profile.brand_accent_color || "#F59E0B",
+                logoUrl: profile.logo_url || null,
+                platforms,
+              });
+              if (poster.imageUrl) {
+                // Fast path: a finished poster came back immediately.
+                let finalUrl = poster.imageUrl;
+                try {
+                  finalUrl = await rehostToUserAssets(supabase, poster.imageUrl, profile.id);
+                } catch (rehostErr) {
+                  console.error(`Poster rehost failed for ${profile.id}:`, rehostErr);
+                }
+                await supabase.from("posts")
+                  .update({ image_url: finalUrl, image_status: "done" })
+                  .eq("id", inserted.id);
+              } else if (poster.status === "processing" && (poster.jobId || poster.statusUrl)) {
+                await supabase.from("posts")
+                  .update({
+                    image_job_id: poster.jobId,
+                    image_status_url: poster.statusUrl,
+                    image_status: "processing",
+                  })
+                  .eq("id", inserted.id);
+              } else {
+                console.error(`Poster kick failed for ${profile.id}:`, poster.error);
+              }
+            } catch (posterErr) {
+              console.error(`Poster job error for ${profile.id}:`, posterErr);
+            }
           }
         }
 

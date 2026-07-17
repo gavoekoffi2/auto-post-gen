@@ -76,15 +76,53 @@ test('generate-image fails with a clear, actionable error instead of saving junk
   assert.match(source, /GRAPHISTE_GPT_API_KEY/);
 });
 
+test('generate-image surfaces the specific Graphiste failure (credits/key/rate) to the user', () => {
+  // On a hard failure, return the precise reason (402/401/429 …) as the primary
+  // error, not a generic message with the cause buried in the logs.
+  assert.match(source, /code:\s*"graphiste_error"/);
+  assert.match(source, /graphiste\.warning\s*\n?\s*\?\s*jsonResponse\(\{ error: graphiste\.warning/);
+  // those precise messages exist and stay actionable.
+  assert.match(source, /Crédits Graphiste GPT insuffisants \(402\)/);
+  assert.match(source, /Clé Graphiste GPT invalide ou manquante \(401\)/);
+});
+
 test('generate-image uses the documented business default and async polling', () => {
   assert.match(source, /postContent = ""/);
   assert.equal(source.includes('return "service";'), false);
   assert.match(source, /return "business";/, 'documented generic default domain');
-  assert.match(source, /pollGraphisteGptJob/);
+  assert.match(source, /pollGraphisteJob/);
   assert.match(source, /extractGraphisteJobId/);
   assert.match(source, /statusUrl/);
   // stops early when the polled job reports a terminal failure.
   assert.match(source, /graphisteJobFailed/);
+});
+
+test('generate-image extracts the canonical data.job_id, never the trace request_id', () => {
+  // The v1.1 envelope has a top-level request_id (trace id) plus data.job_id.
+  // Grabbing request_id as the job id makes GET /v1/posters/{id} 404 on resume.
+  assert.doesNotMatch(source, /obj\.job_id \|\| obj\.jobId \|\| obj\.request_id/,
+    'must not treat the top-level request_id as a job id');
+  assert.match(source, /obj\.job_id \|\| obj\.jobId \|\| obj\.task_id \|\| obj\.taskId \|\| obj\.id/);
+});
+
+test('generate-image persists the in-flight job on the row so a slow poster is not orphaned', () => {
+  // When handing the job back to the client, also save it on the post row, so a
+  // poster that finishes after the client gives up can be resumed on next load.
+  assert.match(source, /image_job_id: jobId, image_status_url: statusUrl, image_status: "processing"/);
+  // and the success path clears the job + stale status url.
+  assert.match(source, /image_status: "done", image_job_id: null, image_status_url: null/);
+});
+
+test('generate-image is resumable: short bounded polls + job handoff (no 150s blocking call)', () => {
+  assert.match(source, /function pollGraphisteJob\(/);
+  assert.match(source, /function resumeGraphisteJob\(/);
+  assert.match(source, /const stillProcessing =/);
+  assert.match(source, /status: "processing"/);
+  // each poll window stays well under Supabase's 150s request timeout.
+  assert.match(source, /pollGraphisteJob\(candidates, key, 40_000/);
+  assert.match(source, /resumeGraphisteJob\(resumeJobId, resumeStatusUrl, 45_000\)/);
+  assert.equal(source.includes('110_000'), false, 'no single ~110s blocking poll');
+  assert.equal(source.includes('125_000'), false, 'no ~125s blocking controller');
 });
 
 test('Graphiste GPT response extractor accepts common final poster URL shapes', () => {

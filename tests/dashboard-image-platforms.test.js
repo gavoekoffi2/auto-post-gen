@@ -21,13 +21,29 @@ test('dashboard tells the user which format was produced', () => {
   assert.ok(source.includes('${imageSpec.label}, ${imageSpec.aspectRatio}'));
 });
 
-test('dashboard surfaces the clear backend error instead of a silent failure', () => {
-  // both image flows show the actionable error message returned by the function.
-  assert.match(source, /imgData\?\.error/);
-  assert.match(source, /data\?\.error/);
-  assert.match(source, /toast\.error\(imgData\.error\)/);
-  assert.match(source, /toast\.error\(data\.error\)/);
+test('dashboard resumes long poster jobs and surfaces clear errors', () => {
+  // resumable helper that re-calls generate-image with the returned job id.
+  assert.match(source, /async function generatePosterImage\(/);
+  assert.match(source, /data\?\.status === "processing"/);
+  assert.match(source, /jobId: data\.jobId/);
+  assert.match(source, /statusUrl: data\.statusUrl/);
+  // both flows use the helper and show the actionable error message.
+  assert.match(source, /toast\.error\(res\.error\)/);
   // and never claim a "secours"/SVG fallback success anymore.
   assert.equal(source.includes('visuel de secours'), false);
   assert.equal(source.includes('affiche professionnelle de secours'), false);
+});
+
+test('dashboard resumes in-flight poster jobs persisted on the row, on page load', () => {
+  // The Post type carries the persisted job fields read back from the row.
+  assert.match(source, /image_status\?: string \| null/);
+  assert.match(source, /image_job_id\?: string \| null/);
+  assert.match(source, /image_status_url\?: string \| null/);
+  // On load, posts still "processing" with a saved job are resumed (bounded).
+  assert.match(source, /const resumePendingImage = async \(post: Post\) =>/);
+  assert.match(source, /p\.image_status === "processing" && \(p\.image_job_id \|\| p\.image_status_url\)/);
+  assert.match(source, /void resumePendingImage\(p\)/);
+  // resume forwards the saved job id / status url so no new (paid) job starts.
+  assert.match(source, /jobId: post\.image_job_id \|\| undefined/);
+  assert.match(source, /statusUrl: post\.image_status_url \|\| undefined/);
 });

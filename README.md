@@ -17,8 +17,10 @@ Le produit aide une petite entreprise à :
 - React + Vite + TypeScript
 - Tailwind + shadcn-ui
 - Supabase Auth / Database / Storage / Edge Functions
-- OpenRouter pour la génération IA
-- Netlify pour le frontend
+- OpenRouter pour la génération IA de **texte**
+- Graphiste GPT pour les **affiches/images** (moteur exclusif, pas de repli)
+- Zernio / Postiz / Ayrshare / OAuth direct pour la publication sociale
+- Netlify pour le frontend (déployé par GitHub Actions)
 
 ## Développement local
 
@@ -60,12 +62,20 @@ deno check \
 Obligatoires :
 
 ```bash
-OPENROUTER_API_KEY=...
+OPENROUTER_API_KEY=...        # texte IA
+GRAPHISTE_GPT_API_KEY=...     # affiches IA — SANS elle : texte OK mais JAMAIS d'image
 CRON_SECRET=...
 ALLOWED_ORIGINS=https://votre-domaine.netlify.app
 APP_BASE_URL=https://votre-domaine.netlify.app
 APP_PUBLIC_URL=https://votre-domaine.netlify.app
 APP_NAME="Pro Social AI"
+```
+
+Pour diagnostiquer la génération d'affiches de bout en bout (clé, crédits,
+vraie génération) :
+
+```bash
+GRAPHISTE_GPT_API_KEY="..." node scripts/diagnose-graphiste.mjs
 ```
 
 Fortement recommandé pour MVP publication sociale :
@@ -96,20 +106,12 @@ npm run build
 
 Netlify publie le dossier `dist` et redirige toutes les routes React vers `index.html` via `netlify.toml`.
 
-Edge Functions Supabase :
+Edge Functions Supabase — le déploiement normal passe par la CI : tout push
+sur `main` touchant `supabase/functions/**` déploie **toutes** les fonctions
+(`.github/workflows/deploy-functions.yml`). En manuel si besoin :
 
 ```bash
-supabase functions deploy generate-content
-supabase functions deploy generate-image
-supabase functions deploy auto-generate-weekly
-supabase functions deploy publish-post
-supabase functions deploy zernio-connect
-supabase functions deploy zernio-status
-supabase functions deploy send-validation-email
-supabase functions deploy validate-post
-supabase functions deploy sync-comments
-supabase functions deploy comment-reply
-supabase functions deploy send-contact
+supabase functions deploy --project-ref ixinojsmymqovekgkbdg
 ```
 
 ## Cron Supabase à configurer
@@ -135,4 +137,10 @@ Cadences recommandées :
 - Génération manuelle et automatique utilisent la recherche web
 - Dashboard affiche un indicateur “Génération enrichie par recherche web”
 
-Voir aussi : [`DEPLOYMENT.md`](./DEPLOYMENT.md)
+Voir aussi :
+
+- [`docs/HANDOVER.md`](./docs/HANDOVER.md) — **document de transmission** :
+  architecture, audit sécurité, décisions, pièges, checklist de reprise.
+  **Commencez par lui si vous découvrez le projet.**
+- [`DEPLOYMENT.md`](./DEPLOYMENT.md) — secrets et mise en production (référence).
+- [`docs/PRICING.md`](./docs/PRICING.md) — modèle économique, coûts et marges.

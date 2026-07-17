@@ -25,6 +25,15 @@ type DB = ReturnType<typeof createClient>;
 
 const POSTS_PER_USER = 25;
 const AUTO_REPLY_CAP = 10; // max auto-replies per user per run
+// AI auto-reply is an Enterprise-plan feature. The DB column is protected from
+// client self-upgrade (see migration), so this read is authoritative.
+const AUTO_REPLY_PLANS = new Set(["enterprise"]);
+
+// A user gets AI auto-replies only if they enabled it AND are on a plan that
+// includes the feature.
+function canAutoReply(profile: { auto_reply_enabled?: boolean; plan?: string } | null): boolean {
+  return !!profile?.auto_reply_enabled && AUTO_REPLY_PLANS.has(profile?.plan ?? "");
+}
 
 type SyncResult = { fetched: number; inserted: number; replied: number; note?: string };
 
@@ -129,10 +138,10 @@ async function syncUserZernio(
   if (newRows.length > 0) {
     const { data: profile } = await supabase
       .from("profiles")
-      .select("tone, auto_reply_instructions, auto_reply_enabled")
+      .select("tone, auto_reply_instructions, auto_reply_enabled, plan")
       .eq("id", userId)
       .maybeSingle();
-    if (profile && (profile as any).auto_reply_enabled) {
+    if (profile && canAutoReply(profile as any)) {
       const cap = Math.min(newRows.length, AUTO_REPLY_CAP);
       for (let i = 0; i < cap; i++) {
         const r = newRows[i];
@@ -261,10 +270,10 @@ async function syncUserAyrshare(
   if (newRows.length > 0) {
     const { data: profile } = await supabase
       .from("profiles")
-      .select("tone, auto_reply_instructions, auto_reply_enabled")
+      .select("tone, auto_reply_instructions, auto_reply_enabled, plan")
       .eq("id", userId)
       .maybeSingle();
-    if (profile && (profile as any).auto_reply_enabled) {
+    if (profile && canAutoReply(profile as any)) {
       const cap = Math.min(newRows.length, AUTO_REPLY_CAP);
       for (let i = 0; i < cap; i++) {
         const r = newRows[i];

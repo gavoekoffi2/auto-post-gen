@@ -15,31 +15,18 @@
 //     fail-soft: any search error is logged and ignored.
 //
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { buildCorsHeaders } from "../_shared/cors.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { AIQuotaError, chatCompletion, getOpenRouterKey, getTextModel } from "../_shared/ai.ts";
 import { buildInspirationBlock, researchInspiration } from "../_shared/research.ts";
 
-const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "*")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
-
-function buildCorsHeaders(origin: string | null) {
-  const wildcard = allowedOrigins.includes("*");
-  const allowed = wildcard || (origin && allowedOrigins.includes(origin));
-  return {
-    "Access-Control-Allow-Origin":
-      allowed && origin ? origin : wildcard ? "*" : allowedOrigins[0],
-    "Access-Control-Allow-Headers":
-      "authorization, x-client-info, apikey, content-type",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    Vary: "Origin",
-  };
-}
 
 // Per-user rate limit
 const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 const RATE_LIMIT_MAX = 20;
+// Soft monthly cap per user (cost control for the free beta).
+const MONTHLY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+const MONTHLY_LIMIT_MAX = 200;
 const MAX_PAYLOAD_BYTES = 64 * 1024;
 
 // Pool of post structures. One is picked at random per generation to
@@ -84,6 +71,11 @@ function cleanSentence(value: string, fallback: string): string {
     .slice(0, 220) || fallback;
 }
 
+// Clean, natural fallback used only when the AI text provider is unavailable.
+// No "erreur" phrasing, no lowercased free-text, no placeholders — it must read
+// like a real, publishable post. Value posts keep the company mention subtle;
+// only promo posts push the service. One variant is picked at random so repeated
+// fallbacks don't look identical.
 function buildFallbackContent(params: {
   companyName: string;
   sector: string;
@@ -91,32 +83,21 @@ function buildFallbackContent(params: {
   postType: "value" | "promo";
 }): string {
   const company = cleanSentence(params.companyName, "Notre entreprise");
-  const activity = cleanSentence(params.description || params.sector, "votre activité");
-  const hook = params.postType === "promo"
-    ? `Vous cherchez une solution fiable pour ${activity.toLowerCase()} ?`
-    : `Une erreur fréquente dans ${activity.toLowerCase()} : vouloir tout faire sans méthode claire.`;
-  const valueLine = params.postType === "promo"
-    ? `${company} vous accompagne avec une approche simple, professionnelle et adaptée à vos objectifs.`
-    : `Chez ${company}, nous recommandons de commencer par une priorité concrète, de mesurer le résultat, puis d'améliorer étape par étape.`;
-  const cta = params.postType === "promo"
-    ? "Contactez-nous pour en parler et voir ce qui peut être mis en place rapidement."
-    : "Quelle est la priorité que vous voulez améliorer cette semaine ?";
+  const pick = (arr: string[]) => arr[Math.floor(Math.random() * arr.length)];
 
-  return `${hook}\n\n${valueLine}\n\n${cta}`;
-}
+  if (params.postType === "promo") {
+    return pick([
+      `Vous cherchez un partenaire fiable et professionnel ? 🤝\n\n${company} vous accompagne avec une approche claire, adaptée à vos objectifs, et des résultats concrets — sans jargon inutile.\n\nÉcrivez-nous pour en parler, on vous répond vite. 📩`,
+      `Passez à l'action avec ${company}. 🚀\n\nDes solutions simples, un accompagnement sérieux et un suivi à chaque étape pour atteindre vos objectifs sereinement.\n\nContactez-nous dès aujourd'hui pour démarrer.`,
+      `Et si cette semaine était la bonne pour avancer ? ✨\n\n${company} met son savoir-faire au service de votre projet, avec une méthode claire et des engagements tenus.\n\nParlons-en : envoyez-nous un message. 📩`,
+    ]);
+  }
 
-async function recordGenerationUsage(
-  supabase: ReturnType<typeof createClient>,
-  userId: string,
-  status: "success" | "fallback" | "error",
-  error?: string,
-) {
-  await supabase.from("generation_usage").insert({
-    user_id: userId,
-    function_name: "generate-content",
-    status,
-    error: error ? error.slice(0, 500) : null,
-  });
+  return pick([
+    `💡 La régularité bat l'intensité : une seule action vraiment utile par semaine vaut mieux que dix idées jamais mises en œuvre.\n\nLe réflexe que nous recommandons : choisir une priorité claire, mesurer son impact, puis ajuster.\n\nQuelle est votre priorité cette semaine ?`,
+    `🎯 Avant d'ajouter de nouveaux outils, clarifiez l'objectif : à quoi ressemble un bon résultat, concrètement ?\n\nUne fois la cible définie, les bonnes décisions deviennent beaucoup plus simples à prendre.\n\nVotre objectif numéro 1 ce mois-ci, c'est quoi ?`,
+    `✅ Un principe qui change tout : se concentrer sur ce qui apporte le plus de résultat, et simplifier le reste.\n\nC'est souvent en faisant moins, mais mieux, qu'on progresse le plus vite.\n\nSur quoi pourriez-vous gagner du temps dès cette semaine ?`,
+  ]);
 }
 
 serve(async (req) => {
@@ -179,22 +160,57 @@ serve(async (req) => {
     const prompt = typeof body.prompt === "string" ? body.prompt.slice(0, 2000) : "";
     const userPreferences: UserPreferences = body.userPreferences || {};
 
-    // Rate limit
-    const since = new Date(Date.now() - RATE_LIMIT_WINDOW_MS).toISOString();
-    const { count: usageCount } = await supabase
+    // Soft monthly cap (cost control for the free beta), checked before the
+    // hourly atomic reservation below.
+    const monthSince = new Date(Date.now() - MONTHLY_WINDOW_MS).toISOString();
+    const { count: monthCount } = await supabase
       .from("generation_usage")
       .select("id", { count: "exact", head: true })
       .eq("user_id", userId)
       .eq("function_name", "generate-content")
-      .gte("created_at", since);
-
-    if ((usageCount ?? 0) >= RATE_LIMIT_MAX) {
+      .gte("created_at", monthSince);
+    if ((monthCount ?? 0) >= MONTHLY_LIMIT_MAX) {
       return new Response(
+        JSON.stringify({ error: `Limite mensuelle de ${MONTHLY_LIMIT_MAX} générations atteinte.` }),
+        { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    // Rate limit — atomic reservation via consume_generation_quota. This closes
+    // the burst/parallel bypass the old "count then later insert" check had (a
+    // user could fire many requests in parallel and all passed the count).
+    const limitResponse = () =>
+      new Response(
         JSON.stringify({
           error: `Limite de ${RATE_LIMIT_MAX} générations par heure atteinte. Réessayez plus tard.`,
         }),
         { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
+    const { data: quotaOk, error: quotaErr } = await supabase.rpc("consume_generation_quota", {
+      p_user: userId,
+      p_function: "generate-content",
+      p_max: RATE_LIMIT_MAX,
+      p_window_seconds: Math.floor(RATE_LIMIT_WINDOW_MS / 1000),
+    });
+    if (quotaErr) {
+      // RPC unavailable (e.g. migration not yet applied): degrade to the legacy
+      // non-atomic count check + insert rather than failing the request.
+      console.error("consume_generation_quota failed, using fallback check:", quotaErr.message);
+      const since = new Date(Date.now() - RATE_LIMIT_WINDOW_MS).toISOString();
+      const { count } = await supabase
+        .from("generation_usage")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .eq("function_name", "generate-content")
+        .gte("created_at", since);
+      if ((count ?? 0) >= RATE_LIMIT_MAX) return limitResponse();
+      await supabase.from("generation_usage").insert({
+        user_id: userId,
+        function_name: "generate-content",
+        status: "reserved",
+      });
+    } else if (quotaOk === false) {
+      return limitResponse();
     }
 
     const postType = POST_TYPES[Math.floor(Math.random() * POST_TYPES.length)];
@@ -351,15 +367,11 @@ Réponds UNIQUEMENT avec le texte du post, sans titre ni explication, sans guill
 
     if (!generatedContent) {
       const payload = fallbackContent(fallbackReason || "AI returned empty content");
-      await recordGenerationUsage(supabase, userId, "fallback", payload.warning);
       return new Response(
         JSON.stringify(payload),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
-
-    // Record success
-    await recordGenerationUsage(supabase, userId, "success");
 
     return new Response(
       JSON.stringify({
@@ -372,19 +384,6 @@ Réponds UNIQUEMENT avec le texte du post, sans titre ni explication, sans guill
     );
   } catch (error) {
     console.error("Error in generate-content:", error);
-    try {
-      // Best-effort failure logging; never let it mask the real error.
-      await supabase
-        .from("generation_usage")
-        .insert({
-          user_id: userId,
-          function_name: "generate-content",
-          status: "error",
-          error: error instanceof Error ? error.message : String(error),
-        });
-    } catch (_) {
-      // ignore logging failure
-    }
     return new Response(
       JSON.stringify({
         error: error instanceof Error ? error.message : "Unknown error",

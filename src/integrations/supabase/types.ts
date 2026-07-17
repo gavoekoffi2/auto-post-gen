@@ -21,6 +21,9 @@ export type Database = {
           created_at: string | null
           id: string
           image_url: string | null
+          image_job_id: string | null
+          image_status: string | null
+          image_status_url: string | null
           platforms: string[]
           publish_error: string | null
           published_at: string | null
@@ -29,6 +32,7 @@ export type Database = {
           title: string
           updated_at: string | null
           user_id: string
+          validation_email_sent_at: string | null
           validation_status: string | null
           validation_token: string | null
           validation_token_created_at: string | null
@@ -43,6 +47,9 @@ export type Database = {
           created_at?: string | null
           id?: string
           image_url?: string | null
+          image_job_id?: string | null
+          image_status?: string | null
+          image_status_url?: string | null
           platforms?: string[]
           publish_error?: string | null
           published_at?: string | null
@@ -51,6 +58,7 @@ export type Database = {
           title: string
           updated_at?: string | null
           user_id: string
+          validation_email_sent_at?: string | null
           validation_status?: string | null
           validation_token?: string | null
           validation_token_created_at?: string | null
@@ -65,6 +73,9 @@ export type Database = {
           created_at?: string | null
           id?: string
           image_url?: string | null
+          image_job_id?: string | null
+          image_status?: string | null
+          image_status_url?: string | null
           platforms?: string[]
           publish_error?: string | null
           published_at?: string | null
@@ -73,6 +84,7 @@ export type Database = {
           title?: string
           updated_at?: string | null
           user_id?: string
+          validation_email_sent_at?: string | null
           validation_status?: string | null
           validation_token?: string | null
           validation_token_created_at?: string | null
@@ -258,6 +270,8 @@ export type Database = {
           platforms: string[]
           post_frequency: number
           preferred_days: string[] | null
+          preferred_time: string
+          promo_posts_per_week: number
           sector: string
           style_example: string | null
           style_examples: Json | null
@@ -268,6 +282,7 @@ export type Database = {
           use_custom_images: boolean | null
           auto_reply_enabled: boolean | null
           auto_reply_instructions: string | null
+          plan: string
         }
         Insert: {
           activity_keywords?: string[] | null
@@ -293,6 +308,8 @@ export type Database = {
           platforms?: string[]
           post_frequency?: number
           preferred_days?: string[] | null
+          preferred_time?: string
+          promo_posts_per_week?: number
           sector: string
           style_example?: string | null
           style_examples?: Json | null
@@ -303,6 +320,7 @@ export type Database = {
           use_custom_images?: boolean | null
           auto_reply_enabled?: boolean | null
           auto_reply_instructions?: string | null
+          plan?: string
         }
         Update: {
           activity_keywords?: string[] | null
@@ -328,6 +346,8 @@ export type Database = {
           platforms?: string[]
           post_frequency?: number
           preferred_days?: string[] | null
+          preferred_time?: string
+          promo_posts_per_week?: number
           sector?: string
           style_example?: string | null
           style_examples?: Json | null
@@ -338,6 +358,7 @@ export type Database = {
           use_custom_images?: boolean | null
           auto_reply_enabled?: boolean | null
           auto_reply_instructions?: string | null
+          plan?: string
         }
         Relationships: []
       }
