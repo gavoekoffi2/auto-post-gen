@@ -1,47 +1,102 @@
-name: Deploy Supabase Edge Functions
-
-# Replaces Lovable's backend deployment. On every push to main that touches
-# the functions, this deploys the image-generation edge function used by
-# Pro Social AI. Other functions should be deployed explicitly when changed
-# to avoid unrelated CDN/import failures blocking urgent hotfixes.
-#
-# One-time setup (GitHub → repo → Settings → Secrets and variables →
-# Actions → New repository secret):
-#   SUPABASE_ACCESS_TOKEN = a Supabase access token (supabase.com →
-#                           Account → Access Tokens). Use a FRESH token.
+name: Recover and deploy Supabase backend
 
 on:
   push:
     branches: [main]
     paths:
       - "supabase/functions/**"
+      - "supabase/migrations/**"
       - "supabase/config.toml"
       - ".github/workflows/deploy-functions.yml"
   workflow_dispatch: {}
 
+concurrency:
+  group: auto-post-gen-supabase-production
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       PROJECT_REF: ixinojsmymqovekgkbdg
+      APP_ORIGIN: https://auto-post-gen.76.13.129.252.sslip.io
     steps:
       - uses: actions/checkout@v4
+
+      - name: Verify Supabase access token
+        run: |
+          if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then
+            echo "::error::SUPABASE_ACCESS_TOKEN is not configured."
+            exit 1
+          fi
+
+      - name: Restore the project when paused
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="https://api.supabase.com/v1/projects/$PROJECT_REF"
+          status="$(curl --fail-with-body -sS \
+            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+            "$api" | jq -r '.status // "UNKNOWN"')"
+          echo "Supabase project status: $status"
+
+          if [ "$status" = "INACTIVE" ]; then
+            echo "Restoring paused Supabase project..."
+            curl --fail-with-body -sS -X POST \
+              -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d '{}' "$api/restore" >/dev/null
+          fi
+
+          for attempt in $(seq 1 60); do
+            status="$(curl --fail-with-body -sS \
+              -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+              "$api" | jq -r '.status // "UNKNOWN"')"
+            echo "Readiness attempt $attempt: $status"
+            case "$status" in
+              ACTIVE_HEALTHY|ACTIVE) exit 0 ;;
+              INACTIVE|REMOVED|UNKNOWN)
+                if [ "$attempt" -gt 1 ]; then exit 1; fi
+                ;;
+            esac
+            sleep 10
+          done
+          echo "::error::Supabase project did not become healthy in time."
+          exit 1
 
       - name: Install Supabase CLI
         uses: supabase/setup-cli@v1
         with:
           version: latest
 
-      - name: Deploy changed edge functions
+      - name: Configure production origins
         run: |
-          if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then
-            echo "::error::SUPABASE_ACCESS_TOKEN is not set — edge functions were NOT deployed."
-            echo "Add it in repo Settings -> Secrets and variables -> Actions to enable deploys."
-            exit 1
-          fi
-          # Deploy ALL edge functions (the previous list of 5 left core flows —
-          # auto-generate-weekly, publish-post cron, send-validation-email,
-          # validate-post, delete-account, sync-comments, comment-reply and the
-          # oauth-* callbacks — undeployed, so they 404'd in production).
-          supabase functions deploy --project-ref "$PROJECT_REF"
+          supabase secrets set \
+            --project-ref "$PROJECT_REF" \
+            ALLOWED_ORIGINS="$APP_ORIGIN" \
+            APP_BASE_URL="$APP_ORIGIN"
+
+      - name: Apply production hardening migrations
+        shell: bash
+        run: |
+          set -euo pipefail
+          for migration in \
+            supabase/migrations/20260619000000_scheduling_time_and_promo.sql \
+            supabase/migrations/20260619010000_auto_post_images.sql \
+            supabase/migrations/20260620000000_senior_audit_hardening.sql \
+            supabase/migrations/20260620010000_public_rate_limit.sql \
+            supabase/migrations/20260623000000_user_plan.sql
+          do
+            echo "Applying $(basename "$migration")"
+            jq -Rs '{query: .}' < "$migration" > /tmp/query.json
+            curl --fail-with-body -sS -X POST \
+              -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+              -H "Content-Type: application/json" \
+              --data-binary @/tmp/query.json \
+              "https://api.supabase.com/v1/projects/$PROJECT_REF/database/query" >/dev/null
+          done
+
+      - name: Deploy all edge functions
+        run: supabase functions deploy --project-ref "$PROJECT_REF"

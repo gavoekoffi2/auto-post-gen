@@ -1,0 +1,29 @@
+services:
+  frontend:
+    image: nginx:1.27-alpine
+    container_name: auto-post-gen-frontend
+    restart: unless-stopped
+    volumes:
+      - ./dist:/usr/share/nginx/html:ro
+      - ./nginx.vps.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - default
+      - proxy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/healthz >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=proxy
+      - traefik.http.routers.auto-post-gen.rule=Host(`auto-post-gen.76.13.129.252.sslip.io`)
+      - traefik.http.routers.auto-post-gen.entrypoints=websecure
+      - traefik.http.routers.auto-post-gen.tls=true
+      - traefik.http.routers.auto-post-gen.tls.certresolver=letsencrypt
+      - traefik.http.services.auto-post-gen.loadbalancer.server.port=80
+
+networks:
+  proxy:
+    external: true
