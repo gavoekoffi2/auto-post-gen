@@ -1,0 +1,35 @@
+name: Export production public configuration
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROJECT_REF: ixinojsmymqovekgkbdg
+    steps:
+      - name: Export active public Supabase configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$SUPABASE_ACCESS_TOKEN"
+          curl --fail-with-body -sS \
+            -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
+            "https://api.supabase.com/v1/projects/$PROJECT_REF/api-keys" \
+            > /tmp/api-keys.json
+          anon_key="$(jq -r '.[] | select(.name == "anon") | .api_key' /tmp/api-keys.json)"
+          test -n "$anon_key"
+          test "$anon_key" != "null"
+          {
+            printf 'VITE_SUPABASE_URL=https://%s.supabase.co\n' "$PROJECT_REF"
+            printf 'VITE_SUPABASE_PUBLISHABLE_KEY=%s\n' "$anon_key"
+          } > public-production.env
+
+      - name: Upload public configuration artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: auto-post-gen-public-production-config
+          path: public-production.env
+          retention-days: 1
