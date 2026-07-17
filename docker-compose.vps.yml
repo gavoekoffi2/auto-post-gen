@@ -7,8 +7,7 @@ services:
       - ./dist:/usr/share/nginx/html:ro
       - ./nginx.vps.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
-      - default
-      - proxy
+      - web
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/healthz >/dev/null || exit 1"]
       interval: 30s
@@ -17,7 +16,7 @@ services:
       start_period: 10s
     labels:
       - traefik.enable=true
-      - traefik.docker.network=proxy
+      - traefik.docker.network=web
       - traefik.http.routers.auto-post-gen.rule=Host(`auto-post-gen.76.13.129.252.sslip.io`)
       - traefik.http.routers.auto-post-gen.entrypoints=websecure
       - traefik.http.routers.auto-post-gen.tls=true
@@ -25,5 +24,5 @@ services:
       - traefik.http.services.auto-post-gen.loadbalancer.server.port=80
 
 networks:
-  proxy:
+  web:
     external: true

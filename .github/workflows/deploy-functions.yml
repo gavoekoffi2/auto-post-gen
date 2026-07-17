@@ -71,6 +71,20 @@ jobs:
         with:
           version: latest
 
+      - name: Configure production authentication
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg origin "$APP_ORIGIN" \
+            '{mailer_autoconfirm: true, site_url: $origin, uri_allow_list: ($origin + "/**")}' \
+            > /tmp/auth-config.json
+          curl --fail-with-body -sS -X PATCH \
+            -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data-binary @/tmp/auth-config.json \
+            "https://api.supabase.com/v1/projects/$PROJECT_REF/config/auth" >/dev/null
+
       - name: Configure production origins
         run: |
           supabase secrets set \
