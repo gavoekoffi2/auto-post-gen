@@ -17,6 +17,9 @@ const validationEmail = read('supabase/functions/send-validation-email/index.ts'
 const settingsDialog = read('src/components/SettingsDialog.tsx');
 const deployWorkflow = read('.github/workflows/deploy-functions.yml');
 const migration = read('supabase/migrations/20260620000000_senior_audit_hardening.sql');
+const adminApi = read('supabase/functions/admin-api/index.ts');
+const adminGuard = read('src/components/ProtectedAdminRoute.tsx');
+const adminPage = read('src/pages/Admin.tsx');
 
 test('CORS fails closed: no wildcard default, ACAO omitted when origin not allowed', () => {
   assert.equal(cors.includes('"ALLOWED_ORIGINS") || "*"'), false, 'must not default to wildcard');
@@ -116,6 +119,24 @@ test('CI deploys all edge functions, not a hand-picked subset', () => {
     false,
     'should not deploy only a subset',
   );
+});
+
+test('super-admin control plane is server-authorized and protects the founder', () => {
+  assert.match(adminApi, /SUPABASE_SERVICE_ROLE_KEY/);
+  assert.match(adminApi, /admin\.auth\.getUser\(token\)/);
+  assert.match(adminApi, /app_metadata\?\.role/);
+  assert.match(adminApi, /actorRole !== "super_admin"/);
+  assert.match(adminApi, /targetIsFounder/);
+  assert.match(adminApi, /Ce compte ne peut pas être supprimé/);
+  assert.equal(adminPage.includes('SUPABASE_SERVICE_ROLE_KEY'), false, 'service role must never reach the browser');
+});
+
+test('admin UI is protected and exposes global account operations', () => {
+  assert.match(adminGuard, /admin-api/);
+  assert.match(adminGuard, /role === "admin" \|\| role === "super_admin"/);
+  for (const action of ['create_user', 'set_plan', 'set_role', 'set_blocked', 'reset_password', 'delete_user']) {
+    assert.match(adminPage, new RegExp(action));
+  }
 });
 
 test('public endpoints are IP rate-limited', () => {

@@ -82,7 +82,7 @@ export default function Auth() {
       }
 
       toast.success("Connexion réussie !");
-      navigate("/dashboard");
+      navigate(authData.user?.email?.toLowerCase() === "c1domefa@gmail.com" ? "/admin" : "/dashboard");
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Erreur lors de la connexion";
       toast.error(message);

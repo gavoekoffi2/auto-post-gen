@@ -98,3 +98,8 @@ verify_jwt = false
 
 [functions.comment-reply]
 verify_jwt = false
+
+# Global owner control plane. The function validates the caller's JWT and
+# requires server-owned app_metadata role=admin/super_admin.
+[functions.admin-api]
+verify_jwt = false
