@@ -1,0 +1,53 @@
+name: Recover Graphiste reliability deployment
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      GRAPHISTE_PROJECT_REF: bbfzfgcdioewzbmlgaqy
+    steps:
+      - name: Checkout Graphiste GPT
+        uses: actions/checkout@v4
+        with:
+          repository: gavoekoffi2/smart-poster-scribe
+          ref: main
+          path: graphiste
+
+      - name: Validate deployment token
+        run: |
+          set -euo pipefail
+          test -n "$SUPABASE_ACCESS_TOKEN"
+          curl --fail-with-body --silent --show-error \
+            --url "https://api.supabase.com/v1/projects/${GRAPHISTE_PROJECT_REF}" \
+            --header "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
+            >/dev/null
+
+      - name: Apply Graphiste reliability migration
+        run: |
+          set -euo pipefail
+          jq -Rs '{query: .}' \
+            < graphiste/supabase/migrations/20260720014500_refund_stale_image_jobs.sql \
+            > /tmp/graphiste-reliability-migration.json
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --url "https://api.supabase.com/v1/projects/${GRAPHISTE_PROJECT_REF}/database/query" \
+            --header "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
+            --header "Content-Type: application/json" \
+            --data-binary @/tmp/graphiste-reliability-migration.json
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Deploy Graphiste API
+        working-directory: graphiste
+        run: supabase functions deploy api-v1 --project-ref "$GRAPHISTE_PROJECT_REF"
+
+      - name: Deploy Graphiste generator
+        working-directory: graphiste
+        run: supabase functions deploy generate-image --project-ref "$GRAPHISTE_PROJECT_REF"
