@@ -120,7 +120,9 @@ function extractGraphisteStatusUrl(value: unknown): string | null {
 
 function graphisteStatusCandidates(endpoint: string, statusUrl: string | null, jobId: string | null): string[] {
   const out: string[] = [];
-  if (statusUrl) out.push(statusUrl.startsWith("http") ? statusUrl : new URL(statusUrl, endpoint).toString());
+  // Prefer the documented public job route derived from data.job_id. Some API
+  // versions emitted a status_url pointing at an internal/legacy handler which
+  // can return 404 even though the canonical job route works.
   if (jobId) {
     const u = new URL(endpoint);
     const base = `${u.origin}${u.pathname.replace(/\/generate\/?$/, "")}`;
@@ -129,6 +131,7 @@ function graphisteStatusCandidates(endpoint: string, statusUrl: string | null, j
     out.push(`${base}/jobs/${encodeURIComponent(jobId)}`);
     out.push(`${u.origin}/functions/v1/api-v1/v1/jobs/${encodeURIComponent(jobId)}`);
   }
+  if (statusUrl) out.push(statusUrl.startsWith("http") ? statusUrl : new URL(statusUrl, endpoint).toString());
   return [...new Set(out)];
 }
 
@@ -137,6 +140,9 @@ function graphisteStatusCandidates(endpoint: string, statusUrl: string | null, j
 function graphisteJobFailed(value: unknown): boolean {
   if (!value || typeof value !== "object") return false;
   const obj = value as Record<string, unknown>;
+  // v1.1 failures can use a structured envelope, including on a non-2xx poll:
+  // { success:false, error:{ code:"JOB_TIMEOUT", message:"..." } }
+  if (obj.success === false && obj.error) return true;
   const status = typeof obj.status === "string" ? obj.status.toLowerCase() : "";
   if (status === "failed" || status === "error" || status === "canceled" || status === "cancelled") return true;
   for (const key of ["data", "result", "job"]) {
@@ -169,13 +175,13 @@ async function pollGraphisteJob(
           headers: { Authorization: `Bearer ${key}` },
           signal,
         });
-        if (!resp.ok) continue;
         const text = await resp.text();
         let data: unknown;
         try { data = JSON.parse(text); } catch { data = text; }
         const imageUrl = extractGraphisteImageUrl(data, false);
         if (imageUrl) return { imageUrl, status: "completed" };
         if (graphisteJobFailed(data)) return { imageUrl: null, status: "failed" };
+        if (!resp.ok) continue;
       } catch (_err) {
         // Try next candidate / next poll tick.
       }
@@ -371,6 +377,9 @@ async function tryGraphisteGptPoster(params: {
     aspect_ratio: graphisteAspectRatio(params.spec),
     resolution: "2K",
     mode: "async",
+    // Premium-first, but allow Graphiste GPT's real raster fallback when
+    // the premium model times out instead of leaving the post image-less.
+    reliability_mode: true,
   };
   if (colors.length) requestBody.colors = colors;
   if (params.logoUrl && /^https?:\/\//i.test(params.logoUrl)) {

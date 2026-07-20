@@ -55,10 +55,12 @@ test('extractStatusUrl returns the absolute canonical poll URL', () => {
   assert.equal(extractStatusUrl({ data: {} }), null);
 });
 
-test('jobFailed flags terminal states but not processing/completed', () => {
+test('jobFailed flags terminal states and non-2xx Graphiste error envelopes', () => {
   assert.equal(jobFailed({ data: { status: 'failed' } }), true);
   assert.equal(jobFailed({ data: { status: 'error' } }), true);
   assert.equal(jobFailed({ data: { status: 'cancelled' } }), true);
+  assert.equal(jobFailed({ success: false, error: { code: 'JOB_TIMEOUT', message: 'safe to retry' } }), true);
+  assert.equal(jobFailed({ success: false, error: 'GENERATION_FAILED' }), true);
   assert.equal(jobFailed({ data: { status: 'processing' } }), false);
   assert.equal(jobFailed({ data: { status: 'completed' } }), false);
   assert.equal(jobFailed(ASYNC_ACCEPTED), false);

@@ -177,15 +177,17 @@ function extractPosterImageUrl(value: unknown): string | null {
 
 function statusCandidates(endpoint: string, statusUrl: string | null, jobId: string | null): string[] {
   const out: string[] = [];
-  if (statusUrl) out.push(statusUrl.startsWith("http") ? statusUrl : new URL(statusUrl, endpoint).toString());
   if (jobId) {
     const u = new URL(endpoint);
     const base = `${u.origin}${u.pathname.replace(/\/generate\/?$/, "")}`;
+    // Canonical API route first. Older Graphiste responses sometimes emitted
+    // an internal http:// URL without /functions/v1; it must not delay polling.
     out.push(`${base}/${encodeURIComponent(jobId)}`);
     out.push(`${base}/status/${encodeURIComponent(jobId)}`);
     out.push(`${base}/jobs/${encodeURIComponent(jobId)}`);
     out.push(`${u.origin}/functions/v1/api-v1/v1/jobs/${encodeURIComponent(jobId)}`);
   }
+  if (statusUrl) out.push(statusUrl.startsWith("http") ? statusUrl : new URL(statusUrl, endpoint).toString());
   return [...new Set(out)];
 }
 
@@ -210,6 +212,7 @@ export async function startPosterJob(params: StartPosterParams): Promise<PosterR
     subject: buildGraphisteSubject(params, spec),
     title: titleFromPost(params.postContent, params.companyName),
     quality: "premium",
+    reliability_mode: true,
     aspect_ratio: graphisteAspectRatio(spec),
     resolution: "2K",
     mode: "async",
@@ -272,13 +275,13 @@ export async function resumePosterJob(
       for (const url of candidates) {
         try {
           const resp = await fetch(url, { method: "GET", headers: { Authorization: `Bearer ${key}` }, signal: controller.signal });
-          if (!resp.ok) continue;
           const text = await resp.text();
           let data: unknown;
           try { data = JSON.parse(text); } catch { data = text; }
+          if (jobFailed(data)) return { imageUrl: null, status: "failed" };
+          if (!resp.ok) continue;
           const imageUrl = extractPosterImageUrl(data);
           if (imageUrl) return { imageUrl, status: "completed" };
-          if (jobFailed(data)) return { imageUrl: null, status: "failed" };
         } catch (_err) {
           // try next candidate / next tick
         }

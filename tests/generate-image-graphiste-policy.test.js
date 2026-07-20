@@ -26,6 +26,9 @@ test('generate-image sends the documented Graphiste GPT v1.1 contract fields', (
   assert.match(source, /aspect_ratio:\s*graphisteAspectRatio\(params\.spec\)/);
   assert.match(source, /resolution:\s*"2K"/);
   assert.match(source, /mode:\s*"async"/);
+  // Pro Social AI must opt into Graphiste's premium-first raster fallback;
+  // otherwise a transient GPT Image 2 timeout leaves every post without media.
+  assert.match(source, /reliability_mode:\s*true/);
   assert.match(source, /"Idempotency-Key":\s*crypto\.randomUUID\(\)/);
   assert.match(source, /domain:\s*graphisteDomain\(params\.sector, params\.description, params\.postContent\)/);
   assert.match(source, /requestBody\.colors = colors/);
@@ -93,8 +96,25 @@ test('generate-image uses the documented business default and async polling', ()
   assert.match(source, /pollGraphisteJob/);
   assert.match(source, /extractGraphisteJobId/);
   assert.match(source, /statusUrl/);
+  // A structured non-2xx JOB_TIMEOUT/GENERATION_FAILED envelope is terminal.
+  // The body must therefore be parsed before the HTTP status is skipped.
+  assert.match(source, /obj\.success === false && obj\.error/);
+  assert.match(
+    source,
+    /const text = await resp\.text\(\);[\s\S]*?graphisteJobFailed\(data\)[\s\S]*?if \(!resp\.ok\) continue;/,
+  );
   // stops early when the polled job reports a terminal failure.
   assert.match(source, /graphisteJobFailed/);
+});
+
+test('generate-image prioritizes the canonical public poll route over an emitted status URL', () => {
+  const fnStart = source.indexOf('function graphisteStatusCandidates');
+  const fnEnd = source.indexOf('\n}\n', fnStart);
+  const fn = source.slice(fnStart, fnEnd);
+  assert.ok(fn.indexOf('if (jobId)') >= 0);
+  assert.ok(fn.indexOf('if (statusUrl)') >= 0);
+  assert.ok(fn.indexOf('if (jobId)') < fn.indexOf('if (statusUrl)'),
+    'canonical job-id route must be tried before potentially stale/internal status_url');
 });
 
 test('generate-image extracts the canonical data.job_id, never the trace request_id', () => {

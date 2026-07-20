@@ -45,6 +45,7 @@ test('shared Graphiste client honours the documented v1.1 async contract', () =>
   assert.match(graphiste, /export async function rehostToUserAssets/);
   assert.match(graphiste, /mode: "async"/);
   assert.match(graphiste, /quality: "premium"/);
+  assert.match(graphiste, /reliability_mode: true/);
   assert.match(graphiste, /"Idempotency-Key": crypto\.randomUUID\(\)/);
   // Never persist an SVG/placeholder as a real poster.
   assert.match(graphiste, /refusing SVG data URL/);

@@ -54,6 +54,9 @@ export function extractStatusUrl(value: unknown): string | null {
 export function jobFailed(value: unknown): boolean {
   if (!value || typeof value !== "object") return false;
   const obj = value as Record<string, unknown>;
+  // Graphiste error envelopes (including JOB_TIMEOUT) are terminal even when
+  // they do not carry a nested `status` field.
+  if (obj.success === false && obj.error) return true;
   const status = typeof obj.status === "string" ? obj.status.toLowerCase() : "";
   if (["failed", "error", "canceled", "cancelled"].includes(status)) return true;
   for (const key of ["data", "result", "job"]) {
