@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 30
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      PROJECT_REF: ixinojsmymqovekgkbdg
+      PROJECT_REF: tktoyntaeajgsuplhntd
       APP_ORIGIN: https://auto-post-gen.76.13.129.252.sslip.io
     steps:
       - uses: actions/checkout@v4
@@ -96,12 +96,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for migration in \
-            supabase/migrations/20260619000000_scheduling_time_and_promo.sql \
-            supabase/migrations/20260619010000_auto_post_images.sql \
-            supabase/migrations/20260620000000_senior_audit_hardening.sql \
-            supabase/migrations/20260620010000_public_rate_limit.sql \
-            supabase/migrations/20260623000000_user_plan.sql
+          for migration in $(find supabase/migrations -maxdepth 1 -type f -name '*.sql' | sort)
           do
             echo "Applying $(basename "$migration")"
             jq -Rs '{query: .}' < "$migration" > /tmp/query.json
