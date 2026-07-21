@@ -100,6 +100,20 @@ jobs:
             APP_BASE_URL="$APP_ORIGIN" \
             ZERNIO_API_KEY="$ZERNIO_API_KEY"
 
+      - name: Verify AI provider secrets without exposing values
+        shell: bash
+        run: |
+          set -euo pipefail
+          supabase secrets list --project-ref "$PROJECT_REF" --output json > /tmp/runtime-secrets.json
+          jq -r '.[].name' /tmp/runtime-secrets.json | sort | sed 's/^/Configured runtime secret: /'
+          for required in GRAPHISTE_GPT_API_KEY OPENROUTER_API_KEY; do
+            if ! jq -e --arg required "$required" 'any(.[]; .name == $required)' /tmp/runtime-secrets.json >/dev/null; then
+              echo "::error::$required is missing from Supabase Edge Function secrets."
+              exit 1
+            fi
+          done
+          echo "Graphiste GPT is configured for poster generation; OpenRouter is configured for text generation."
+
       - name: Apply the current editorial-mix migration
         shell: bash
         run: |

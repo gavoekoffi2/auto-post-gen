@@ -17,6 +17,13 @@ test('generate-image uses Graphiste GPT premium only — no generic/Gemini/OpenR
   assert.equal(source.includes('quality: "fast"'), false);
 });
 
+test('production deployment refuses to proceed when either AI provider secret is absent', () => {
+  const workflow = readFileSync(join(__dirname, '..', '.github/workflows/deploy-functions.yml'), 'utf8');
+  assert.match(workflow, /supabase secrets list --project-ref/);
+  assert.match(workflow, /for required in GRAPHISTE_GPT_API_KEY OPENROUTER_API_KEY/);
+  assert.match(workflow, /\$required is missing from Supabase Edge Function secrets/);
+});
+
 test('generate-image sends the documented Graphiste GPT v1.1 contract fields', () => {
   // Fields per https://graphistegpt.pro/docs/api — the API reads `subject`
   // (not a free-form prompt), aspect_ratio/resolution control the format,
