@@ -4,18 +4,34 @@
 ALTER TABLE public.profiles
   ADD COLUMN IF NOT EXISTS research_posts_per_week integer NOT NULL DEFAULT 1;
 
-ALTER TABLE public.profiles DROP CONSTRAINT IF EXISTS profiles_research_posts_range;
-ALTER TABLE public.profiles
-  ADD CONSTRAINT profiles_research_posts_range
-  CHECK (research_posts_per_week >= 0 AND research_posts_per_week <= 21);
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'profiles_research_posts_range'
+      AND conrelid = 'public.profiles'::regclass
+  ) THEN
+    ALTER TABLE public.profiles
+      ADD CONSTRAINT profiles_research_posts_range
+      CHECK (research_posts_per_week >= 0 AND research_posts_per_week <= 21);
+  END IF;
+END $$;
 
 ALTER TABLE public.posts
   ADD COLUMN IF NOT EXISTS content_category text;
 
-ALTER TABLE public.posts DROP CONSTRAINT IF EXISTS posts_content_category_values;
-ALTER TABLE public.posts
-  ADD CONSTRAINT posts_content_category_values
-  CHECK (content_category IN ('value', 'research', 'promo'));
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'posts_content_category_values'
+      AND conrelid = 'public.posts'::regclass
+  ) THEN
+    ALTER TABLE public.posts
+      ADD CONSTRAINT posts_content_category_values
+      CHECK (content_category IN ('value', 'research', 'promo'));
+  END IF;
+END $$;
 
 COMMENT ON COLUMN public.profiles.research_posts_per_week IS
   'Number of weekly automatic posts grounded specifically in current sector news/research.';

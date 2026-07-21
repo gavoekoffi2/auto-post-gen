@@ -100,5 +100,17 @@ jobs:
             APP_BASE_URL="$APP_ORIGIN" \
             ZERNIO_API_KEY="$ZERNIO_API_KEY"
 
+      - name: Apply the current editorial-mix migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          migration="supabase/migrations/20260721000000_editorial_mix.sql"
+          jq -Rs '{query: .}' < "$migration" > /tmp/editorial-mix-query.json
+          curl --fail-with-body -sS -X POST \
+            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data-binary @/tmp/editorial-mix-query.json \
+            "https://api.supabase.com/v1/projects/$PROJECT_REF/database/query" >/dev/null
+
       - name: Deploy all edge functions
         run: supabase functions deploy --project-ref "$PROJECT_REF"
