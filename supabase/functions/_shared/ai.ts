@@ -1,7 +1,7 @@
 // Shared AI provider helper. Uses OpenRouter (OpenAI-compatible API)
 // configured via Supabase secrets:
 //   OPENROUTER_API_KEY        — required
-//   OPENROUTER_TEXT_MODEL     — optional, defaults to google/gemini-2.5-flash
+//   OPENROUTER_TEXT_MODEL     — optional Claude override; non-Claude values are ignored
 //   OPENROUTER_IMAGE_MODEL    — optional, defaults to google/gemini-2.5-flash-image
 //   APP_PUBLIC_URL / APP_NAME — optional, sent as HTTP-Referer and X-Title
 //                               so OpenRouter's dashboard shows your usage cleanly
@@ -16,7 +16,12 @@ export function getOpenRouterKey(): string | null {
 }
 
 export function getTextModel(): string {
-  return Deno.env.get("OPENROUTER_TEXT_MODEL") || "google/gemini-2.5-flash";
+  const configured = Deno.env.get("OPENROUTER_TEXT_MODEL")?.trim() || "";
+  // Editorial text is intentionally Claude-only: the product promises Claude's
+  // writing quality. An old Gemini/OpenAI secret must not silently downgrade it.
+  if (configured.startsWith("anthropic/claude-")) return configured;
+  if (configured) console.warn(`Ignoring non-Claude OPENROUTER_TEXT_MODEL: ${configured}`);
+  return "anthropic/claude-sonnet-5";
 }
 
 export function getImageModels(): string[] {

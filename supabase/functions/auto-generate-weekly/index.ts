@@ -3,6 +3,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { buildCorsHeaders } from "../_shared/cors.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { chatText, getOpenRouterKey, getTextModel } from "../_shared/ai.ts";
+import { buildAudiencePrompt, normalizeAudiences } from "../_shared/audience.ts";
 import { ensurePostEngagement } from "../_shared/post-engagement.ts";
 import { buildInspirationBlock, researchInspiration } from "../_shared/research.ts";
 import { rehostToUserAssets, startPosterJob } from "../_shared/graphiste.ts";
@@ -220,6 +221,9 @@ serve(async (req) => {
         const companyName = profile.company_name || "notre entreprise";
         const sector = profile.sector || "Business";
         const description = profile.description || "";
+        const approvedAudiences = normalizeAudiences(profile.target_audiences);
+        // Each weekly post rotates through target_audiences. buildAudiencePrompt
+        // expands pain_points/goals into explicit DOULEURS and OBJECTIFS.
         let inspirationBlock = "";
         try {
           const webResults = await researchInspiration(sector, companyName, description, {
@@ -240,6 +244,7 @@ serve(async (req) => {
           const contentCategory = editorialPlan[i];
           const isPromo = contentCategory === "promo";
           const isResearch = contentCategory === "research";
+          const audienceBlock = buildAudiencePrompt(approvedAudiences, i + weekNumber);
           const avoidBlock = generatedThisRun.length
             ? `\nNE répète NI le sujet NI l'accroche de ces posts déjà générés cette semaine:\n${
                 generatedThisRun.map((c, k) => `${k + 1}. ${c.slice(0, 150)}`).join("\n")
@@ -248,20 +253,23 @@ serve(async (req) => {
 
           let contentPrompt: string;
           if (isPromo) {
-            contentPrompt = `Tu es un expert en marketing pour les réseaux sociaux, spécialisé dans le métier décrit ci-dessous. Reste STRICTEMENT dans ce domaine d'activité.
+            contentPrompt = `Tu es Claude, rédacteur marketing senior. Tu écris avec précision, naturel et une compréhension fine du lecteur. Reste STRICTEMENT dans le domaine décrit.
 
 PROFIL DU CLIENT:
 - Nom de l'entreprise: ${companyName}
 - Secteur: ${sector}
 ${description ? `- Description de l'activité: ${description}` : ""}
 - Ton: ${profile.tone || "Professionnel"}
+${audienceBlock}
 ${inspirationBlock}
 OBJECTIF DE CE POST: présenter ce que propose ${companyName} et donner envie de faire appel à ses services.
 
 RÈGLES:
 - 100% en français
-- 60-100 mots
+- 90-160 mots, denses et sans remplissage
 - 2-3 émojis pertinents
+- Écris pour UNE CIBLE PRIORITAIRE, jamais pour « tout le monde »
+- Nomme au moins une situation, douleur ou ambition concrète de cette cible
 - Commence par un bénéfice concret pour le client (jamais par "Nous sommes...")
 - Présente clairement le service ou la valeur que ${companyName} apporte, sans promesses irréalistes
 - Écris "${companyName}" tel quel, jamais entre crochets ni en placeholder
@@ -271,16 +279,18 @@ RÈGLES:
 ${avoidBlock}
 Génère uniquement le texte du post, sans titre ni explication.`;
           } else if (isResearch) {
-            contentPrompt = `Tu es un journaliste sectoriel rigoureux qui transforme une recherche web récente en publication utile. Reste STRICTEMENT dans le domaine décrit.
+            contentPrompt = `Tu es Claude, journaliste sectoriel et pédagogue rigoureux. Tu transformes une recherche web récente en publication claire, exacte et réellement utile. Reste STRICTEMENT dans le domaine décrit.
 
 SECTEUR: ${sector}
 ${description ? `ACTIVITÉ PRÉCISE: ${description}` : ""}
 TON: ${profile.tone || "Professionnel"}
+${audienceBlock}
 
 OBJECTIF ACTUALITÉ/RECHERCHE: informer l'audience sur une nouveauté, une évolution, une étude ou une tendance récente réellement pertinente pour ce métier.
 ${inspirationBlock}
 RÈGLES:
-- 100% en français, 70-120 mots, 2-3 émojis pertinents
+- 100% en français, 100-180 mots, 2-3 émojis pertinents
+- Écris pour UNE CIBLE PRIORITAIRE et relie chaque fait à ses DOULEURS ou OBJECTIFS
 - Appuie le post sur les faits trouvés dans la matière web; n'invente jamais de chiffre, date, étude ou nouveauté
 - Explique concrètement ce que cette information change pour l'audience
 - N'écris JAMAIS le nom de l'entreprise : ce post informe, il ne fait aucune promotion
@@ -290,16 +300,20 @@ RÈGLES:
 ${avoidBlock}
 Génère uniquement le texte du post, sans titre ni explication.`;
           } else {
-            contentPrompt = `Tu es un expert en création de contenu pour les réseaux sociaux, spécialisé dans le métier décrit ci-dessous. Reste STRICTEMENT dans ce domaine d'activité, ne généralise pas vers d'autres sujets.
+            contentPrompt = `Tu es Claude, rédacteur éditorial senior et pédagogue. Tu crées un contenu de forte valeur, précis, naturel et immédiatement applicable. Reste STRICTEMENT dans le domaine décrit, ne généralise pas vers d'autres sujets.
 
 SECTEUR: ${sector}
 ${description ? `ACTIVITÉ PRÉCISE: ${description}` : ""}
 TON: ${profile.tone || "Professionnel"}
+${audienceBlock}
 ANGLE IMPOSÉ: ${AUTO_ANGLES[(i + weekNumber) % AUTO_ANGLES.length]}
 
 RÈGLES:
-- 100% en français, 60-100 mots, 2-3 émojis pertinents
+- 100% en français, 90-160 mots, 2-3 émojis pertinents
+- Écris pour UNE CIBLE PRIORITAIRE et montre que tu comprends ses DOULEURS et OBJECTIFS
 - Apporte une valeur CONCRÈTE et SPÉCIFIQUE à ce métier : conseil, méthode, checklist, explication ou erreur à éviter
+- Inclus au moins une étape, un critère, un exemple ou une méthode immédiatement applicable
+- Vérifie silencieusement qu'aucune phrase n'est du remplissage générique
 - Ce post sert uniquement à AIDER ou FORMER l'audience : aucune promotion, aucun prix, aucune offre
 - N'écris JAMAIS le nom de l'entreprise, même subtilement, et ne parle pas de ses services
 - Termine par une question engageante qui invite explicitement à partager un avis ou une expérience EN COMMENTAIRE
@@ -313,6 +327,8 @@ Génère uniquement le texte du post, sans titre ni explication.`;
             generatedContent = await chatText({
               model: getTextModel(),
               messages: [{ role: "user", content: contentPrompt }],
+              temperature: 0.65,
+              top_p: 0.9,
             });
           } catch (genErr) {
             console.error(

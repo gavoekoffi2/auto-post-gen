@@ -9,7 +9,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ArrowLeft, Save, Building2, Settings, ImageIcon } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from '@/integrations/supabase/client';
+import { AudienceEditor } from '@/components/AudienceEditor';
+import { AudienceSegment, normalizeAudienceSegments } from '@/lib/audiences';
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -39,6 +41,7 @@ export default function Profile() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [analyzingAudiences, setAnalyzingAudiences] = useState(false);
   const [userEmail, setUserEmail] = useState("");
   const [autoPublishConfirmOpen, setAutoPublishConfirmOpen] = useState(false);
   const [autoPublishAcknowledged, setAutoPublishAcknowledged] = useState(false);
@@ -66,6 +69,8 @@ export default function Profile() {
     brand_font: "Inter",
     image_style: "photorealistic",
     style_examples: [] as Array<{ label: string; content: string }>,
+    audienceSuggestions: [] as AudienceSegment[],
+    selectedAudienceIds: [] as string[],
   });
   const [newStyleLabel, setNewStyleLabel] = useState("");
   const [newStyleContent, setNewStyleContent] = useState("");
@@ -120,6 +125,12 @@ export default function Profile() {
           style_examples: Array.isArray(data.style_examples)
             ? (data.style_examples as Array<{ label: string; content: string }>)
             : [],
+          audienceSuggestions: normalizeAudienceSegments(
+            Array.isArray(data.audience_suggestions) && data.audience_suggestions.length > 0
+              ? data.audience_suggestions
+              : data.target_audiences
+          ),
+          selectedAudienceIds: normalizeAudienceSegments(data.target_audiences).map((audience) => audience.id),
         });
         setAutoPublishAcknowledged(!!data.auto_publish);
       }
@@ -130,7 +141,43 @@ export default function Profile() {
     }
   };
 
+  const analyzeAudiences = async () => {
+    if (!profile.company_name.trim() || !profile.sector.trim() || profile.description.trim().length < 20) {
+      toast.error("Renseignez le nom, le secteur et une description précise avant l'analyse.");
+      return;
+    }
+    setAnalyzingAudiences(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('detect-audiences', {
+        body: {
+          companyName: profile.company_name,
+          sector: profile.sector,
+          description: profile.description,
+          contentTypes: profile.content_types,
+        },
+      });
+      if (error) throw error;
+      const audiences = normalizeAudienceSegments(data?.audiences);
+      if (audiences.length < 2) throw new Error("Analyse incomplète");
+      setProfile((current) => ({
+        ...current,
+        audienceSuggestions: audiences,
+        selectedAudienceIds: [],
+      }));
+      toast.success("Nouvelles cibles proposées. Sélectionnez celles à conserver, puis enregistrez.");
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Analyse indisponible";
+      toast.error(`Impossible d'analyser vos cibles : ${message}`);
+    } finally {
+      setAnalyzingAudiences(false);
+    }
+  };
+
   const handleSave = async () => {
+    if (profile.audienceSuggestions.length > 0 && profile.selectedAudienceIds.length === 0) {
+      toast.error("Sélectionnez au moins une cible avant d'enregistrer.");
+      return;
+    }
     setSaving(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -162,6 +209,11 @@ export default function Profile() {
           brand_font: profile.brand_font,
           image_style: profile.image_style,
           style_examples: profile.style_examples,
+          audience_suggestions: profile.audienceSuggestions,
+          target_audiences: profile.audienceSuggestions.filter((audience) =>
+            profile.selectedAudienceIds.includes(audience.id)
+          ),
+          audiences_confirmed_at: new Date().toISOString(),
         })
         .eq('id', session.user.id);
 
@@ -232,7 +284,7 @@ export default function Profile() {
               </Button>
               <h1 className="text-xl font-bold">Mon Profil</h1>
             </div>
-            <Button onClick={handleSave} disabled={saving} className="bg-gradient-to-r from-primary to-secondary">
+            <Button onClick={handleSave} disabled={saving || analyzingAudiences} className="bg-gradient-to-r from-primary to-secondary">
               <Save className="w-4 h-4 mr-2" />
               {saving ? "Sauvegarde..." : "Enregistrer"}
             </Button>
@@ -343,6 +395,21 @@ export default function Profile() {
                   Description courte du style. Pour des exemples concrets, utilisez la bibliothèque ci-dessous.
                 </p>
               </div>
+            </Card>
+
+            <Card className="glass-card p-6">
+              <h2 className="text-lg font-semibold mb-2">Cibles de communication</h2>
+              <p className="text-sm text-muted-foreground mb-5">
+                Claude propose les segments les plus pertinents à partir de votre activité. Vous gardez le contrôle : sélectionnez, corrigez et validez les cibles que chaque publication devra réellement aider.
+              </p>
+              <AudienceEditor
+                audiences={profile.audienceSuggestions}
+                selectedIds={profile.selectedAudienceIds}
+                onAudiencesChange={(audienceSuggestions) => setProfile((current) => ({ ...current, audienceSuggestions }))}
+                onSelectedIdsChange={(selectedAudienceIds) => setProfile((current) => ({ ...current, selectedAudienceIds }))}
+                onAnalyze={() => void analyzeAudiences()}
+                analyzing={analyzingAudiences}
+              />
             </Card>
 
             <Card className="glass-card p-6">

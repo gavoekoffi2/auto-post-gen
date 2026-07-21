@@ -251,6 +251,8 @@ export type Database = {
       profiles: {
         Row: {
           activity_keywords: string[] | null
+          audience_suggestions: Json
+          audiences_confirmed_at: string | null
           auto_publish: boolean | null
           brand_accent_color: string | null
           brand_font: string | null
@@ -279,6 +281,7 @@ export type Database = {
           sector: string
           style_example: string | null
           style_examples: Json | null
+          target_audiences: Json
           tiktok_username: string | null
           tone: string
           twitter_username: string | null
@@ -290,6 +293,8 @@ export type Database = {
         }
         Insert: {
           activity_keywords?: string[] | null
+          audience_suggestions?: Json
+          audiences_confirmed_at?: string | null
           auto_publish?: boolean | null
           brand_accent_color?: string | null
           brand_font?: string | null
@@ -318,6 +323,7 @@ export type Database = {
           sector: string
           style_example?: string | null
           style_examples?: Json | null
+          target_audiences?: Json
           tiktok_username?: string | null
           tone: string
           twitter_username?: string | null
@@ -329,6 +335,8 @@ export type Database = {
         }
         Update: {
           activity_keywords?: string[] | null
+          audience_suggestions?: Json
+          audiences_confirmed_at?: string | null
           auto_publish?: boolean | null
           brand_accent_color?: string | null
           brand_font?: string | null
@@ -357,6 +365,7 @@ export type Database = {
           sector?: string
           style_example?: string | null
           style_examples?: Json | null
+          target_audiences?: Json
           tiktok_username?: string | null
           tone?: string
           twitter_username?: string | null

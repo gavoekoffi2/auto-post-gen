@@ -34,7 +34,7 @@ environment variables in the Supabase dashboard before deploying.
 | Secret | Used by | Purpose |
 | --- | --- | --- |
 | `OPENROUTER_API_KEY` | `generate-content`, `generate-image`, `auto-generate-weekly` | LLM access (OpenAI-compatible API). |
-| `OPENROUTER_TEXT_MODEL` *(optional)* | `generate-content`, `auto-generate-weekly` | Defaults to `google/gemini-2.5-flash`. |
+| `OPENROUTER_TEXT_MODEL` *(optional)* | `generate-content`, `detect-audiences`, `auto-generate-weekly` | Claude override. Defaults to `anthropic/claude-sonnet-5`; non-Claude values are deliberately ignored so editorial writing always remains on Claude. |
 | `GRAPHISTE_GPT_API_KEY` | `generate-image`, `auto-generate-weekly` | **REQUIRED for poster/image generation — without it the app generates post TEXT but never an image** (the "seul le texte se génère" symptom). The poster engine is Graphiste GPT exclusively; there is NO fallback by design. Verify end-to-end with `GRAPHISTE_GPT_API_KEY=... node scripts/diagnose-graphiste.mjs` (checks key validity, credits, and runs a real generation). |
 | `GRAPHISTE_GPT_API_URL` *(optional)* | `generate-image`, `auto-generate-weekly` | Override the Graphiste GPT endpoint. Defaults to the documented v1.1 `posters/generate` URL. |
 | `OPENROUTER_IMAGE_MODEL` *(legacy, unused by the poster flow)* | — | Kept for the deprecated OpenRouter image chain in `_shared/ai.ts`. Poster generation does NOT use OpenRouter. |

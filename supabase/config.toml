@@ -6,6 +6,11 @@ project_id = "tktoyntaeajgsuplhntd"
 [functions.generate-content]
 verify_jwt = true
 
+# detect-audiences is called from onboarding/profile and validates the logged-in
+# user before invoking Claude for segmentation.
+[functions.detect-audiences]
+verify_jwt = true
+
 # generate-image is the asynchronous companion to generate-content; the
 # dashboard calls it right after text generation so the image can stream
 # in while the user already sees the post.

@@ -18,6 +18,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { buildCorsHeaders } from "../_shared/cors.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { AIQuotaError, chatCompletion, getOpenRouterKey, getTextModel } from "../_shared/ai.ts";
+import { buildAudiencePrompt, normalizeAudiences } from "../_shared/audience.ts";
 import { ensurePostEngagement } from "../_shared/post-engagement.ts";
 import { buildInspirationBlock, researchInspiration } from "../_shared/research.ts";
 
@@ -62,6 +63,17 @@ interface UserPreferences {
   image_people_type?: string;
   use_custom_images?: boolean;
   custom_image_urls?: string[];
+  target_audiences?: Array<{
+    id?: string;
+    name?: string;
+    description?: string;
+    pain_points?: string[];
+    goals?: string[];
+    content_topics?: string[];
+    buying_triggers?: string[];
+    preferred_tone?: string;
+    priority?: number;
+  }>;
 }
 
 function cleanSentence(value: string, fallback: string): string {
@@ -265,6 +277,12 @@ serve(async (req) => {
     // description and company name (much more relevant than just the
     // broad sector label).
     const description = userPreferences?.description || "";
+    const approvedAudiences = normalizeAudiences(userPreferences?.target_audiences);
+    // UNE CIBLE PRIORITAIRE par publication: never dilute a post across
+    // multiple approved segments. The prompt expands pain_points and
+    // goals into explicit DOULEURS and OBJECTIFS for one priority audience.
+    const audienceIndex = Math.floor(Math.random() * Math.max(1, approvedAudiences.length));
+    const audienceBlock = buildAudiencePrompt(approvedAudiences, audienceIndex);
     const webResults = await researchInspiration(sector, companyName, description);
 
     // The LLM gets the results AND explicit instructions on how to
@@ -273,7 +291,7 @@ serve(async (req) => {
     // this specific business.
     const inspiration = buildInspirationBlock(webResults, description.slice(0, 120) || sector);
 
-    const systemPrompt = `Tu es un expert en création de contenu pour les réseaux sociaux, spécialisé dans le métier décrit ci-dessous. Tu DOIS rester strictement dans le domaine d'activité du client — pas généraliser, pas dériver vers d'autres sujets.
+    const systemPrompt = `Tu es Claude, rédacteur éditorial senior et stratège de contenu. Tu écris pour les réseaux sociaux avec une expertise métier vérifiable, une compréhension fine du lecteur et une qualité de rédaction irréprochable. Tu DOIS rester strictement dans le domaine d'activité du client — pas généraliser, pas dériver vers d'autres sujets.
 
 ═══════════════════════════════════════════════════════════
 PROFIL PRÉCIS DU CLIENT (À RESPECTER EN TOUT TEMPS):
@@ -286,10 +304,12 @@ Tonalité: ${tone}
 ${styleExample ? `Style préféré: ${styleExample}` : ""}
 ${styleLibraryBlock}
 ═══════════════════════════════════════════════════════════
+${audienceBlock}
 
-RÈGLE D'OR — PERTINENCE MÉTIER:
-Chaque post DOIT être directement utile à un lecteur qui s'intéresse à "${description.slice(0, 150) || sector}".
-Si le post pourrait s'appliquer à n'importe quelle entreprise du secteur ${sector}, il est TROP GÉNÉRIQUE — recommence en y mettant un détail propre au métier décrit ci-dessus.
+RÈGLE D'OR — PERTINENCE MÉTIER ET VALEUR:
+Chaque post DOIT être directement utile à la cible prioritaire et à un lecteur qui s'intéresse à "${description.slice(0, 150) || sector}".
+Si le post pourrait s'appliquer à n'importe quelle entreprise du secteur ${sector}, il est TROP GÉNÉRIQUE — recommence en y mettant un détail propre au métier et à la situation de la cible.
+Avant de répondre, vérifie silencieusement que le texte contient: (1) une idée forte, (2) au moins un détail concret, (3) une action, méthode ou compréhension immédiatement utile, et (4) aucun remplissage.
 
 TYPE DE POST: ${postType === "value" ? "VALEUR (expertise, conseil)" : "PROMOTIONNEL (services/produits)"}
 ANGLE IMPOSÉ: ${angle.name} — ${angle.brief}
@@ -299,6 +319,7 @@ ${postType === "value"
 - Suis STRICTEMENT l'angle "${angle.name}": ${angle.brief}
 - Apporte une VRAIE valeur concrète et SPÉCIFIQUE au métier décrit
 - Donne un conseil/info que SEUL un connaisseur de ce métier précis pourrait donner
+- Inclus au moins une méthode, mini-exemple, critère de décision ou étape réellement applicable
 - N'écris JAMAIS le nom de l'entreprise, même subtilement
 - Ne présente aucun service, aucune offre et aucun prix : ce post sert uniquement à aider ou former l'audience`
   : `INSTRUCTIONS POST PROMOTIONNEL:
@@ -313,7 +334,8 @@ RÈGLES CRITIQUES:
 - 2-4 émojis pertinents (PAS en début ni en fin de phrase clé)
 - Tonalité: ${tone}
 - Paragraphes courts (1-2 lignes)
-- Longueur: 60-100 mots
+- Longueur: 90-160 mots; privilégie la densité de valeur plutôt que le remplissage
+- Adresse-toi naturellement à la cible avec « vous » lorsque cela améliore la clarté
 - Termine le corps du post par une question naturelle qui donne envie de partager un avis ou une expérience EN COMMENTAIRE
 ${postType === "promo" ? "- Garde aussi l'appel à l'action commercial (contacter, réserver, écrire), distinct de l'invitation à commenter" : ""}
 - Ajoute ensuite une dernière ligne de 3-5 hashtags spécifiques et pertinents pour le sujet et le métier
@@ -357,8 +379,8 @@ Réponds UNIQUEMENT avec le texte du post, sans titre ni explication, sans guill
               `Génère un post pertinent avec l'angle "${angle.name}" pour mon audience.`,
           },
         ],
-        temperature: 0.95,
-        top_p: 0.95,
+        temperature: 0.65,
+        top_p: 0.9,
       });
       if (!textResponse.ok) {
         const detail = (await textResponse.text()).slice(0, 240);

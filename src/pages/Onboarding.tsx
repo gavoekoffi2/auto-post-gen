@@ -10,11 +10,14 @@ import { ArrowRight, ArrowLeft, Sparkles } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { AudienceEditor } from "@/components/AudienceEditor";
+import { AudienceSegment, normalizeAudienceSegments } from "@/lib/audiences";
 
 export default function Onboarding() {
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [analyzingAudiences, setAnalyzingAudiences] = useState(false);
   const [formData, setFormData] = useState({
     companyName: "",
     sector: "",
@@ -26,6 +29,8 @@ export default function Onboarding() {
     platforms: [] as string[],
     preferredDays: [] as string[],
     imagePeopleType: "african",
+    audienceSuggestions: [] as AudienceSegment[],
+    selectedAudienceIds: [] as string[],
   });
 
   const DAYS = [
@@ -64,8 +69,44 @@ export default function Onboarding() {
     checkAuth();
   }, [navigate]);
 
+  const analyzeAudiences = async (): Promise<boolean> => {
+    setAnalyzingAudiences(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('detect-audiences', {
+        body: {
+          companyName: formData.companyName,
+          sector: formData.sector,
+          description: formData.description,
+          contentTypes: [formData.contentType],
+        },
+      });
+      if (error) throw error;
+      const audiences = normalizeAudienceSegments(data?.audiences);
+      if (audiences.length < 2) throw new Error("Analyse incomplète");
+      setFormData((current) => ({
+        ...current,
+        audienceSuggestions: audiences,
+        selectedAudienceIds: [],
+      }));
+      toast.success("Vos cibles recommandées sont prêtes. Sélectionnez celles que vous souhaitez toucher.");
+      return true;
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Analyse indisponible";
+      toast.error(`Impossible d'analyser vos cibles : ${message}`);
+      return false;
+    } finally {
+      setAnalyzingAudiences(false);
+    }
+  };
+
   const handleNext = async () => {
-    if (step < 7) {
+    if (step === 3) {
+      if (formData.audienceSuggestions.length === 0) {
+        const analyzed = await analyzeAudiences();
+        if (!analyzed) return;
+      }
+      setStep(4);
+    } else if (step < 8) {
       setStep(step + 1);
     } else {
       // Save profile to database
@@ -91,6 +132,11 @@ export default function Onboarding() {
               preferred_days: formData.preferredDays,
               auto_publish: false,
               image_people_type: formData.imagePeopleType,
+              audience_suggestions: formData.audienceSuggestions,
+              target_audiences: formData.audienceSuggestions.filter((audience) =>
+                formData.selectedAudienceIds.includes(audience.id)
+              ),
+              audiences_confirmed_at: new Date().toISOString(),
             },
             { onConflict: 'id' }
           );
@@ -121,12 +167,14 @@ export default function Onboarding() {
       case 3:
         return formData.description.length > 10;
       case 4:
-        return true; // Style example is optional
+        return formData.selectedAudienceIds.length > 0;
       case 5:
-        return formData.platforms.length > 0;
+        return true; // Style example is optional
       case 6:
-        return formData.preferredDays.length > 0;
+        return formData.platforms.length > 0;
       case 7:
+        return formData.preferredDays.length > 0;
+      case 8:
         return formData.imagePeopleType !== "";
       default:
         return false;
@@ -148,7 +196,7 @@ export default function Onboarding() {
         {/* Progress bar */}
         <div className="mb-8">
           <div className="flex justify-between mb-2">
-            {[1, 2, 3, 4, 5, 6, 7].map((i) => (
+            {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
               <div
                 key={i}
                 className={`h-2 flex-1 mx-1 rounded-full transition-all ${
@@ -158,7 +206,7 @@ export default function Onboarding() {
             ))}
           </div>
           <p className="text-center text-sm text-muted-foreground">
-            Étape {step} sur 7
+            Étape {step} sur 8
           </p>
         </div>
 
@@ -287,6 +335,25 @@ export default function Onboarding() {
           {step === 4 && (
             <div className="space-y-6">
               <div>
+                <h2 className="text-2xl font-bold mb-2">Cibles recommandées</h2>
+                <p className="text-muted-foreground">
+                  Claude a analysé votre activité. Sélectionnez au moins une cible parmi les personnes que vos contenus doivent aider et convaincre.
+                </p>
+              </div>
+              <AudienceEditor
+                audiences={formData.audienceSuggestions}
+                selectedIds={formData.selectedAudienceIds}
+                onAudiencesChange={(audienceSuggestions) => setFormData((current) => ({ ...current, audienceSuggestions }))}
+                onSelectedIdsChange={(selectedAudienceIds) => setFormData((current) => ({ ...current, selectedAudienceIds }))}
+                onAnalyze={() => void analyzeAudiences()}
+                analyzing={analyzingAudiences}
+              />
+            </div>
+          )}
+
+          {step === 5 && (
+            <div className="space-y-6">
+              <div>
                 <h2 className="text-2xl font-bold mb-2">Style de contenu</h2>
                 <p className="text-muted-foreground">
                   Donnez-nous un exemple de style de contenu que vous aimez (optionnel)
@@ -309,7 +376,7 @@ export default function Onboarding() {
             </div>
           )}
 
-          {step === 5 && (
+          {step === 6 && (
             <div className="space-y-6">
               <div>
                 <h2 className="text-2xl font-bold mb-2">Réseaux sociaux</h2>
@@ -353,7 +420,7 @@ export default function Onboarding() {
             </div>
           )}
 
-          {step === 6 && (
+          {step === 7 && (
             <div className="space-y-6">
               <div>
                 <h2 className="text-2xl font-bold mb-2">Jours de publication</h2>
@@ -390,7 +457,7 @@ export default function Onboarding() {
             </div>
           )}
 
-          {step === 7 && (
+          {step === 8 && (
             <div className="space-y-6">
               <div>
                 <h2 className="text-2xl font-bold mb-2">Dernière étape !</h2>
@@ -449,10 +516,10 @@ export default function Onboarding() {
 
             <Button
               onClick={handleNext}
-              disabled={!canProceed() || loading}
+              disabled={!canProceed() || loading || analyzingAudiences}
               className="bg-gradient-to-r from-primary to-secondary hover:opacity-90"
             >
-              {loading ? "Sauvegarde..." : step === 7 ? "Terminer" : "Suivant"}
+              {analyzingAudiences ? "Analyse des cibles..." : loading ? "Sauvegarde..." : step === 8 ? "Valider mes cibles et terminer" : "Suivant"}
               <ArrowRight className="w-4 h-4 ml-2" />
             </Button>
           </div>
