@@ -3,6 +3,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { buildCorsHeaders } from "../_shared/cors.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { chatText, getOpenRouterKey, getTextModel } from "../_shared/ai.ts";
+import { ensurePostEngagement } from "../_shared/post-engagement.ts";
 import { buildInspirationBlock, researchInspiration } from "../_shared/research.ts";
 import { rehostToUserAssets, startPosterJob } from "../_shared/graphiste.ts";
 
@@ -264,7 +265,9 @@ RÈGLES:
 - Commence par un bénéfice concret pour le client (jamais par "Nous sommes...")
 - Présente clairement le service ou la valeur que ${companyName} apporte, sans promesses irréalistes
 - Écris "${companyName}" tel quel, jamais entre crochets ni en placeholder
-- Termine par un appel à l'action clair et naturel (contacter, écrire, réserver…)
+- Termine par un appel à l'action clair et naturel, avec une intention commerciale (contacter, écrire, réserver…)
+- Ajoute ensuite une question naturelle qui invite explicitement l'audience à donner son avis ou son besoin EN COMMENTAIRE
+- Termine la publication par une ligne de 3-5 hashtags spécifiques au sujet, au métier et à l'audience
 ${avoidBlock}
 Génère uniquement le texte du post, sans titre ni explication.`;
           } else if (isResearch) {
@@ -282,7 +285,8 @@ RÈGLES:
 - Explique concrètement ce que cette information change pour l'audience
 - N'écris JAMAIS le nom de l'entreprise : ce post informe, il ne fait aucune promotion
 - Aucune offre, aucun prix, aucun appel à acheter ou à contacter
-- Termine par une question utile qui ouvre la discussion
+- Termine par une question utile qui ouvre la discussion et invite explicitement à répondre EN COMMENTAIRE
+- Termine la publication par une ligne de 3-5 hashtags spécifiques au sujet, au métier et à l'audience
 ${avoidBlock}
 Génère uniquement le texte du post, sans titre ni explication.`;
           } else {
@@ -298,7 +302,8 @@ RÈGLES:
 - Apporte une valeur CONCRÈTE et SPÉCIFIQUE à ce métier : conseil, méthode, checklist, explication ou erreur à éviter
 - Ce post sert uniquement à AIDER ou FORMER l'audience : aucune promotion, aucun prix, aucune offre
 - N'écris JAMAIS le nom de l'entreprise, même subtilement, et ne parle pas de ses services
-- Termine par une question engageante
+- Termine par une question engageante qui invite explicitement à partager un avis ou une expérience EN COMMENTAIRE
+- Termine la publication par une ligne de 3-5 hashtags spécifiques au sujet, au métier et à l'audience
 ${avoidBlock}
 Génère uniquement le texte du post, sans titre ni explication.`;
           }
@@ -321,6 +326,12 @@ Génère uniquement le texte du post, sans titre ni explication.`;
             console.error(`Empty content returned for ${profile.id}`);
             continue;
           }
+          generatedContent = ensurePostEngagement({
+            content: generatedContent,
+            category: contentCategory,
+            sector,
+            companyName,
+          });
           // Track for intra-run de-duplication.
           generatedThisRun.push(generatedContent.trim());
 

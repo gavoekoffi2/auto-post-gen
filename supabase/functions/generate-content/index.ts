@@ -18,6 +18,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { buildCorsHeaders } from "../_shared/cors.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { AIQuotaError, chatCompletion, getOpenRouterKey, getTextModel } from "../_shared/ai.ts";
+import { ensurePostEngagement } from "../_shared/post-engagement.ts";
 import { buildInspirationBlock, researchInspiration } from "../_shared/research.ts";
 
 
@@ -313,7 +314,9 @@ RÈGLES CRITIQUES:
 - Tonalité: ${tone}
 - Paragraphes courts (1-2 lignes)
 - Longueur: 60-100 mots
-- Termine par une question engageante${postType === "promo" ? " ou un appel à l'action" : ""}
+- Termine le corps du post par une question naturelle qui donne envie de partager un avis ou une expérience EN COMMENTAIRE
+${postType === "promo" ? "- Garde aussi l'appel à l'action commercial (contacter, réserver, écrire), distinct de l'invitation à commenter" : ""}
+- Ajoute ensuite une dernière ligne de 3-5 hashtags spécifiques et pertinents pour le sujet et le métier
 ${styleExample ? "- Inspire-toi du style fourni sans le copier" : ""}
 
 POSTS DÉJÀ GÉNÉRÉS POUR CE CLIENT (NE répète AUCUN sujet, AUCUN angle, AUCUNE accroche):
@@ -321,8 +324,15 @@ ${recentList || "(aucun pour l'instant)"}
 
 Réponds UNIQUEMENT avec le texte du post, sans titre ni explication, sans guillemets autour.`;
 
+    const withEngagement = (content: string) => ensurePostEngagement({
+      content,
+      category: postType,
+      sector,
+      companyName,
+    });
+
     const fallbackContent = (reason: string) => ({
-      content: buildFallbackContent({ companyName, sector, description, postType }),
+      content: withEngagement(buildFallbackContent({ companyName, sector, description, postType })),
       angle: angle.name,
       postType,
       usedWebInspiration: webResults.length > 0,
@@ -375,7 +385,7 @@ Réponds UNIQUEMENT avec le texte du post, sans titre ni explication, sans guill
 
     return new Response(
       JSON.stringify({
-        content: generatedContent,
+        content: withEngagement(generatedContent),
         angle: angle.name,
         postType,
         usedWebInspiration: webResults.length > 0,
