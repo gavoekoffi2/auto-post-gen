@@ -272,6 +272,7 @@ export type Database = {
           instagram_username: string | null
           linkedin_username: string | null
           logo_url: string | null
+          poster_footer_text: string | null
           platforms: string[]
           post_frequency: number
           preferred_days: string[] | null
@@ -314,6 +315,7 @@ export type Database = {
           instagram_username?: string | null
           linkedin_username?: string | null
           logo_url?: string | null
+          poster_footer_text?: string | null
           platforms?: string[]
           post_frequency?: number
           preferred_days?: string[] | null
@@ -356,6 +358,7 @@ export type Database = {
           instagram_username?: string | null
           linkedin_username?: string | null
           logo_url?: string | null
+          poster_footer_text?: string | null
           platforms?: string[]
           post_frequency?: number
           preferred_days?: string[] | null

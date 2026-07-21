@@ -419,6 +419,7 @@ Génère uniquement le texte du post, sans titre ni explication.`;
                 sector,
                 description,
                 companyName,
+                footerText: profile.poster_footer_text || "",
                 primary: profile.brand_primary_color || "#8B5CF6",
                 secondary: profile.brand_secondary_color || "#3B82F6",
                 accent: profile.brand_accent_color || "#F59E0B",

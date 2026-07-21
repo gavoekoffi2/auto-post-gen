@@ -138,5 +138,17 @@ jobs:
             --data-binary @/tmp/audience-targets-query.json \
             "https://api.supabase.com/v1/projects/$PROJECT_REF/database/query" >/dev/null
 
+      - name: Apply poster footer text migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          migration="supabase/migrations/20260723000000_poster_footer_text.sql"
+          jq -Rs '{query: .}' < "$migration" > /tmp/poster-footer-text-query.json
+          curl --fail-with-body -sS -X POST \
+            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data-binary @/tmp/poster-footer-text-query.json \
+            "https://api.supabase.com/v1/projects/$PROJECT_REF/database/query" >/dev/null
+
       - name: Deploy all edge functions
         run: supabase functions deploy --project-ref "$PROJECT_REF"

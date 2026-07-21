@@ -48,6 +48,7 @@ export default function Profile() {
   const [profile, setProfile] = useState({
     company_name: "",
     logo_url: "",
+    poster_footer_text: "",
     sector: "",
     content_types: [] as string[],
     tone: "",
@@ -102,6 +103,7 @@ export default function Profile() {
         setProfile({
           company_name: data.company_name || "",
           logo_url: data.logo_url || "",
+          poster_footer_text: data.poster_footer_text || "",
           sector: data.sector || "",
           content_types: data.content_types || [],
           tone: data.tone || "",
@@ -188,6 +190,7 @@ export default function Profile() {
         .update({
           company_name: profile.company_name,
           logo_url: profile.logo_url,
+          poster_footer_text: profile.poster_footer_text.trim() || null,
           sector: profile.sector,
           content_types: profile.content_types,
           tone: profile.tone,
@@ -755,6 +758,38 @@ export default function Profile() {
                 <p className="text-xs text-muted-foreground">
                   Police de référence utilisée par l'IA quand des éléments typographiques apparaissent dans l'image.
                 </p>
+              </div>
+
+              <div className="mt-6 space-y-3 border-t border-border/50 pt-6">
+                <div>
+                  <Label htmlFor="poster-footer-text">Texte permanent sur vos affiches</Label>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Écrivez votre appel à l’action, votre numéro ou votre message de signature. Il apparaîtra avec un bon contraste dans l’angle inférieur gauche de chaque affiche.
+                  </p>
+                </div>
+                <Input
+                  id="poster-footer-text"
+                  value={profile.poster_footer_text}
+                  maxLength={120}
+                  onChange={(e) => setProfile({ ...profile, poster_footer_text: e.target.value })}
+                  placeholder="Abonnez-vous pour plus de conseils"
+                  className="glass-card"
+                />
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>{profile.poster_footer_text.length} / 120 caractères</span>
+                  <span>Laissez vide pour ne rien afficher.</span>
+                </div>
+                <div className="overflow-hidden rounded-xl border border-border/60 bg-gradient-to-br from-slate-950 via-slate-900 to-primary/40 p-5 text-white shadow-inner">
+                  <p className="mb-12 text-xs font-medium uppercase tracking-[0.2em] text-white/50">Aperçu sur l’affiche</p>
+                  <div className="flex items-end justify-between gap-4">
+                    <span className="max-w-[70%] rounded-full bg-white/95 px-4 py-2 text-sm font-semibold text-slate-950 shadow-lg">
+                      {profile.poster_footer_text.trim() || "Abonnez-vous pour plus de conseils"}
+                    </span>
+                    <span className="text-right text-xs font-semibold text-white/90">
+                      {profile.company_name || "Votre entreprise"}
+                    </span>
+                  </div>
+                </div>
               </div>
             </Card>
 

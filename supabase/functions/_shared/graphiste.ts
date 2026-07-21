@@ -37,6 +37,7 @@ export interface StartPosterParams {
   sector: string;
   description: string;
   companyName: string;
+  footerText: string;
   primary: string;
   secondary: string;
   accent: string;
@@ -107,6 +108,9 @@ function buildGraphisteSubject(params: StartPosterParams, spec: SocialImageSpec)
   ].filter(Boolean).join(". ");
   const isPromo = params.contentCategory === "promo";
   const cta = ctaFromPost(params.postContent);
+  const persistentFooter = params.footerText.trim()
+    ? `Texte permanent utilisateur: écris le texte exact "${params.footerText.trim().slice(0, 120)}" dans l'angle inférieur gauche, dans un cartouche élégant à fort contraste, très lisible et bien aligné. Ne le reformule pas, ne le corrige pas et ne le répète nulle part ailleurs.`
+    : `L'utilisateur n'a défini aucun message: n'ajoute aucun texte permanent dans l'angle inférieur gauche.`;
   return [
     isPromo
       ? `Affiche publicitaire professionnelle premium pour les réseaux sociaux (${spec.label}, ${orientationLabel(spec.orientation)}).`
@@ -115,8 +119,9 @@ function buildGraphisteSubject(params: StartPosterParams, spec: SocialImageSpec)
     `Le visuel doit être complémentaire au texte, pas une copie intégrale: transforme l'idée centrale en une scène, une métaphore ou une composition visuelle claire. Message source: ${params.postContent.slice(0, 700)}`,
     `Composition: visuel complet (pas un fond vide), accroche courte et très lisible, hiérarchie visuelle forte, éclairage cinématographique, mise en page moderne remplie de bord à bord, contraste premium.`,
     isPromo
-      ? `Appel à l'action clair et visible: ${cta}.`
-      : `Aucun appel à l'action commercial, aucun prix et aucune offre: ne transforme pas le visuel en publicité.`,
+      ? `Appel à l'action commercial du contenu: ${cta}.`
+      : `N'invente aucun appel à l'action commercial, prix ou offre: ne transforme pas le visuel en publicité; seul le texte permanent explicitement choisi par l'utilisateur ci-dessous peut apparaître.`,
+    persistentFooter,
     `Identité de marque: place le logo fourni et/ou le nom exact "${params.companyName}" comme signature de marque discrète dans l'angle inférieur droit, toujours au même emplacement, petite mais lisible; ce nom ne doit jamais être le titre principal.`,
     `Interdictions: pas de petit texte illisible, pas de fausses lettres, pas de watermark, pas d'élément d'interface, pas d'image vide ni de template vide.`,
     `Si des personnes sont représentées, privilégier des personnes africaines/noires professionnelles et crédibles.`,

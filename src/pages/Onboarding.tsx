@@ -20,6 +20,7 @@ export default function Onboarding() {
   const [analyzingAudiences, setAnalyzingAudiences] = useState(false);
   const [formData, setFormData] = useState({
     companyName: "",
+    posterFooterText: "",
     sector: "",
     contentType: "",
     tone: "",
@@ -122,6 +123,7 @@ export default function Onboarding() {
               id: session.user.id,
               email: session.user.email,
               company_name: formData.companyName,
+              poster_footer_text: formData.posterFooterText.trim() || null,
               sector: formData.sector,
               content_types: [formData.contentType],
               tone: formData.tone,
@@ -499,6 +501,22 @@ export default function Onboarding() {
                 <p className="text-xs text-muted-foreground mt-3">
                   Vous pourrez modifier ce choix dans vos paramètres à tout moment.
                 </p>
+              </div>
+
+              <div className="space-y-2 rounded-xl border border-border/60 bg-muted/20 p-4">
+                <Label htmlFor="onboarding-poster-footer">Texte permanent sur vos affiches</Label>
+                <p className="text-xs text-muted-foreground">
+                  Ce message facultatif apparaîtra dans l’angle inférieur gauche de chaque affiche. Vous pourrez le modifier plus tard dans votre profil.
+                </p>
+                <Input
+                  id="onboarding-poster-footer"
+                  value={formData.posterFooterText}
+                  maxLength={120}
+                  onChange={(e) => setFormData({ ...formData, posterFooterText: e.target.value })}
+                  placeholder="Abonnez-vous pour plus de conseils"
+                  className="glass-card"
+                />
+                <p className="text-right text-xs text-muted-foreground">{formData.posterFooterText.length} / 120</p>
               </div>
             </div>
           )}
