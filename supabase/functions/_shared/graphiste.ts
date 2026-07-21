@@ -123,10 +123,15 @@ function absoluteGraphisteUrl(value: string): string {
   return value;
 }
 
+function isStaticReferenceTemplateUrl(value: string): boolean {
+  return value.includes("/reference-templates/") &&
+    !value.includes("/reference-templates/generated/");
+}
+
 function isPosterImageUrl(value: unknown): value is string {
   if (typeof value !== "string") return false;
   const v = value.trim();
-  if (v.includes("/reference-templates/")) return false;
+  if (isStaticReferenceTemplateUrl(v)) return false;
   if (/^data:image\/svg/i.test(v)) return false;
   if (v.startsWith("data:image/")) return true;
   if (/^https?:\/\//i.test(v)) return !/\.svg(\?|#|$)/i.test(v);
@@ -149,7 +154,7 @@ function extractPosterImageUrl(value: unknown): string | null {
     const dataMatch = value.match(/data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/);
     if (dataMatch?.[0] && !/^data:image\/svg/i.test(dataMatch[0])) return dataMatch[0];
     const urlMatch = value.match(/https?:\/\/[^\s)"']+/);
-    if (urlMatch?.[0] && !/\.svg(\?|#|$)/i.test(urlMatch[0]) && !urlMatch[0].includes("/reference-templates/")) {
+    if (urlMatch?.[0] && !/\.svg(\?|#|$)/i.test(urlMatch[0]) && !isStaticReferenceTemplateUrl(urlMatch[0])) {
       return absoluteGraphisteUrl(urlMatch[0]);
     }
     return null;
@@ -278,10 +283,14 @@ export async function resumePosterJob(
           const text = await resp.text();
           let data: unknown;
           try { data = JSON.parse(text); } catch { data = text; }
-          if (jobFailed(data)) return { imageUrl: null, status: "failed" };
+          // Unsupported fallback routes may answer 400/404 even while the
+          // canonical job route is healthy. Only successful poll responses can
+          // describe the actual job state.
           if (!resp.ok) continue;
           const imageUrl = extractPosterImageUrl(data);
           if (imageUrl) return { imageUrl, status: "completed" };
+          if (jobFailed(data)) return { imageUrl: null, status: "failed" };
+          break;
         } catch (_err) {
           // try next candidate / next tick
         }

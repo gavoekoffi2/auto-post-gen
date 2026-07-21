@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const source = readFileSync(join(__dirname, '..', 'supabase/functions/generate-image/index.ts'), 'utf8');
+const sharedGraphiste = readFileSync(join(__dirname, '..', 'supabase/functions/_shared/graphiste.ts'), 'utf8');
 
 test('generate-image uses Graphiste GPT premium only — no generic/Gemini/OpenRouter providers', () => {
   assert.equal(source.includes('generateImageUrl('), false, 'must not call a generic image generator');
@@ -68,9 +69,11 @@ test('generate-image never builds or saves a local SVG poster as a success', () 
   assert.equal(source.includes('professional-poster-fallback'), false);
   assert.equal(source.includes('data:image/svg+xml'), false, 'never emits an SVG data URL');
   assert.match(source, /provider:\s*"graphiste-gpt"/);
-  // SVGs/placeholders are actively rejected when extracting/verifying images.
+  // SVGs/static template placeholders are rejected, while Graphiste's real
+  // completed raster folder reference-templates/generated remains accepted.
   assert.match(source, /contentType\.includes\("svg"\)/);
-  assert.match(source, /reference-templates/);
+  assert.match(source, /isStaticReferenceTemplateUrl/);
+  assert.match(source, /!value\.includes\("\/reference-templates\/generated\/"\)/);
 });
 
 test('generate-image fails with a clear, actionable error instead of saving junk', () => {
@@ -96,15 +99,22 @@ test('generate-image uses the documented business default and async polling', ()
   assert.match(source, /pollGraphisteJob/);
   assert.match(source, /extractGraphisteJobId/);
   assert.match(source, /statusUrl/);
-  // A structured non-2xx JOB_TIMEOUT/GENERATION_FAILED envelope is terminal.
-  // The body must therefore be parsed before the HTTP status is skipped.
-  assert.match(source, /obj\.success === false && obj\.error/);
+  // A non-2xx response from one candidate route can simply mean that this API
+  // version does not implement that route. Skip it before terminal-job parsing;
+  // only a successful status response may declare the actual job failed.
   assert.match(
     source,
-    /const text = await resp\.text\(\);[\s\S]*?graphisteJobFailed\(data\)[\s\S]*?if \(!resp\.ok\) continue;/,
+    /const text = await resp\.text\(\);[\s\S]*?if \(!resp\.ok\) continue;[\s\S]*?graphisteJobFailed\(data\)[\s\S]*?break;/,
   );
-  // stops early when the polled job reports a terminal failure.
+  // Stops early when the healthy poll route reports a terminal failure, and
+  // stops probing invalid alternatives once it reports a non-terminal state.
   assert.match(source, /graphisteJobFailed/);
+});
+
+test('all Graphiste pollers ignore unsupported-route HTTP errors before parsing job state', () => {
+  const safeOrder = /if \(!resp\.ok\) continue;[\s\S]*?if \(jobFailed\(data\)\)[\s\S]*?break;/;
+  assert.match(sharedGraphiste, safeOrder,
+    'cron/publish poller must not treat a 400/404 fallback route as a failed paid job');
 });
 
 test('generate-image prioritizes the canonical public poll route over an emitted status URL', () => {

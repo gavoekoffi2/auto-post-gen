@@ -68,11 +68,17 @@ function orientationLabel(orientation: string): string {
   }
 }
 
+function isStaticReferenceTemplateUrl(value: string): boolean {
+  return value.includes("/reference-templates/") &&
+    !value.includes("/reference-templates/generated/");
+}
+
 function isImageUrl(value: unknown): value is string {
   if (typeof value !== "string") return false;
   const v = value.trim();
-  // Only a real raster poster counts: reject template placeholders and SVGs.
-  if (v.includes("/reference-templates/")) return false;
+  // Graphiste stores completed raster jobs under reference-templates/generated/.
+  // Reject only static template placeholders, not that generated output folder.
+  if (isStaticReferenceTemplateUrl(v)) return false;
   if (/^data:image\/svg/i.test(v)) return false;
   if (v.startsWith("data:image/")) return true;
   if (/^https?:\/\//i.test(v)) return !/\.svg(\?|#|$)/i.test(v);
@@ -178,10 +184,16 @@ async function pollGraphisteJob(
         const text = await resp.text();
         let data: unknown;
         try { data = JSON.parse(text); } catch { data = text; }
+        // Candidate routes are fallbacks for API-version differences. A 400/404
+        // from one unsupported route is NOT the state of the real job. Only a
+        // successful poll response may declare the job terminal; otherwise try
+        // the next candidate. Once a healthy route answers "processing", stop
+        // probing invalid alternatives during this tick.
+        if (!resp.ok) continue;
         const imageUrl = extractGraphisteImageUrl(data, false);
         if (imageUrl) return { imageUrl, status: "completed" };
         if (graphisteJobFailed(data)) return { imageUrl: null, status: "failed" };
-        if (!resp.ok) continue;
+        break;
       } catch (_err) {
         // Try next candidate / next poll tick.
       }
@@ -219,7 +231,7 @@ function extractGraphisteImageUrl(value: unknown, allowTemplateImage = false): s
     const dataMatch = value.match(/data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/);
     if (dataMatch?.[0] && !/^data:image\/svg/i.test(dataMatch[0])) return dataMatch[0];
     const urlMatch = value.match(/https?:\/\/[^\s)"']+/);
-    if (urlMatch?.[0] && !/\.svg(\?|#|$)/i.test(urlMatch[0]) && !urlMatch[0].includes("/reference-templates/")) {
+    if (urlMatch?.[0] && !/\.svg(\?|#|$)/i.test(urlMatch[0]) && !isStaticReferenceTemplateUrl(urlMatch[0])) {
       return absoluteGraphisteUrl(urlMatch[0]);
     }
     return null;
