@@ -18,6 +18,7 @@ export type Database = {
         Row: {
           auto_publish_attempted_at: string | null
           content: string
+          content_category: string | null
           created_at: string | null
           id: string
           image_url: string | null
@@ -44,6 +45,7 @@ export type Database = {
         Insert: {
           auto_publish_attempted_at?: string | null
           content: string
+          content_category?: string | null
           created_at?: string | null
           id?: string
           image_url?: string | null
@@ -70,6 +72,7 @@ export type Database = {
         Update: {
           auto_publish_attempted_at?: string | null
           content?: string
+          content_category?: string | null
           created_at?: string | null
           id?: string
           image_url?: string | null
@@ -272,6 +275,7 @@ export type Database = {
           preferred_days: string[] | null
           preferred_time: string
           promo_posts_per_week: number
+          research_posts_per_week: number
           sector: string
           style_example: string | null
           style_examples: Json | null
@@ -310,6 +314,7 @@ export type Database = {
           preferred_days?: string[] | null
           preferred_time?: string
           promo_posts_per_week?: number
+          research_posts_per_week?: number
           sector: string
           style_example?: string | null
           style_examples?: Json | null
@@ -348,6 +353,7 @@ export type Database = {
           preferred_days?: string[] | null
           preferred_time?: string
           promo_posts_per_week?: number
+          research_posts_per_week?: number
           sector?: string
           style_example?: string | null
           style_examples?: Json | null

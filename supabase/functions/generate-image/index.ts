@@ -306,26 +306,32 @@ function graphisteDomain(sector: string, description: string, postContent = ""):
 // direction lives here, in `subject`.
 function buildGraphisteSubject(params: {
   postContent: string;
+  contentCategory: "value" | "research" | "promo";
   sector: string;
   description: string;
   companyName: string;
   spec: SocialImageSpec;
 }): string {
   const ctx = [
-    `Entreprise: ${params.companyName || "Entreprise"}`,
     params.sector ? `Secteur: ${params.sector}` : null,
     params.description ? `Activité: ${params.description.slice(0, 220)}` : null,
   ].filter(Boolean).join(". ");
+  const isPromo = params.contentCategory === "promo";
   const cta = ctaFromPost(params.postContent);
   return [
-    `Affiche publicitaire professionnelle premium pour les réseaux sociaux (${params.spec.label}, ${orientationLabel(params.spec.orientation)}).`,
+    isPromo
+      ? `Affiche publicitaire professionnelle premium pour les réseaux sociaux (${params.spec.label}, ${orientationLabel(params.spec.orientation)}).`
+      : `Visuel éditorial professionnel premium pour les réseaux sociaux (${params.spec.label}, ${orientationLabel(params.spec.orientation)}).`,
     `${ctx}.`,
-    `Message à mettre en valeur: ${params.postContent.slice(0, 700)}`,
-    `Composition: vraie affiche marketing complète (pas une simple image décorative ni un fond vide), titre principal très lisible, hiérarchie visuelle forte, éclairage cinématographique, mise en page moderne remplie de bord à bord, contraste premium.`,
-    `Appel à l'action clair et visible: ${cta}.`,
+    `Le visuel doit être complémentaire au texte, pas une copie intégrale: transforme l'idée centrale en une scène, une métaphore ou une composition visuelle claire. Message source: ${params.postContent.slice(0, 700)}`,
+    `Composition: visuel complet (pas un fond vide), accroche courte et très lisible, hiérarchie visuelle forte, éclairage cinématographique, mise en page moderne remplie de bord à bord, contraste premium.`,
+    isPromo
+      ? `Appel à l'action clair et visible: ${cta}.`
+      : `Aucun appel à l'action commercial, aucun prix et aucune offre: ne transforme pas le visuel en publicité.`,
+    `Identité de marque: place le logo fourni et/ou le nom exact "${params.companyName}" comme signature de marque discrète dans l'angle inférieur droit, toujours au même emplacement, petite mais lisible; ce nom ne doit jamais être le titre principal.`,
     `Interdictions: pas de petit texte illisible, pas de fausses lettres, pas de watermark, pas d'élément d'interface, pas d'image vide ni de template vide.`,
     `Si des personnes sont représentées, privilégier des personnes africaines/noires professionnelles et crédibles.`,
-    `Direction (EN): premium social media poster, high-end marketing campaign, cinematic lighting, strong visual hierarchy, modern clean layout, large readable headline, clear CTA, no tiny unreadable text, no random letters, no watermark, no UI.`,
+    `Direction (EN): premium editorial social visual, complementary to the post text, cinematic lighting, strong visual hierarchy, modern clean layout, short readable headline, discreet fixed bottom-right brand signature, no tiny unreadable text, no random letters, no watermark, no UI.`,
   ].join("\n").slice(0, 1800);
 }
 
@@ -352,6 +358,7 @@ function graphisteErrorMessage(status: number, body: unknown, text: string): str
 
 async function tryGraphisteGptPoster(params: {
   postContent: string;
+  contentCategory: "value" | "research" | "promo";
   sector: string;
   description: string;
   companyName: string;
@@ -505,6 +512,11 @@ serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const postContent: string = (body?.postContent || "").toString().slice(0, 2000);
     const postId: string | null = body?.postId || null;
+    const requestedCategory = body?.contentCategory || body?.postType;
+    let contentCategory: "value" | "research" | "promo" =
+      requestedCategory === "promo" || requestedCategory === "research"
+        ? requestedCategory
+        : "value";
     // Resume mode: a previous call returned a job id to keep polling.
     const resumeJobId: string | null =
       typeof body?.jobId === "string" && body.jobId ? body.jobId : null;
@@ -521,18 +533,22 @@ serve(async (req) => {
       );
     }
 
-    // If the caller didn't pass platforms but referenced an existing post,
-    // read them from the row so the output format still matches the post's
-    // targets (e.g. regenerating the image of a TikTok post).
-    if (platforms.length === 0 && postId) {
+    // Existing posts carry their persisted editorial category. Read it back so
+    // image regeneration/resume keeps value and research visuals non-commercial.
+    if (postId) {
       const { data: postRow } = await supabase
         .from("posts")
-        .select("platforms")
+        .select("platforms, content_category")
         .eq("id", postId)
         .eq("user_id", userId)
         .maybeSingle();
-      if (Array.isArray(postRow?.platforms)) {
+      if (platforms.length === 0 && Array.isArray(postRow?.platforms)) {
         platforms = postRow.platforms.map((x: unknown) => String(x)).filter(Boolean);
+      }
+      if (postRow?.content_category === "promo" || postRow?.content_category === "research") {
+        contentCategory = postRow.content_category;
+      } else if (postRow?.content_category === "value") {
+        contentCategory = "value";
       }
     }
 
@@ -648,6 +664,7 @@ serve(async (req) => {
 
       const graphiste = await tryGraphisteGptPoster({
         postContent,
+        contentCategory,
         sector,
         description,
         companyName: profile?.company_name || "Entreprise",

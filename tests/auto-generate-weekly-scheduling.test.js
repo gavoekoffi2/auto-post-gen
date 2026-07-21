@@ -20,12 +20,13 @@ test('auto-generate-weekly schedules at the user-chosen time, not a hard-coded 1
   assert.match(source, /setHours\(hour, minute, 0, 0\)/);
 });
 
-test('auto-generate-weekly splits the week into value posts and a chosen number of promo posts', () => {
+test('auto-generate-weekly preserves the chosen value/research/promo mix across retries', () => {
   assert.match(source, /profile\.promo_posts_per_week/);
-  assert.match(source, /const promoThisRun =/);
-  assert.match(source, /const isPromo = i < promoThisRun/);
-  // Promo posts get a distinct title so the dashboard/stats can tell them apart.
-  assert.match(source, /isPromo \? "Post promotionnel" : "Contenu automatique"/);
+  assert.match(source, /profile\.research_posts_per_week/);
+  assert.match(source, /const editorialPlan = buildEditorialPlan/);
+  assert.match(source, /const contentCategory = editorialPlan\[i\]/);
+  // Category is persisted so a retry can count what already exists.
+  assert.match(source, /content_category: contentCategory/);
 });
 
 test('value posts do not promote the company, promo posts carry a clear CTA', () => {

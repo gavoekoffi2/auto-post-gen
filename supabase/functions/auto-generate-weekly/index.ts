@@ -40,6 +40,33 @@ const AUTO_ANGLES = [
   "Coulisses ou leçon tirée du terrain",
 ];
 
+type ContentCategory = "value" | "research" | "promo";
+
+function buildEditorialPlan(
+  targets: Record<ContentCategory, number>,
+  existing: Record<ContentCategory, number>,
+  slots: number,
+): ContentCategory[] {
+  const remaining: Record<ContentCategory, number> = {
+    value: Math.max(0, targets.value - existing.value),
+    research: Math.max(0, targets.research - existing.research),
+    promo: Math.max(0, targets.promo - existing.promo),
+  };
+  const plan: ContentCategory[] = [];
+  const order: ContentCategory[] = ["value", "research", "promo"];
+  while (plan.length < slots && Object.values(remaining).some((count) => count > 0)) {
+    for (const category of order) {
+      if (plan.length >= slots) break;
+      if (remaining[category] > 0) {
+        plan.push(category);
+        remaining[category] -= 1;
+      }
+    }
+  }
+  while (plan.length < slots) plan.push("value");
+  return plan;
+}
+
 serve(async (req) => {
   const corsHeaders = buildCorsHeaders(req.headers.get("origin"));
 
@@ -119,7 +146,7 @@ serve(async (req) => {
         const windowEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
         const { data: existingPosts } = await supabase
           .from("posts")
-          .select("id")
+          .select("id, content_category, title")
           .eq("user_id", profile.id)
           .in("status", ["pending", "validated", "publishing"])
           .gte("scheduled_for", now.toISOString())
@@ -147,11 +174,41 @@ serve(async (req) => {
         const hour = Number.isFinite(rawHour) ? Math.min(23, Math.max(0, rawHour)) : 10;
         const minute = Number.isFinite(rawMinute) ? Math.min(59, Math.max(0, rawMinute)) : 0;
 
-        // How many of this run's posts orient toward the company's service
-        // (promo). The rest are pure value (no promotion). Clamp to what we
-        // actually generate now so it never exceeds the weekly frequency.
-        const promoThisRun = Math.min(
+        // Build the exact user-selected weekly editorial mix. Existing queued
+        // posts retain their persisted category, so a retry only fills missing
+        // value/research/promo slots instead of creating extra promotions.
+        const promoTarget = Math.min(
           Math.max(0, profile.promo_posts_per_week ?? 1),
+          postsNeeded,
+        );
+        const researchTarget = Math.min(
+          Math.max(0, profile.research_posts_per_week ?? 1),
+          Math.max(0, postsNeeded - promoTarget),
+        );
+        const editorialTargets: Record<ContentCategory, number> = {
+          promo: promoTarget,
+          research: researchTarget,
+          value: Math.max(0, postsNeeded - promoTarget - researchTarget),
+        };
+        const existingCategoryCounts: Record<ContentCategory, number> = {
+          value: 0,
+          research: 0,
+          promo: 0,
+        };
+        for (const post of existingPosts || []) {
+          const category = post.content_category as ContentCategory | null;
+          if (category && category in existingCategoryCounts) {
+            existingCategoryCounts[category] += 1;
+          } else if (post.title === "Post promotionnel") {
+            // Classify rows created before content_category existed.
+            existingCategoryCounts.promo += 1;
+          } else {
+            existingCategoryCounts.value += 1;
+          }
+        }
+        const editorialPlan = buildEditorialPlan(
+          editorialTargets,
+          existingCategoryCounts,
           postsToGenerate,
         );
 
@@ -179,17 +236,18 @@ serve(async (req) => {
         let generated = 0;
 
         for (let i = 0; i < postsToGenerate; i++) {
-          const isPromo = i < promoThisRun;
+          const contentCategory = editorialPlan[i];
+          const isPromo = contentCategory === "promo";
+          const isResearch = contentCategory === "research";
           const avoidBlock = generatedThisRun.length
             ? `\nNE répète NI le sujet NI l'accroche de ces posts déjà générés cette semaine:\n${
                 generatedThisRun.map((c, k) => `${k + 1}. ${c.slice(0, 150)}`).join("\n")
               }\n`
             : "";
 
-          // Most posts are pure value (no promotion); a small, user-chosen
-          // number are oriented toward the company's service.
-          const contentPrompt = isPromo
-            ? `Tu es un expert en marketing pour les réseaux sociaux, spécialisé dans le métier décrit ci-dessous. Reste STRICTEMENT dans ce domaine d'activité.
+          let contentPrompt: string;
+          if (isPromo) {
+            contentPrompt = `Tu es un expert en marketing pour les réseaux sociaux, spécialisé dans le métier décrit ci-dessous. Reste STRICTEMENT dans ce domaine d'activité.
 
 PROFIL DU CLIENT:
 - Nom de l'entreprise: ${companyName}
@@ -208,25 +266,42 @@ RÈGLES:
 - Écris "${companyName}" tel quel, jamais entre crochets ni en placeholder
 - Termine par un appel à l'action clair et naturel (contacter, écrire, réserver…)
 ${avoidBlock}
-Génère uniquement le texte du post, sans titre ni explication.`
-            : `Tu es un expert en création de contenu pour les réseaux sociaux, spécialisé dans le métier décrit ci-dessous. Reste STRICTEMENT dans ce domaine d'activité, ne généralise pas vers d'autres sujets.
+Génère uniquement le texte du post, sans titre ni explication.`;
+          } else if (isResearch) {
+            contentPrompt = `Tu es un journaliste sectoriel rigoureux qui transforme une recherche web récente en publication utile. Reste STRICTEMENT dans le domaine décrit.
 
-PROFIL DU CLIENT:
-- Secteur: ${sector}
-${description ? `- Description de l'activité: ${description}` : ""}
-- Ton: ${profile.tone || "Professionnel"}
+SECTEUR: ${sector}
+${description ? `ACTIVITÉ PRÉCISE: ${description}` : ""}
+TON: ${profile.tone || "Professionnel"}
 
-ANGLE IMPOSÉ POUR CE POST: ${AUTO_ANGLES[(i + weekNumber) % AUTO_ANGLES.length]}
+OBJECTIF ACTUALITÉ/RECHERCHE: informer l'audience sur une nouveauté, une évolution, une étude ou une tendance récente réellement pertinente pour ce métier.
 ${inspirationBlock}
 RÈGLES:
-- 100% en français
-- 60-100 mots
-- 2-3 émojis pertinents
-- Apporte une valeur CONCRÈTE et SPÉCIFIQUE à ce métier (un conseil, un chiffre ou un fait qu'un vrai connaisseur donnerait) — surtout pas du générique applicable à n'importe quelle entreprise
-- Ce post sert à AIDER l'audience, pas à promouvoir l'entreprise : aucune promotion, aucun prix, aucune offre. Tu peux mentionner "${companyName}" une seule fois maximum, naturellement, et uniquement si c'est pertinent.
+- 100% en français, 70-120 mots, 2-3 émojis pertinents
+- Appuie le post sur les faits trouvés dans la matière web; n'invente jamais de chiffre, date, étude ou nouveauté
+- Explique concrètement ce que cette information change pour l'audience
+- N'écris JAMAIS le nom de l'entreprise : ce post informe, il ne fait aucune promotion
+- Aucune offre, aucun prix, aucun appel à acheter ou à contacter
+- Termine par une question utile qui ouvre la discussion
+${avoidBlock}
+Génère uniquement le texte du post, sans titre ni explication.`;
+          } else {
+            contentPrompt = `Tu es un expert en création de contenu pour les réseaux sociaux, spécialisé dans le métier décrit ci-dessous. Reste STRICTEMENT dans ce domaine d'activité, ne généralise pas vers d'autres sujets.
+
+SECTEUR: ${sector}
+${description ? `ACTIVITÉ PRÉCISE: ${description}` : ""}
+TON: ${profile.tone || "Professionnel"}
+ANGLE IMPOSÉ: ${AUTO_ANGLES[(i + weekNumber) % AUTO_ANGLES.length]}
+
+RÈGLES:
+- 100% en français, 60-100 mots, 2-3 émojis pertinents
+- Apporte une valeur CONCRÈTE et SPÉCIFIQUE à ce métier : conseil, méthode, checklist, explication ou erreur à éviter
+- Ce post sert uniquement à AIDER ou FORMER l'audience : aucune promotion, aucun prix, aucune offre
+- N'écris JAMAIS le nom de l'entreprise, même subtilement, et ne parle pas de ses services
 - Termine par une question engageante
 ${avoidBlock}
 Génère uniquement le texte du post, sans titre ni explication.`;
+          }
 
           let generatedContent = "";
           try {
@@ -279,8 +354,14 @@ Génère uniquement le texte du post, sans titre ni explication.`;
             .from("posts")
             .insert({
               user_id: profile.id,
-              title: isPromo ? "Post promotionnel" : "Contenu automatique",
+              title:
+                contentCategory === "promo"
+                  ? "Post promotionnel"
+                  : contentCategory === "research"
+                    ? "Actualité et recherche"
+                    : "Conseil et valeur",
               content: generatedContent,
+              content_category: contentCategory,
               platforms,
               // When auto_publish is on, mark as validated so the publisher
               // can pick them up; the user has pre-approved the workflow.
@@ -307,6 +388,7 @@ Génère uniquement le texte du post, sans titre ni explication.`;
             try {
               const poster = await startPosterJob({
                 postContent: generatedContent,
+                contentCategory,
                 sector,
                 description,
                 companyName,

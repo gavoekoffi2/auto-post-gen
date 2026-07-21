@@ -296,13 +296,14 @@ ANGLE IMPOSÉ: ${angle.name} — ${angle.brief}
 ${postType === "value"
   ? `INSTRUCTIONS CONTENU DE VALEUR:
 - Suis STRICTEMENT l'angle "${angle.name}": ${angle.brief}
-- Apporte une VRAIE valeur concrète et SPÉCIFIQUE au métier de ${companyName}
+- Apporte une VRAIE valeur concrète et SPÉCIFIQUE au métier décrit
 - Donne un conseil/info que SEUL un connaisseur de ce métier précis pourrait donner
-- Positionne ${companyName} comme expert sans promotion directe
-- Mentionne ${companyName} subtilement en fin (1 phrase max)`
+- N'écris JAMAIS le nom de l'entreprise, même subtilement
+- Ne présente aucun service, aucune offre et aucun prix : ce post sert uniquement à aider ou former l'audience`
   : `INSTRUCTIONS POST PROMOTIONNEL:
 - Présente concrètement les services/produits de ${companyName} (basé sur la description)
 - Mets en avant un bénéfice client précis lié à cette activité
+- Écris "${companyName}" tel quel, jamais entre crochets ni en placeholder
 - Termine par un appel à l'action clair`}
 ${inspiration}
 RÈGLES CRITIQUES:
@@ -310,10 +311,9 @@ RÈGLES CRITIQUES:
 - 100% en FRANÇAIS
 - 2-4 émojis pertinents (PAS en début ni en fin de phrase clé)
 - Tonalité: ${tone}
-- ÉCRIS "${companyName}" tel quel, JAMAIS entre crochets ni en placeholder
 - Paragraphes courts (1-2 lignes)
 - Longueur: 60-100 mots
-- Termine par une question engageante OU un appel à l'action
+- Termine par une question engageante${postType === "promo" ? " ou un appel à l'action" : ""}
 ${styleExample ? "- Inspire-toi du style fourni sans le copier" : ""}
 
 POSTS DÉJÀ GÉNÉRÉS POUR CE CLIENT (NE répète AUCUN sujet, AUCUN angle, AUCUNE accroche):

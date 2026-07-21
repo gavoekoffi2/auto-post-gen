@@ -55,6 +55,7 @@ export default function Profile() {
     preferred_days: [] as string[],
     preferred_time: "10:00",
     promo_posts_per_week: 1,
+    research_posts_per_week: 1,
     auto_publish: false,
     image_people_type: "african",
     use_custom_images: false,
@@ -106,6 +107,7 @@ export default function Profile() {
           preferred_days: data.preferred_days || [],
           preferred_time: data.preferred_time || "10:00",
           promo_posts_per_week: data.promo_posts_per_week ?? 1,
+          research_posts_per_week: data.research_posts_per_week ?? 1,
           auto_publish: data.auto_publish || false,
           image_people_type: data.image_people_type || "african",
           use_custom_images: data.use_custom_images || false,
@@ -149,6 +151,7 @@ export default function Profile() {
           preferred_days: profile.preferred_days,
           preferred_time: profile.preferred_time,
           promo_posts_per_week: profile.promo_posts_per_week,
+          research_posts_per_week: profile.research_posts_per_week,
           auto_publish: profile.auto_publish,
           image_people_type: profile.image_people_type,
           use_custom_images: profile.use_custom_images,
@@ -450,7 +453,19 @@ export default function Profile() {
                   <Label>Fréquence de publication (posts/semaine)</Label>
                   <Select 
                     value={profile.post_frequency.toString()} 
-                    onValueChange={(v) => setProfile({ ...profile, post_frequency: parseInt(v) })}
+                    onValueChange={(v) => {
+                      const frequency = parseInt(v);
+                      const promo = Math.min(profile.promo_posts_per_week, frequency);
+                      setProfile({
+                        ...profile,
+                        post_frequency: frequency,
+                        promo_posts_per_week: promo,
+                        research_posts_per_week: Math.min(
+                          profile.research_posts_per_week,
+                          Math.max(0, frequency - promo),
+                        ),
+                      });
+                    }}
                   >
                     <SelectTrigger className="glass-card w-full md:w-48">
                       <SelectValue />
@@ -503,9 +518,17 @@ export default function Profile() {
                   <Label>Posts orientés service (promo) par semaine</Label>
                   <Select
                     value={profile.promo_posts_per_week.toString()}
-                    onValueChange={(v) =>
-                      setProfile({ ...profile, promo_posts_per_week: parseInt(v) })
-                    }
+                    onValueChange={(v) => {
+                      const promo = parseInt(v);
+                      setProfile({
+                        ...profile,
+                        promo_posts_per_week: promo,
+                        research_posts_per_week: Math.min(
+                          profile.research_posts_per_week,
+                          Math.max(0, profile.post_frequency - promo),
+                        ),
+                      });
+                    }}
                   >
                     <SelectTrigger className="glass-card w-full md:w-48">
                       <SelectValue />
@@ -520,6 +543,43 @@ export default function Profile() {
                   <p className="text-xs text-muted-foreground">
                     Le reste de vos posts apporte uniquement de la valeur, sans promotion de
                     l'entreprise. Si ce nombre dépasse votre fréquence, il est ajusté automatiquement.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Posts d’actualité et de recherche par semaine</Label>
+                  <Select
+                    value={profile.research_posts_per_week.toString()}
+                    onValueChange={(v) =>
+                      setProfile({ ...profile, research_posts_per_week: parseInt(v) })
+                    }
+                  >
+                    <SelectTrigger className="glass-card w-full md:w-48">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Array.from(
+                        {
+                          length:
+                            Math.max(
+                              0,
+                              profile.post_frequency - profile.promo_posts_per_week,
+                            ) + 1,
+                        },
+                        (_, value) => (
+                          <SelectItem key={value} value={value.toString()}>
+                            {value === 0
+                              ? "0 post de recherche"
+                              : `${value} post${value > 1 ? "s" : ""} de recherche`}
+                          </SelectItem>
+                        ),
+                      )}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Ces publications s’appuient sur des nouveautés, tendances ou actualités
+                    récentes de votre domaine pour informer votre audience. Les autres posts
+                    restent consacrés aux conseils, astuces et contenus éducatifs.
                   </p>
                 </div>
 

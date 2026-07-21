@@ -27,6 +27,7 @@ type Post = {
   scheduled_for?: string;
   title: string;
   content: string;
+  content_category?: string | null;
   image_url?: string;
   image_status?: string | null;
   image_job_id?: string | null;
@@ -441,6 +442,7 @@ export default function Dashboard() {
         user_id: session.user.id,
         title: "Nouveau contenu IA",
         content: data.content,
+        content_category: data.postType,
         image_url: null,
         status: 'pending' as const,
         platforms: defaultPlatforms,
@@ -481,6 +483,7 @@ export default function Dashboard() {
           const imageSpec = getSocialImageSpec(defaultPlatforms);
           const res = await generatePosterImage({
             postContent: data.content,
+            contentCategory: data.postType,
             peopleType: userProfile?.image_people_type || 'african',
             postId: savedPost.id,
             platforms: defaultPlatforms,
@@ -527,6 +530,7 @@ export default function Dashboard() {
       const imageSpec = getSocialImageSpec(regenPlatforms);
       const res = await generatePosterImage({
         postContent: post.content,
+        contentCategory: post.content_category || "value",
         peopleType: userProfile?.image_people_type || 'african',
         postId: post.id,
         platforms: regenPlatforms,
