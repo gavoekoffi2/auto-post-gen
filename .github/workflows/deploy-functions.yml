@@ -20,6 +20,7 @@ jobs:
     timeout-minutes: 30
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
       PROJECT_REF: tktoyntaeajgsuplhntd
       APP_ORIGIN: https://auto-post-gen.76.13.129.252.sslip.io
     steps:
@@ -85,12 +86,19 @@ jobs:
             --data-binary @/tmp/auth-config.json \
             "https://api.supabase.com/v1/projects/$PROJECT_REF/config/auth" >/dev/null
 
-      - name: Configure production origins
+      - name: Configure production secrets and origins
+        shell: bash
         run: |
+          set -euo pipefail
+          if [ -z "$ZERNIO_API_KEY" ]; then
+            echo "::error::ZERNIO_API_KEY is not configured."
+            exit 1
+          fi
           supabase secrets set \
             --project-ref "$PROJECT_REF" \
             ALLOWED_ORIGINS="$APP_ORIGIN" \
-            APP_BASE_URL="$APP_ORIGIN"
+            APP_BASE_URL="$APP_ORIGIN" \
+            ZERNIO_API_KEY="$ZERNIO_API_KEY"
 
       - name: Apply production hardening migrations
         shell: bash
