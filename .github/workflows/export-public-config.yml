@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      PROJECT_REF: ixinojsmymqovekgkbdg
+      PROJECT_REF: tktoyntaeajgsuplhntd
     steps:
       - name: Export active public Supabase configuration
         shell: bash
