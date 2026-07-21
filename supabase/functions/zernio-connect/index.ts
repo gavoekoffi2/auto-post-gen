@@ -111,8 +111,23 @@ serve(async (req) => {
     return jsonResponse({ connectUrl, platform }, { cors });
   } catch (err) {
     console.error("zernio-connect error:", err);
+    const message = err instanceof Error ? err.message : String(err);
+    if (
+      message.includes("PAYMENT_REQUIRED") ||
+      message.includes("free_tier_exceeded") ||
+      message.includes("Add a payment method")
+    ) {
+      return jsonResponse(
+        {
+          error:
+            "La limite gratuite Zernio de 2 comptes connectés est déjà atteinte. Ajoutez un moyen de paiement dans Zernio ou supprimez un ancien compte, puis réessayez.",
+          code: "ZERNIO_PAYMENT_REQUIRED",
+        },
+        { status: 402, cors },
+      );
+    }
     return jsonResponse(
-      { error: err instanceof Error ? err.message : String(err) },
+      { error: message },
       { status: 502, cors },
     );
   }

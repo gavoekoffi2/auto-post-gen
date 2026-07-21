@@ -55,6 +55,19 @@ function normalisePlatform(platform: string) {
   return platform.toLowerCase().trim();
 }
 
+async function functionErrorMessage(error: unknown, fallback: string) {
+  const functionError = error as { context?: Response; message?: string } | null;
+  if (functionError?.context) {
+    try {
+      const payload = await functionError.context.clone().json();
+      if (typeof payload?.error === "string" && payload.error.trim()) return payload.error;
+    } catch {
+      // Keep the SDK message when the response is not JSON.
+    }
+  }
+  return functionError?.message || fallback;
+}
+
 export function SocialMediaConnect({
   isOpen,
   onOpenChange,
@@ -84,7 +97,7 @@ export function SocialMediaConnect({
         provisioned: false,
         platforms: [],
         accounts: [],
-        error: err instanceof Error ? err.message : "Erreur Zernio",
+        error: await functionErrorMessage(err, "Erreur Zernio"),
       });
     } finally {
       setRefreshing(false);
@@ -126,7 +139,9 @@ export function SocialMediaConnect({
       }, 500);
       window.setTimeout(() => window.clearInterval(interval), 10 * 60 * 1000);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Erreur de connexion Zernio");
+      toast.error(await functionErrorMessage(err, "Erreur de connexion Zernio"), {
+        duration: 12000,
+      });
     } finally {
       setZernioLoading(false);
     }
