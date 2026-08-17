@@ -13,6 +13,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { buildCorsHeaders } from "../_shared/cors.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { clientIp, hitIpRateLimit } from "../_shared/rateLimit.ts";
+import { PayloadTooLargeError, readJsonBody } from "../_shared/body.ts";
 
 
 function escapeHtml(str: string): string {
@@ -25,6 +26,10 @@ function escapeHtml(str: string): string {
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// This endpoint is public (verify_jwt = false). Cap the body so an anonymous
+// caller cannot make the function buffer an arbitrarily large payload.
+const MAX_PAYLOAD_BYTES = 32 * 1024;
 
 serve(async (req) => {
   const corsHeaders = buildCorsHeaders(req.headers.get("origin"));
@@ -45,7 +50,13 @@ serve(async (req) => {
     });
 
   try {
-    const body: any = await req.json().catch(() => ({}));
+    let body: any;
+    try {
+      body = (await readJsonBody<any>(req, MAX_PAYLOAD_BYTES)) ?? {};
+    } catch (err) {
+      if (err instanceof PayloadTooLargeError) return json({ error: "Message trop volumineux." }, 413);
+      throw err;
+    }
 
     // Honeypot: real users never fill this hidden field. Pretend success.
     if (typeof body.company === "string" && body.company.trim() !== "") {

@@ -30,7 +30,10 @@ serve(async (req) => {
       );
     }
 
-    if (!token || typeof token !== "string") {
+    // Tokens are server-generated UUID-length strings. Bound the input before
+    // it reaches the database so this public endpoint cannot be used to push
+    // arbitrarily large values into a query.
+    if (!token || typeof token !== "string" || token.length < 8 || token.length > 256) {
       return new Response(
         JSON.stringify({ error: "Token is required" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },

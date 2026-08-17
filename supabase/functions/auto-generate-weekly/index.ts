@@ -6,6 +6,7 @@ import { chatText, getOpenRouterKey, getTextModel } from "../_shared/ai.ts";
 import { buildAudiencePrompt, normalizeAudiences } from "../_shared/audience.ts";
 import { ensurePostEngagement } from "../_shared/post-engagement.ts";
 import { buildInspirationBlock, researchInspiration } from "../_shared/research.ts";
+import { matchesSharedSecret } from "../_shared/secret.ts";
 import { rehostToUserAssets, startPosterJob } from "../_shared/graphiste.ts";
 
 
@@ -90,7 +91,7 @@ serve(async (req) => {
   const provided =
     req.headers.get("x-cron-secret") ||
     req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
-  if (provided !== expectedSecret) {
+  if (!matchesSharedSecret(expectedSecret, provided)) {
     return new Response(
       JSON.stringify({ error: "Unauthorized" }),
       { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
@@ -351,7 +352,13 @@ Génère uniquement le texte du post, sans titre ni explication.`;
           // Track for intra-run de-duplication.
           generatedThisRun.push(generatedContent.trim());
 
-          const targetDay = preferredDays[i % preferredDays.length];
+          // Offset by the posts already queued for this window. Without it a
+          // top-up run restarted at preferredDays[0], so the new post landed on
+          // the same day AND the same time as an existing one — two posts
+          // publishing in the same slot. Continuing the rotation keeps the
+          // week's posts spread across the user's chosen days.
+          const slotIndex = (existingPosts?.length || 0) + i;
+          const targetDay = preferredDays[slotIndex % preferredDays.length];
           const targetDayNumber = DAY_MAPPING[targetDay] ?? 1;
 
           const scheduledDate = new Date(now);
@@ -367,6 +374,11 @@ Génère uniquement le texte du post, sans titre ni explication.`;
           }
           scheduledDate.setDate(scheduledDate.getDate() + daysUntilTarget);
           scheduledDate.setHours(hour, minute, 0, 0);
+          // When more posts are generated than there are preferred days, the
+          // rotation wraps and two posts would share one exact timestamp. Push
+          // each extra lap forward a week so every post keeps its own slot.
+          const lap = Math.floor(slotIndex / preferredDays.length);
+          if (lap > 0) scheduledDate.setDate(scheduledDate.getDate() + lap * 7);
 
           // Pick the visual. A custom image library wins (free, instant);
           // otherwise we kick off a Graphiste GPT poster job further below.

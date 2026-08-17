@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const read = (p) => readFileSync(join(__dirname, '..', p), 'utf8');
 const source = readFileSync(join(__dirname, '..', 'supabase/functions/generate-image/index.ts'), 'utf8');
 const sharedGraphiste = readFileSync(join(__dirname, '..', 'supabase/functions/_shared/graphiste.ts'), 'utf8');
 
@@ -124,14 +125,20 @@ test('all Graphiste pollers ignore unsupported-route HTTP errors before parsing 
     'cron/publish poller must not treat a 400/404 fallback route as a failed paid job');
 });
 
-test('generate-image prioritizes the canonical public poll route over an emitted status URL', () => {
-  const fnStart = source.indexOf('function graphisteStatusCandidates');
-  const fnEnd = source.indexOf('\n}\n', fnStart);
-  const fn = source.slice(fnStart, fnEnd);
-  assert.ok(fn.indexOf('if (jobId)') >= 0);
-  assert.ok(fn.indexOf('if (statusUrl)') >= 0);
-  assert.ok(fn.indexOf('if (jobId)') < fn.indexOf('if (statusUrl)'),
+test('the poller prioritizes the canonical public poll route over an emitted status URL', () => {
+  // The builder now lives in _shared/graphisteParse.ts (shared by generate-image
+  // and the cron poller, and origin-pinned there); the ordering invariant is
+  // unchanged: the job-id route is tried before a possibly stale status_url.
+  const parse = read('supabase/functions/_shared/graphisteParse.ts');
+  const fnStart = parse.indexOf('export function graphisteStatusCandidates');
+  const fnEnd = parse.indexOf('\n}\n', fnStart);
+  const fn = parse.slice(fnStart, fnEnd);
+  assert.ok(fn.indexOf('if (safeJobId)') >= 0);
+  assert.ok(fn.indexOf('if (statusUrl') >= 0);
+  assert.ok(fn.indexOf('if (safeJobId)') < fn.indexOf('if (statusUrl'),
     'canonical job-id route must be tried before potentially stale/internal status_url');
+  assert.match(source, /graphisteStatusCandidates/,
+    'generate-image must use the shared builder');
 });
 
 test('generate-image extracts the canonical data.job_id, never the trace request_id', () => {

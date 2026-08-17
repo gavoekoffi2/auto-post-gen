@@ -20,7 +20,12 @@
 //
 import { getSocialImageSpec, type SocialImageSpec } from "./socialImageSpecs.ts";
 import { fetchImageBytes } from "./safeFetch.ts";
-import { extractJobId, extractStatusUrl, jobFailed } from "./graphisteParse.ts";
+import {
+  extractJobId,
+  extractStatusUrl,
+  graphisteStatusCandidates,
+  jobFailed,
+} from "./graphisteParse.ts";
 
 const GRAPHISTE_GPT_DEFAULT_URL =
   "https://bbfzfgcdioewzbmlgaqy.supabase.co/functions/v1/api-v1/v1/posters/generate";
@@ -191,22 +196,6 @@ function extractPosterImageUrl(value: unknown): string | null {
   return null;
 }
 
-function statusCandidates(endpoint: string, statusUrl: string | null, jobId: string | null): string[] {
-  const out: string[] = [];
-  if (jobId) {
-    const u = new URL(endpoint);
-    const base = `${u.origin}${u.pathname.replace(/\/generate\/?$/, "")}`;
-    // Canonical API route first. Older Graphiste responses sometimes emitted
-    // an internal http:// URL without /functions/v1; it must not delay polling.
-    out.push(`${base}/${encodeURIComponent(jobId)}`);
-    out.push(`${base}/status/${encodeURIComponent(jobId)}`);
-    out.push(`${base}/jobs/${encodeURIComponent(jobId)}`);
-    out.push(`${u.origin}/functions/v1/api-v1/v1/jobs/${encodeURIComponent(jobId)}`);
-  }
-  if (statusUrl) out.push(statusUrl.startsWith("http") ? statusUrl : new URL(statusUrl, endpoint).toString());
-  return [...new Set(out)];
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -279,7 +268,10 @@ export async function resumePosterJob(
   const key = Deno.env.get("GRAPHISTE_GPT_API_KEY");
   if (!key) return { imageUrl: null, status: "failed" };
   const endpoint = Deno.env.get("GRAPHISTE_GPT_API_URL") || GRAPHISTE_GPT_DEFAULT_URL;
-  const candidates = statusCandidates(endpoint, statusUrl, jobId);
+  // Poll targets are pinned to the Graphiste origin: image_job_id /
+  // image_status_url live on a row the user can write, and each poll carries
+  // the Graphiste API key.
+  const candidates = graphisteStatusCandidates(endpoint, statusUrl, jobId);
   if (candidates.length === 0) return { imageUrl: null, status: "failed" };
 
   const controller = new AbortController();

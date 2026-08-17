@@ -79,8 +79,15 @@ export async function verifyState(
   );
   if (!ok) throw new Error("Invalid state signature");
   const payload = JSON.parse(new TextDecoder().decode(base64UrlDecode(body))) as
-    Record<string, unknown> & { ts: number };
-  if (Date.now() - payload.ts > maxAgeMs) throw new Error("State expired");
+    Record<string, unknown> & { ts?: unknown };
+  // The timestamp must be present and numeric. A missing/NaN `ts` made
+  // `Date.now() - ts` NaN, and `NaN > maxAgeMs` is false — so a state token
+  // without a timestamp never expired.
+  const ts = typeof payload.ts === "number" && Number.isFinite(payload.ts) ? payload.ts : null;
+  if (ts === null) throw new Error("Invalid state timestamp");
+  const age = Date.now() - ts;
+  // Reject far-future timestamps too; they would otherwise stay valid forever.
+  if (age > maxAgeMs || age < -60_000) throw new Error("State expired");
   return payload;
 }
 

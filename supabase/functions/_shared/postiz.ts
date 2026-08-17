@@ -14,6 +14,8 @@
 // but has NO comments endpoint — engagement (comment inbox + auto-reply)
 // is handled by the comment-capable provider in sync-comments / comment-reply.
 
+import { fetchImageBytes } from "./safeFetch.ts";
+
 const DEFAULT_BASE = "https://api.postiz.com/public/v1";
 
 export function getPostizBase(): string {
@@ -76,12 +78,12 @@ export async function postizConnectUrl(platform: string, refresh?: string): Prom
 // degrade gracefully to a text-only post rather than blocking publication.
 export async function postizUploadFromUrl(imageUrl: string): Promise<string | null> {
   try {
-    const img = await fetch(imageUrl);
-    if (!img.ok) return null;
-    const blob = await img.blob();
-    const ext = (blob.type.split("/")[1] || "jpg").split(";")[0];
+    // The source URL comes from posts.image_url, which the row owner can
+    // write — always the SSRF-guarded fetch, never a bare fetch().
+    const { bytes, contentType } = await fetchImageBytes(imageUrl);
+    const ext = (contentType.split("/")[1] || "jpg").split(";")[0];
     const fd = new FormData();
-    fd.append("file", blob, `image.${ext}`);
+    fd.append("file", new Blob([bytes], { type: contentType }), `image.${ext}`);
     // Don't set Content-Type — fetch sets the multipart boundary itself.
     const resp = await fetch(`${getPostizBase()}/uploads/file`, {
       method: "POST",

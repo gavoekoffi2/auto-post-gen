@@ -21,6 +21,7 @@ import { AIQuotaError, chatCompletion, getOpenRouterKey, getTextModel } from "..
 import { buildAudiencePrompt, normalizeAudiences } from "../_shared/audience.ts";
 import { ensurePostEngagement } from "../_shared/post-engagement.ts";
 import { buildInspirationBlock, researchInspiration } from "../_shared/research.ts";
+import { PayloadTooLargeError, readJsonBody } from "../_shared/body.ts";
 
 
 // Per-user rate limit
@@ -126,14 +127,6 @@ serve(async (req) => {
     );
   }
 
-  const contentLength = parseInt(req.headers.get("content-length") || "0", 10);
-  if (contentLength > MAX_PAYLOAD_BYTES) {
-    return new Response(
-      JSON.stringify({ error: "Payload too large" }),
-      { status: 413, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
-  }
-
   const jwt = req.headers.get("Authorization")?.replace(/^Bearer\s+/i, "") || "";
   if (!jwt) {
     return new Response(
@@ -162,7 +155,20 @@ serve(async (req) => {
   const userId = userData.user.id;
 
   try {
-    const body = await req.json().catch(() => null);
+    // Size is enforced on the stream, not just on the (optional,
+    // client-supplied) content-length header.
+    let body: Record<string, any> | null;
+    try {
+      body = await readJsonBody<Record<string, any>>(req, MAX_PAYLOAD_BYTES);
+    } catch (err) {
+      if (err instanceof PayloadTooLargeError) {
+        return new Response(
+          JSON.stringify({ error: "Payload too large" }),
+          { status: 413, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+      throw err;
+    }
     if (!body || typeof body !== "object") {
       return new Response(
         JSON.stringify({ error: "Invalid JSON body" }),

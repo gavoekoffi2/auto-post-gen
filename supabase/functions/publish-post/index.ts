@@ -24,8 +24,11 @@ import {
 } from "../_shared/postiz.ts";
 import { zernioCreatePost, zernioListAccounts } from "../_shared/zernio.ts";
 import { resumePosterJob } from "../_shared/graphiste.ts";
+import { matchesSharedSecret } from "../_shared/secret.ts";
 import { fetchImageBytes } from "../_shared/safeFetch.ts";
 
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 interface SocialConnection {
   id: string;
@@ -115,22 +118,25 @@ async function publishToLinkedIn(
         // defensively in case LinkedIn ever advertises a different one.
         const uploadMethod = (uploadMech?.method as string) || "PUT";
         if (uploadUrl) {
-          const imgResp = await fetch(imageUrl);
-          if (!imgResp.ok) {
+          // posts.image_url is user-writable, so this goes through the
+          // SSRF-guarded fetch rather than a bare fetch().
+          let image: { bytes: Uint8Array; contentType: string };
+          try {
+            image = await fetchImageBytes(imageUrl);
+          } catch (imgErr) {
             return {
               platform: "linkedin",
               status: "error",
-              message: `Image download failed: ${imgResp.status}`,
+              message: `Image download failed: ${imgErr instanceof Error ? imgErr.message : String(imgErr)}`,
             };
           }
-          const blob = await imgResp.arrayBuffer();
           const uploadResp = await fetch(uploadUrl, {
             method: uploadMethod,
             headers: {
               Authorization: `Bearer ${connection.access_token}`,
-              "Content-Type": imgResp.headers.get("content-type") || "application/octet-stream",
+              "Content-Type": image.contentType || "application/octet-stream",
             },
-            body: blob,
+            body: image.bytes,
           });
           if (!uploadResp.ok) {
             return {
@@ -750,14 +756,25 @@ serve(async (req) => {
     );
   }
 
-  const cronSecret = Deno.env.get("CRON_SECRET");
-  const headerCron = req.headers.get("x-cron-secret");
-  const isCron = cronSecret && headerCron && headerCron === cronSecret;
+  const isCron = matchesSharedSecret(
+    Deno.env.get("CRON_SECRET"),
+    req.headers.get("x-cron-secret"),
+  );
 
   let userId: string | null = null;
   // The body is optional (cron mode sends none). `.catch(() => ({}))`
   // covers the empty-body case where req.json() would throw.
-  const body: { postId?: string } = await req.json().catch(() => ({}));
+  const body: { postId?: unknown } = await req.json().catch(() => ({}));
+  // Only a UUID is a valid post id. Without this a non-string postId (object,
+  // array, number) reached the PostgREST filter and surfaced as an opaque 500.
+  const rawPostId = typeof body?.postId === "string" ? body.postId.trim() : "";
+  const postId = UUID_RE.test(rawPostId) ? rawPostId : null;
+  if (rawPostId && !postId) {
+    return new Response(
+      JSON.stringify({ error: "postId invalide" }),
+      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
 
   if (!isCron) {
     // Require a logged-in user for manual publishes.
@@ -782,14 +799,14 @@ serve(async (req) => {
   const supabase = createClient(supabaseUrl, serviceKey);
 
   try {
-    if (body?.postId) {
+    if (postId) {
       // Manual publish: verify ownership.
       if (userId) {
         const { data: post } = await supabase
           .from("posts")
           .select("user_id,status")
-          .eq("id", body.postId)
-          .single();
+          .eq("id", postId)
+          .maybeSingle();
         if (!post) {
           return new Response(
             JSON.stringify({ error: "Post not found" }),
@@ -809,7 +826,7 @@ serve(async (req) => {
           );
         }
       }
-      const result = await publishPost(supabase, body.postId, Date.now() + 20_000);
+      const result = await publishPost(supabase, postId, Date.now() + 20_000);
       return new Response(
         JSON.stringify({ success: true, ...result }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },

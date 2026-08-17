@@ -10,9 +10,14 @@
 // assertSafeImageUrl: rejects non-https and private/loopback/link-local hosts.
 // fetchImageBytes: assert + fetch + content-type + size cap, returning bytes.
 //
-// Note: this does not fully defend against DNS rebinding / redirect-to-internal
-// (Deno fetch doesn't expose per-hop hosts); it blocks the obvious direct
-// attacks. Keep buckets/secrets out of reach as defence in depth.
+// Redirects are followed MANUALLY so every hop is re-validated. Letting fetch
+// follow them itself checks only the first URL, so any allowed host could
+// bounce us to http://169.254.169.254 (cloud metadata) or a loopback port and
+// the guard above would never see it.
+//
+// Note: this still does not defend against DNS rebinding (Deno's fetch does not
+// expose the resolved address), so keep buckets/secrets out of reach as
+// defence in depth.
 
 const PRIVATE_HOST = new RegExp(
   [
@@ -52,12 +57,29 @@ export function assertSafeImageUrl(rawUrl: string): URL {
   return u;
 }
 
+const MAX_REDIRECTS = 5;
+
+// Follow redirects ourselves, re-running assertSafeImageUrl on every hop.
+async function fetchFollowingSafeRedirects(rawUrl: string): Promise<Response> {
+  let current = assertSafeImageUrl(rawUrl);
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    const resp = await fetch(current.toString(), { redirect: "manual" });
+    if (resp.status < 300 || resp.status > 399) return resp;
+    const location = resp.headers.get("location");
+    // Consume the body so the connection is not left dangling.
+    await resp.body?.cancel();
+    if (!location) throw new Error(`Redirect without Location: ${resp.status}`);
+    // Resolve relative Locations against the current hop, then re-validate.
+    current = assertSafeImageUrl(new URL(location, current).toString());
+  }
+  throw new Error("Too many redirects");
+}
+
 export async function fetchImageBytes(
   rawUrl: string,
   maxBytes = 10 * 1024 * 1024,
 ): Promise<{ bytes: Uint8Array; contentType: string }> {
-  assertSafeImageUrl(rawUrl);
-  const resp = await fetch(rawUrl, { redirect: "follow" });
+  const resp = await fetchFollowingSafeRedirects(rawUrl);
   if (!resp.ok) throw new Error(`Image fetch failed: ${resp.status}`);
   const contentType = (resp.headers.get("content-type") || "").toLowerCase();
   if (!contentType.startsWith("image/") || contentType.includes("svg")) {

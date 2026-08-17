@@ -6,6 +6,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { buildCorsHeaders } from "../_shared/cors.ts";
 import { chatText, getOpenRouterKey, getTextModel } from "../_shared/ai.ts";
 import { normalizeAudiences } from "../_shared/audience.ts";
+import { PayloadTooLargeError, readJsonBody } from "../_shared/body.ts";
 
 const MAX_PAYLOAD_BYTES = 32 * 1024;
 
@@ -34,11 +35,6 @@ serve(async (req) => {
   if (req.method !== "POST") {
     return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405, headers: jsonHeaders });
   }
-  const contentLength = parseInt(req.headers.get("content-length") || "0", 10);
-  if (contentLength > MAX_PAYLOAD_BYTES) {
-    return new Response(JSON.stringify({ error: "Payload too large" }), { status: 413, headers: jsonHeaders });
-  }
-
   const jwt = req.headers.get("Authorization")?.replace(/^Bearer\s+/i, "") || "";
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -54,7 +50,15 @@ serve(async (req) => {
   }
 
   try {
-    const body = await req.json().catch(() => null);
+    let body: Record<string, unknown> | null;
+    try {
+      body = await readJsonBody<Record<string, unknown>>(req, MAX_PAYLOAD_BYTES);
+    } catch (err) {
+      if (err instanceof PayloadTooLargeError) {
+        return new Response(JSON.stringify({ error: "Payload too large" }), { status: 413, headers: jsonHeaders });
+      }
+      throw err;
+    }
     if (!body || typeof body !== "object") {
       return new Response(JSON.stringify({ error: "Invalid JSON body" }), { status: 400, headers: jsonHeaders });
     }

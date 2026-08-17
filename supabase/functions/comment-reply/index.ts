@@ -8,6 +8,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { buildCorsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { ayrsharePostReply, draftReply, zernioReply } from "../_shared/engagement.ts";
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 serve(async (req) => {
   const cors = buildCorsHeaders(req.headers.get("origin"));
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
@@ -36,7 +38,9 @@ serve(async (req) => {
     commentId?: string;
     reply?: string;
   };
-  if (!body.commentId) return jsonResponse({ error: "commentId requis" }, { status: 400, cors });
+  if (typeof body.commentId !== "string" || !UUID_RE.test(body.commentId)) {
+    return jsonResponse({ error: "commentId requis" }, { status: 400, cors });
+  }
 
   // Load the comment and enforce ownership.
   const { data: comment } = await supabase
@@ -72,8 +76,13 @@ serve(async (req) => {
     }
 
     if (body.mode === "send") {
-      const reply = (body.reply || "").trim();
+      const reply = (typeof body.reply === "string" ? body.reply : "").trim();
       if (!reply) return jsonResponse({ error: "reply vide" }, { status: 400, cors });
+      // No social network accepts a comment this long; reject rather than let
+      // an unbounded string reach the provider API and the stored reply_text.
+      if (reply.length > 3000) {
+        return jsonResponse({ error: "Réponse trop longue (3000 caractères maximum)." }, { status: 400, cors });
+      }
 
       let res: { ok: boolean; id?: string; error?: string };
       if (comment.provider === "zernio") {

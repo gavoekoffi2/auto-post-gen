@@ -9,6 +9,9 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { buildCorsHeaders } from "../_shared/cors.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { getSocialImageSpec, type SocialImageSpec } from "../_shared/socialImageSpecs.ts";
+import { graphisteStatusCandidates, sanitizeJobId } from "../_shared/graphisteParse.ts";
+import { fetchImageBytes } from "../_shared/safeFetch.ts";
+import { PayloadTooLargeError, readJsonBody } from "../_shared/body.ts";
 // Image generation for Pro Social AI must produce real poster layouts.
 // Keep this endpoint dedicated to Graphiste GPT poster output rather than
 // generic image providers. The chosen output format always follows the post's
@@ -17,6 +20,8 @@ import { getSocialImageSpec, type SocialImageSpec } from "../_shared/socialImage
 
 
 const MAX_PAYLOAD_BYTES = 64 * 1024;
+// Ceiling on a re-hosted poster. A 2K premium poster is a few MB at most.
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
 // Each image is a paid Graphiste GPT "premium 2K" poster — the expensive
 // operation. Cap how many a single user can mint per hour (covers normal use
@@ -124,22 +129,10 @@ function extractGraphisteStatusUrl(value: unknown): string | null {
   return null;
 }
 
-function graphisteStatusCandidates(endpoint: string, statusUrl: string | null, jobId: string | null): string[] {
-  const out: string[] = [];
-  // Prefer the documented public job route derived from data.job_id. Some API
-  // versions emitted a status_url pointing at an internal/legacy handler which
-  // can return 404 even though the canonical job route works.
-  if (jobId) {
-    const u = new URL(endpoint);
-    const base = `${u.origin}${u.pathname.replace(/\/generate\/?$/, "")}`;
-    out.push(`${base}/${encodeURIComponent(jobId)}`);
-    out.push(`${base}/status/${encodeURIComponent(jobId)}`);
-    out.push(`${base}/jobs/${encodeURIComponent(jobId)}`);
-    out.push(`${u.origin}/functions/v1/api-v1/v1/jobs/${encodeURIComponent(jobId)}`);
-  }
-  if (statusUrl) out.push(statusUrl.startsWith("http") ? statusUrl : new URL(statusUrl, endpoint).toString());
-  return [...new Set(out)];
-}
+// Poll targets come from _shared/graphisteParse.ts, which pins every candidate
+// to the configured Graphiste origin. `jobId` and `statusUrl` arrive in the
+// request body, and each poll below sends the Graphiste API key — an
+// unvalidated target would leak that key to any host the caller names.
 
 // Detect a terminal "failed" job so polling can stop early instead of waiting
 // out the whole budget.
@@ -213,6 +206,9 @@ async function resumeGraphisteJob(
   if (!key) return { imageUrl: null, status: "failed" };
   const endpoint = Deno.env.get("GRAPHISTE_GPT_API_URL") || GRAPHISTE_GPT_DEFAULT_URL;
   const candidates = graphisteStatusCandidates(endpoint, statusUrl, jobId);
+  // Nothing safe to poll (malformed job id, off-origin status URL): terminal,
+  // otherwise the client would keep resuming a job that can never resolve.
+  if (candidates.length === 0) return { imageUrl: null, status: "failed" };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), budgetMs + 10_000);
   try {
@@ -479,14 +475,6 @@ serve(async (req) => {
     );
   }
 
-  const contentLength = parseInt(req.headers.get("content-length") || "0", 10);
-  if (contentLength > MAX_PAYLOAD_BYTES) {
-    return new Response(
-      JSON.stringify({ error: "Payload too large" }),
-      { status: 413, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
-  }
-
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!supabaseUrl || !supabaseServiceKey) {
@@ -515,7 +503,18 @@ serve(async (req) => {
   const userId = userData.user.id;
 
   try {
-    const body = await req.json().catch(() => ({}));
+    let body: Record<string, any> | null;
+    try {
+      body = await readJsonBody<Record<string, any>>(req, MAX_PAYLOAD_BYTES);
+    } catch (err) {
+      if (err instanceof PayloadTooLargeError) {
+        return new Response(
+          JSON.stringify({ error: "Payload too large" }),
+          { status: 413, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+      throw err;
+    }
     const postContent: string = (body?.postContent || "").toString().slice(0, 2000);
     const postId: string | null = body?.postId || null;
     const requestedCategory = body?.contentCategory || body?.postType;
@@ -523,16 +522,20 @@ serve(async (req) => {
       requestedCategory === "promo" || requestedCategory === "research"
         ? requestedCategory
         : "value";
-    // Resume mode: a previous call returned a job id to keep polling.
-    const resumeJobId: string | null =
-      typeof body?.jobId === "string" && body.jobId ? body.jobId : null;
+    // Resume mode: a previous call returned a job id to keep polling. Both
+    // fields are caller-supplied, so the job id is validated here and the
+    // status URL is origin-pinned when the candidates are built.
+    const resumeJobId: string | null = sanitizeJobId(body?.jobId);
     const resumeStatusUrl: string | null =
       typeof body?.statusUrl === "string" && body.statusUrl ? body.statusUrl : null;
+    // The caller asked to resume (rather than generate) as soon as it sent
+    // either handle back, even if that handle turns out to be unusable.
+    const resumeRequested = Boolean(body?.jobId || resumeStatusUrl);
     let platforms: string[] = Array.isArray(body?.platforms)
       ? body.platforms.map((x: unknown) => String(x)).filter(Boolean).slice(0, 12)
       : [];
 
-    if (!resumeJobId && !postContent) {
+    if (!resumeRequested && !postContent) {
       return new Response(
         JSON.stringify({ error: "postContent is required" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
@@ -610,8 +613,13 @@ serve(async (req) => {
 
     let imageUrl: string | null = null;
 
-    if (resumeJobId) {
+    if (resumeRequested) {
       // Resume an in-flight job: short bounded poll, then hand back if needed.
+      // A resume never starts a NEW generation — falling through to the
+      // else-branch here would silently mint (and bill) a second poster.
+      if (!resumeJobId) {
+        return noFinalImage("unusable job reference");
+      }
       const r = await resumeGraphisteJob(resumeJobId, resumeStatusUrl, 45_000);
       if (r.status === "failed") return noFinalImage("job failed");
       if (!r.imageUrl) return await stillProcessing(resumeJobId, resumeStatusUrl);
@@ -713,25 +721,28 @@ serve(async (req) => {
       try {
         if (imageUrl.startsWith("data:")) {
           const commaIdx = imageUrl.indexOf(",");
+          if (commaIdx < 0) throw new Error("invalid data URL");
           const meta = imageUrl.slice(5, commaIdx);
           const payload = imageUrl.slice(commaIdx + 1);
           contentType = (meta.split(";")[0] || "image/png").trim().toLowerCase();
           if (contentType.includes("svg")) throw new Error("refusing SVG data URL");
           if (meta.includes(";base64")) {
-            const bin = atob(payload);
+            // atob rejects whitespace/padding some providers emit; strip it.
+            const bin = atob(payload.replace(/\s+/g, ""));
             bytes = new Uint8Array(bin.length);
             for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
           } else {
             bytes = new TextEncoder().encode(decodeURIComponent(payload));
           }
+          if (bytes.byteLength > MAX_IMAGE_BYTES) throw new Error("image too large");
         } else {
-          const fetched = await fetch(imageUrl);
-          if (!fetched.ok) throw new Error(`image fetch ${fetched.status}`);
-          contentType = (fetched.headers.get("content-type") || "image/png").toLowerCase();
-          if (!contentType.startsWith("image/") || contentType.includes("svg")) {
-            throw new Error(`unexpected content-type ${contentType}`);
-          }
-          bytes = new Uint8Array(await fetched.arrayBuffer());
+          // The URL is parsed out of a third-party API response, so it goes
+          // through the SSRF-guarded fetch (https-only, no private/metadata
+          // hosts, content-type checked, size capped) like every other re-host
+          // path — never a bare fetch().
+          const fetched = await fetchImageBytes(imageUrl, MAX_IMAGE_BYTES);
+          bytes = fetched.bytes;
+          contentType = fetched.contentType;
         }
       } catch (verifyErr) {
         console.error("generate-image: could not verify a real raster poster:", verifyErr);

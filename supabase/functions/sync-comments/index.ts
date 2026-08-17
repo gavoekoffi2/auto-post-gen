@@ -11,6 +11,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { buildCorsHeaders, jsonResponse } from "../_shared/cors.ts";
+import { matchesSharedSecret } from "../_shared/secret.ts";
 import {
   ayrshareGetComments,
   ayrsharePostReply,
@@ -326,9 +327,10 @@ serve(async (req) => {
   }
   const supabase = createClient(supabaseUrl, serviceKey);
 
-  const cronSecret = Deno.env.get("CRON_SECRET");
-  const headerCron = req.headers.get("x-cron-secret");
-  const isCron = cronSecret && headerCron && headerCron === cronSecret;
+  const isCron = matchesSharedSecret(
+    Deno.env.get("CRON_SECRET"),
+    req.headers.get("x-cron-secret"),
+  );
 
   try {
     if (isCron) {

@@ -50,6 +50,76 @@ export function extractStatusUrl(value: unknown): string | null {
     o.statusUrl || o.status_url || o.pollUrl || o.poll_url || o.checkUrl || o.check_url);
 }
 
+// ---------------------------------------------------------------------------
+// Job polling targets.
+//
+// SECURITY: every poll below is sent with `Authorization: Bearer
+// GRAPHISTE_GPT_API_KEY`. Both inputs that reach it are attacker-controlled:
+//   * generate-image reads `jobId` / `statusUrl` straight from the request body;
+//   * publish-post reads them from posts.image_job_id / posts.image_status_url,
+//     and the row owner can write those columns through PostgREST.
+// So a poll target must never be trusted verbatim — pointing it at an
+// attacker's host would hand them the API key, and pointing it at an internal
+// address would be an SSRF from inside the service-role runtime. Candidates are
+// therefore always pinned to the configured Graphiste endpoint's own origin.
+// ---------------------------------------------------------------------------
+
+// Job ids land in a URL path. Accept only opaque identifier characters, and
+// never a path traversal segment, so a crafted id cannot walk out of the
+// posters route.
+const JOB_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/;
+
+export function sanitizeJobId(jobId: unknown): string | null {
+  if (typeof jobId !== "string") return null;
+  const trimmed = jobId.trim();
+  if (!JOB_ID_RE.test(trimmed)) return null;
+  if (trimmed === "." || trimmed === "..") return null;
+  return trimmed;
+}
+
+// A status URL supplied by the client/DB is honoured only when it resolves to
+// the SAME https origin as the configured Graphiste endpoint.
+export function isAllowedGraphisteStatusUrl(candidate: string, endpoint: string): boolean {
+  try {
+    const base = new URL(endpoint);
+    const resolved = new URL(candidate, base);
+    return resolved.protocol === "https:" && resolved.origin === base.origin;
+  } catch {
+    return false;
+  }
+}
+
+// Build the ordered list of URLs to poll for a job. The canonical job route
+// derived from the endpoint origin comes first (some API versions emit a
+// status_url pointing at a legacy handler that 404s); a supplied status URL is
+// appended only when it passes the same-origin check above.
+export function graphisteStatusCandidates(
+  endpoint: string,
+  statusUrl: string | null,
+  jobId: string | null,
+): string[] {
+  const out: string[] = [];
+  const safeJobId = sanitizeJobId(jobId);
+  let base: URL;
+  try {
+    base = new URL(endpoint);
+  } catch {
+    return out;
+  }
+  if (safeJobId) {
+    const root = `${base.origin}${base.pathname.replace(/\/generate\/?$/, "")}`;
+    const encoded = encodeURIComponent(safeJobId);
+    out.push(`${root}/${encoded}`);
+    out.push(`${root}/status/${encoded}`);
+    out.push(`${root}/jobs/${encoded}`);
+    out.push(`${base.origin}/functions/v1/api-v1/v1/jobs/${encoded}`);
+  }
+  if (statusUrl && isAllowedGraphisteStatusUrl(statusUrl, endpoint)) {
+    out.push(new URL(statusUrl, base).toString());
+  }
+  return [...new Set(out)];
+}
+
 // A job is terminal-failed when its status says so. "processing" is NOT failed.
 export function jobFailed(value: unknown): boolean {
   if (!value || typeof value !== "object") return false;
