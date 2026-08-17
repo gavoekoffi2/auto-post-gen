@@ -144,3 +144,21 @@ Voir aussi :
   **Commencez par lui si vous découvrez le projet.**
 - [`DEPLOYMENT.md`](./DEPLOYMENT.md) — secrets et mise en production (référence).
 - [`docs/PRICING.md`](./docs/PRICING.md) — modèle économique, coûts et marges.
+
+## Exploitation
+
+- [`docs/RUNBOOK.md`](docs/RUNBOOK.md) — migrations, secrets, crons, quotas et incidents courants.
+- [`SECURITY.md`](SECURITY.md) — signalement de vulnérabilité et modèle de sécurité.
+- [`DEPLOYMENT.md`](DEPLOYMENT.md) — déploiement initial.
+
+### Commandes
+
+```bash
+npm run dev            # serveur de développement
+npm run lint           # ESLint
+npm run typecheck      # types du frontend
+npm test               # suite de tests (Node, sans navigateur)
+npm run build          # build de production
+npm run migrate:plan   # migrations en attente (aucune écriture)
+npm run migrate        # applique les migrations en attente
+```

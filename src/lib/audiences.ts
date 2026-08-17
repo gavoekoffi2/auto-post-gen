@@ -33,3 +33,35 @@ export function normalizeAudienceSegments(value: unknown): AudienceSegment[] {
     })
     .filter((item) => item.name.trim());
 }
+
+// Persisting a segment list into a jsonb column needs a value TypeScript
+// accepts as `Json`. An interface does not structurally satisfy `Json` (it has
+// no index signature), and the usual workaround — `as unknown as Json` — throws
+// away the check entirely, so a genuinely non-serialisable field would slip
+// through. Mapping the fields explicitly keeps the compiler involved: adding a
+// field to AudienceSegment that cannot be stored fails right here.
+export type JsonAudienceSegment = {
+  id: string;
+  name: string;
+  description: string;
+  pain_points: string[];
+  goals: string[];
+  content_topics: string[];
+  buying_triggers: string[];
+  preferred_tone: string;
+  priority: number;
+};
+
+export function audiencesToJson(segments: AudienceSegment[]): JsonAudienceSegment[] {
+  return segments.map((segment, index) => ({
+    id: segment.id,
+    name: segment.name,
+    description: segment.description,
+    pain_points: [...segment.pain_points],
+    goals: [...segment.goals],
+    content_topics: [...segment.content_topics],
+    buying_triggers: [...segment.buying_triggers],
+    preferred_tone: segment.preferred_tone ?? "",
+    priority: segment.priority ?? index + 1,
+  }));
+}

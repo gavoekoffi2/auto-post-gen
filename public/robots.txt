@@ -12,3 +12,18 @@ Allow: /
 
 User-agent: *
 Allow: /
+
+# Authenticated areas hold no public content and must not be indexed. The
+# one-time email approval link is deliberately excluded so a token is never
+# captured by a crawler.
+Disallow: /dashboard
+Disallow: /calendar
+Disallow: /statistics
+Disallow: /comments
+Disallow: /profile
+Disallow: /admin
+Disallow: /onboarding
+Disallow: /reset-password
+Disallow: /validate-post
+
+Sitemap: https://auto-post-gen.76.13.129.252.sslip.io/sitemap.xml

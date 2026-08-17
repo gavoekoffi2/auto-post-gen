@@ -7,8 +7,14 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { buildCorsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { ayrsharePostReply, draftReply, zernioReply } from "../_shared/engagement.ts";
+import { consumeQuota } from "../_shared/quota.ts";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Drafting calls the LLM and sending hits the provider API; both were
+// unlimited per user. Generous enough for real inbox work, bounded enough that
+// a loop in the client (or a hostile caller) cannot run up the AI bill.
+const REPLY_RATE_LIMIT_MAX = 60;
 
 serve(async (req) => {
   const cors = buildCorsHeaders(req.headers.get("origin"));
@@ -50,6 +56,15 @@ serve(async (req) => {
     .maybeSingle();
   if (!comment) return jsonResponse({ error: "Comment introuvable" }, { status: 404, cors });
   if (comment.user_id !== userId) return jsonResponse({ error: "Forbidden" }, { status: 403, cors });
+
+  // Charged once per accepted request, before any paid work.
+  const quota = await consumeQuota(supabase, userId, "comment-reply", REPLY_RATE_LIMIT_MAX);
+  if (!quota.allowed) {
+    return jsonResponse(
+      { error: `Limite de ${REPLY_RATE_LIMIT_MAX} réponses par heure atteinte. Réessayez plus tard.` },
+      { status: 429, cors },
+    );
+  }
 
   const { data: post } = comment.post_id
     ? await supabase

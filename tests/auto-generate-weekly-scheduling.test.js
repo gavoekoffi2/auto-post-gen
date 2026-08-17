@@ -17,7 +17,25 @@ test('auto-generate-weekly schedules at the user-chosen time, not a hard-coded 1
     'the publish time must come from the profile, not be hard-coded to 10:00',
   );
   assert.match(source, /profile\.preferred_time/);
-  assert.match(source, /setHours\(hour, minute, 0, 0\)/);
+  assert.match(source, /parsePreferredTime\(profile\.preferred_time\)/);
+});
+
+test('the publish slot is built in the user timezone, not the runtime clock', () => {
+  // Date#setHours resolves in the edge runtime's clock, which is UTC — so
+  // "Lundi 10:00" was published at 10:00 UTC for every user on earth. The slot
+  // must be built through the timezone-aware helper instead.
+  assert.match(source, /nextWeeklySlot\(\{/);
+  assert.match(source, /safeTimeZone\(profile\.timezone\)/);
+  assert.equal(
+    /setHours\(/.test(source),
+    false,
+    'setHours resolves in the server clock and must not decide a publish time',
+  );
+  assert.equal(
+    /scheduledDate\.setDate\(/.test(source),
+    false,
+    'day arithmetic must go through the timezone-aware helper',
+  );
 });
 
 test('auto-generate-weekly preserves the chosen value/research/promo mix across retries', () => {

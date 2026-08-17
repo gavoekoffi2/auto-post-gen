@@ -277,6 +277,7 @@ export type Database = {
           post_frequency: number
           preferred_days: string[] | null
           preferred_time: string
+          timezone: string
           promo_posts_per_week: number
           research_posts_per_week: number
           sector: string
@@ -320,6 +321,7 @@ export type Database = {
           post_frequency?: number
           preferred_days?: string[] | null
           preferred_time?: string
+          timezone?: string
           promo_posts_per_week?: number
           research_posts_per_week?: number
           sector: string
@@ -363,6 +365,7 @@ export type Database = {
           post_frequency?: number
           preferred_days?: string[] | null
           preferred_time?: string
+          timezone?: string
           promo_posts_per_week?: number
           research_posts_per_week?: number
           sector?: string

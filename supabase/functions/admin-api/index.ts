@@ -1,10 +1,15 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, type User } from "https://esm.sh/@supabase/supabase-js@2.74.0";
 import { buildCorsHeaders, jsonResponse } from "../_shared/cors.ts";
+import { consumeQuota } from "../_shared/quota.ts";
 
 const FOUNDER_EMAIL = "c1domefa@gmail.com";
 const VALID_PLANS = new Set(["starter", "pro", "enterprise"]);
 const VALID_ROLES = new Set(["user", "admin", "super_admin"]);
+// The overview scans four tables and lists every auth user, so a compromised
+// admin session could use it to hammer the database. Bounded well above what
+// the console does in normal use (a reload plus a refresh after each action).
+const ADMIN_RATE_LIMIT_MAX = 120;
 
 // PostgREST caps an unbounded select at 1000 rows, so the overview's totals
 // silently stopped counting past the first 1000 posts / generations /
@@ -15,6 +20,20 @@ const MAX_PAGES = 25;
 // Ids go into an `in(...)` filter, i.e. the query string — keep each request's
 // URL a sane length.
 const ID_CHUNK_SIZE = 200;
+// generation_usage is the quota ledger for EVERY rate-limited function, not
+// just content generation. The console's "générations IA" figure must count
+// only the calls that actually produced content, otherwise quota rows from
+// comment-reply / sync-comments / admin-api itself inflate it.
+const CONTENT_GENERATION_FUNCTIONS = ["generate-content", "generate-image"];
+
+interface ProfileRow {
+  id: string;
+  email: string | null;
+  company_name: string | null;
+  sector: string | null;
+  plan: string | null;
+  created_at: string | null;
+}
 
 async function fetchAllRows<T>(
   // deno-lint-ignore no-explicit-any
@@ -103,6 +122,15 @@ serve(async (req) => {
       return jsonResponse({ user: { ...safeUser(actor), role: actorRole } }, { cors: corsHeaders });
     }
 
+    // Everything past `me` is either expensive to serve or mutates accounts.
+    const quota = await consumeQuota(admin, actor.id, "admin-api", ADMIN_RATE_LIMIT_MAX);
+    if (!quota.allowed) {
+      return jsonResponse(
+        { error: "Trop de requêtes d’administration. Réessayez dans quelques minutes." },
+        { status: 429, cors: corsHeaders },
+      );
+    }
+
     if (action === "overview") {
       // listUsers is also paginated; a single page stopped at 1000 accounts.
       const users: User[] = [];
@@ -126,9 +154,9 @@ serve(async (req) => {
       }
       const [profilesResult, postsResult, usageResult, connectionsResult] = await Promise.all([
         (async () => {
-          const rows: Record<string, unknown>[] = [];
+          const rows: ProfileRow[] = [];
           for (const chunk of idChunks) {
-            const page = await fetchAllRows<Record<string, unknown>>(() =>
+            const page = await fetchAllRows<ProfileRow>(() =>
               admin.from("profiles").select("id,email,company_name,sector,plan,created_at").in("id", chunk)
             );
             rows.push(...page.rows);
@@ -139,7 +167,10 @@ serve(async (req) => {
           admin.from("posts").select("user_id,status,created_at")
         ),
         fetchAllRows<{ user_id: string }>(() =>
-          admin.from("generation_usage").select("user_id,status,created_at")
+          admin
+            .from("generation_usage")
+            .select("user_id,status,created_at")
+            .in("function_name", CONTENT_GENERATION_FUNCTIONS)
         ),
         fetchAllRows<{ user_id: string }>(() =>
           admin.from("social_connections").select("user_id,platform,provider,created_at")
@@ -147,7 +178,9 @@ serve(async (req) => {
       ]);
       const truncated = usersTruncated ||
         [profilesResult, postsResult, usageResult, connectionsResult].some((r) => r.truncated);
-      const profiles = new Map(profilesResult.rows.map((p) => [p.id, p]));
+      const profiles = new Map<string, ProfileRow>(
+        profilesResult.rows.map((row): [string, ProfileRow] => [row.id, row]),
+      );
       const postsByUser = new Map<string, { total: number; published: number }>();
       for (const post of postsResult.rows) {
         const current = postsByUser.get(post.user_id) || { total: 0, published: 0 };

@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { combineDateAndTime, toLocalTimeInput } from "@/lib/schedule";
 import { useNavigate } from "react-router-dom";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
@@ -65,7 +66,7 @@ export default function CalendarPage() {
     setIsScheduleDialogOpen(true);
     if (post.scheduled_for) {
       const date = new Date(post.scheduled_for);
-      setScheduleTime(date.toTimeString().substring(0, 5));
+      setScheduleTime(toLocalTimeInput(date));
       setSelectedDate(date);
     }
   };
@@ -77,18 +78,20 @@ export default function CalendarPage() {
     }
 
     try {
-      const scheduledDateTime = new Date(selectedDate);
-      const [hours, minutes] = scheduleTime.split(':');
-      scheduledDateTime.setHours(parseInt(hours, 10), parseInt(minutes, 10), 0, 0);
+      const scheduledIso = combineDateAndTime(selectedDate, scheduleTime);
+      if (!scheduledIso) {
+        toast.error("Date ou heure invalide.");
+        return;
+      }
 
-      if (scheduledDateTime.getTime() < Date.now()) {
+      if (new Date(scheduledIso).getTime() < Date.now()) {
         toast.error("L'heure de publication est déjà passée. Choisissez une date future.");
         return;
       }
 
       const { error } = await supabase
         .from('posts')
-        .update({ scheduled_for: scheduledDateTime.toISOString() })
+        .update({ scheduled_for: scheduledIso })
         .eq('id', selectedPost.id);
 
       if (error) throw error;

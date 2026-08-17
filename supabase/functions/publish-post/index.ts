@@ -848,6 +848,14 @@ serve(async (req) => {
     const { error: recoverError } = await supabase.rpc("recover_stuck_publishing");
     if (recoverError) console.error("recover_stuck_publishing:", recoverError);
 
+    // Housekeeping rides along with the publish cron rather than needing its
+    // own schedule: prunes the quota ledger and the IP rate-limit events, both
+    // of which otherwise grow forever and slow down every request that reads
+    // them. Non-fatal — a failed cleanup must never block publishing.
+    const { data: maintenance, error: maintenanceError } = await supabase.rpc("run_maintenance");
+    if (maintenanceError) console.error("run_maintenance:", maintenanceError.message);
+    else if (maintenance) console.log("run_maintenance:", JSON.stringify(maintenance));
+
     const nowIso = new Date().toISOString();
     // Cap the per-run batch so a stuck queue can't exhaust the function
     // runtime; remaining items are picked up on the next cron tick. Kept small

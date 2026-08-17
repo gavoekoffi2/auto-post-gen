@@ -10,6 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { getSocialImageSpec } from "@/lib/socialImageSpecs";
+import { localDateTimeToIso, toLocalDateInput, toLocalTimeInput } from "@/lib/schedule";
 import { useNavigate } from "react-router-dom";
 import SettingsDialog from "@/components/SettingsDialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -43,43 +44,6 @@ type UserProfile = {
   platforms?: string[] | null;
   [key: string]: unknown;
 };
-
-// The edit dialog shows a <input type="date"> + <input type="time"> pair, both
-// of which are LOCAL wall-clock values. These two helpers keep that round-trip
-// lossless.
-//
-// The previous pair mixed clocks: the date came from
-// `toISOString().split("T")[0]` (UTC) while the time came from
-// `toTimeString()` (local), and saving re-joined them into a bare
-// "YYYY-MM-DDTHH:mm:00" with no offset — which Postgres reads as UTC. So every
-// save of an unmodified post shifted the schedule by the user's UTC offset, and
-// near midnight the date jumped a day. Read and write local on both sides, and
-// always send an absolute (offset-bearing) instant.
-function toLocalDateInput(value: string): string {
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
-function toLocalTimeInput(value: string): string {
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-// "2026-08-17" + "14:30" (local) → absolute ISO instant, or null when either
-// half is missing/unparseable.
-function localDateTimeToIso(date?: string, time?: string): string | null {
-  if (!date || !time) return null;
-  const [year, month, day] = date.split("-").map(Number);
-  const [hour, minute] = time.split(":").map(Number);
-  if ([year, month, day, hour, minute].some((n) => !Number.isFinite(n))) return null;
-  const local = new Date(year, month - 1, day, hour, minute, 0, 0);
-  if (Number.isNaN(local.getTime())) return null;
-  return local.toISOString();
-}
 
 // publish-post stores the per-platform outcome as a JSON array in
 // posts.publish_error. Turn it into a short, human-readable reason.

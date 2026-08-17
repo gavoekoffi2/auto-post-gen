@@ -7,6 +7,12 @@ import { buildAudiencePrompt, normalizeAudiences } from "../_shared/audience.ts"
 import { ensurePostEngagement } from "../_shared/post-engagement.ts";
 import { buildInspirationBlock, researchInspiration } from "../_shared/research.ts";
 import { matchesSharedSecret } from "../_shared/secret.ts";
+import {
+  DAY_NAME_TO_INDEX,
+  nextWeeklySlot,
+  parsePreferredTime,
+  safeTimeZone,
+} from "../_shared/schedule.ts";
 import { rehostToUserAssets, startPosterJob } from "../_shared/graphiste.ts";
 
 
@@ -18,16 +24,6 @@ function isoWeekNumber(date: Date): number {
   const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
   return Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
 }
-
-const DAY_MAPPING: Record<string, number> = {
-  Dimanche: 0,
-  Lundi: 1,
-  Mardi: 2,
-  Mercredi: 3,
-  Jeudi: 4,
-  Vendredi: 5,
-  Samedi: 6,
-};
 
 // Maximum posts a single profile can receive per weekly run, defends against
 // runaway configs and platform spam limits.
@@ -170,12 +166,10 @@ serve(async (req) => {
           ? profile.platforms
           : ["Instagram"];
 
-        // Time of day the user picked for automatic posts (defaults to 10:00).
-        const [rawHour, rawMinute] = String(profile.preferred_time || "10:00")
-          .split(":")
-          .map((n) => parseInt(n, 10));
-        const hour = Number.isFinite(rawHour) ? Math.min(23, Math.max(0, rawHour)) : 10;
-        const minute = Number.isFinite(rawMinute) ? Math.min(59, Math.max(0, rawMinute)) : 0;
+        // Time of day the user picked for automatic posts (defaults to 10:00),
+        // interpreted in THEIR timezone rather than the edge runtime's UTC clock.
+        const { hour, minute } = parsePreferredTime(profile.preferred_time);
+        const timeZone = safeTimeZone(profile.timezone);
 
         // Build the exact user-selected weekly editorial mix. Existing queued
         // posts retain their persisted category, so a retry only fills missing
@@ -359,26 +353,18 @@ Génère uniquement le texte du post, sans titre ni explication.`;
           // week's posts spread across the user's chosen days.
           const slotIndex = (existingPosts?.length || 0) + i;
           const targetDay = preferredDays[slotIndex % preferredDays.length];
-          const targetDayNumber = DAY_MAPPING[targetDay] ?? 1;
-
-          const scheduledDate = new Date(now);
-          const currentDay = scheduledDate.getDay();
-          let daysUntilTarget = (targetDayNumber - currentDay + 7) % 7;
-          if (daysUntilTarget === 0) {
-            // Target day is today: keep today only if the chosen time is still
-            // ahead; otherwise push to next week. (The old `|| 7` always pushed
-            // a same-day target a full week out, dropping this week's post.)
-            const todayAtTime = new Date(now);
-            todayAtTime.setHours(hour, minute, 0, 0);
-            if (todayAtTime.getTime() <= now.getTime()) daysUntilTarget = 7;
-          }
-          scheduledDate.setDate(scheduledDate.getDate() + daysUntilTarget);
-          scheduledDate.setHours(hour, minute, 0, 0);
-          // When more posts are generated than there are preferred days, the
-          // rotation wraps and two posts would share one exact timestamp. Push
-          // each extra lap forward a week so every post keeps its own slot.
+          // When more posts are generated than there are preferred days the
+          // rotation wraps; each extra lap moves a week out so no two posts
+          // share one exact timestamp.
           const lap = Math.floor(slotIndex / preferredDays.length);
-          if (lap > 0) scheduledDate.setDate(scheduledDate.getDate() + lap * 7);
+          const scheduledDate = nextWeeklySlot({
+            now,
+            timeZone,
+            weekday: DAY_NAME_TO_INDEX[targetDay] ?? DAY_NAME_TO_INDEX.Lundi,
+            hour,
+            minute,
+            weeksAhead: lap,
+          });
 
           // Pick the visual. A custom image library wins (free, instant);
           // otherwise we kick off a Graphiste GPT poster job further below.

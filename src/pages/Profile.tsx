@@ -11,7 +11,8 @@ import { ArrowLeft, Save, Building2, Settings, ImageIcon } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from '@/integrations/supabase/client';
 import { AudienceEditor } from '@/components/AudienceEditor';
-import { AudienceSegment, normalizeAudienceSegments } from '@/lib/audiences';
+import { AudienceSegment, audiencesToJson, normalizeAudienceSegments } from '@/lib/audiences';
+import { DEFAULT_TIME_ZONE, describeTimeZone, detectTimeZone, normalizeTimeZone } from '@/lib/timezone';
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -58,6 +59,7 @@ export default function Profile() {
     platforms: [] as string[],
     preferred_days: [] as string[],
     preferred_time: "10:00",
+    timezone: detectTimeZone(),
     promo_posts_per_week: 1,
     research_posts_per_week: 1,
     auto_publish: false,
@@ -113,6 +115,12 @@ export default function Profile() {
           platforms: data.platforms || [],
           preferred_days: data.preferred_days || [],
           preferred_time: data.preferred_time || "10:00",
+          // An existing profile saved before timezones existed comes back as
+          // 'UTC'; adopt the browser's zone so the saved hour finally means
+          // what the user picked.
+          timezone: normalizeTimeZone(data.timezone) === DEFAULT_TIME_ZONE
+            ? detectTimeZone()
+            : normalizeTimeZone(data.timezone),
           promo_posts_per_week: data.promo_posts_per_week ?? 1,
           research_posts_per_week: data.research_posts_per_week ?? 1,
           auto_publish: data.auto_publish || false,
@@ -200,6 +208,7 @@ export default function Profile() {
           platforms: profile.platforms,
           preferred_days: profile.preferred_days,
           preferred_time: profile.preferred_time,
+          timezone: normalizeTimeZone(profile.timezone),
           promo_posts_per_week: profile.promo_posts_per_week,
           research_posts_per_week: profile.research_posts_per_week,
           auto_publish: profile.auto_publish,
@@ -212,9 +221,11 @@ export default function Profile() {
           brand_font: profile.brand_font,
           image_style: profile.image_style,
           style_examples: profile.style_examples,
-          audience_suggestions: profile.audienceSuggestions,
-          target_audiences: profile.audienceSuggestions.filter((audience) =>
-            profile.selectedAudienceIds.includes(audience.id)
+          audience_suggestions: audiencesToJson(profile.audienceSuggestions),
+          target_audiences: audiencesToJson(
+            profile.audienceSuggestions.filter((audience) =>
+              profile.selectedAudienceIds.includes(audience.id)
+            ),
           ),
           audiences_confirmed_at: new Date().toISOString(),
         })
@@ -580,7 +591,13 @@ export default function Profile() {
                     }
                   />
                   <p className="text-xs text-muted-foreground">
-                    Heure à laquelle vos posts automatiques seront publiés les jours choisis.
+                    Heure à laquelle vos posts automatiques seront publiés les jours choisis,
+                    dans votre fuseau horaire&nbsp;: <strong>{describeTimeZone(profile.timezone)}</strong>.
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Détecté automatiquement depuis votre navigateur et enregistré avec vos
+                    préférences. Si vous voyagez, réenregistrez ce profil depuis votre fuseau
+                    habituel pour que vos publications gardent le bon horaire.
                   </p>
                 </div>
 

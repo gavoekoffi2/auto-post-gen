@@ -1,23 +1,91 @@
 name: CI
 
-# Runs on every pull request (and pushes to main) so lint, tests and the
-# production build are gated BEFORE merge — previously they only ran at deploy
-# time, after code had already landed on main.
+# Runs on every pull request (and pushes to main) so lint, type-checks, tests
+# and the production build are gated BEFORE merge — previously they only ran at
+# deploy time, after code had already landed on main.
 on:
   pull_request: {}
   push:
     branches: [main]
 
 jobs:
-  check:
+  frontend:
+    name: Frontend (lint, types, tests, build)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
       - run: npm ci
       - run: npm run lint
+      # The frontend had type errors that nothing gated; they are fixed, so the
+      # check is enforced from here on.
+      - run: npm run typecheck
       - run: npm test
       - run: npm run build
+
+  edge-functions:
+    name: Edge functions (type-check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # supabase/functions is Deno, not Node — tsc never looked at it, so a
+      # type error in the backend could only be discovered in production after
+      # a deploy. `deno check` compiles every function and its remote imports.
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      # Dependency-free modules first: they hold the security-critical logic
+      # (SSRF guard, poll-target pinning, constant-time secrets, timezone
+      # maths). No remote imports, so this step is hermetic — it cannot be
+      # broken by a registry outage, and it fails fast on the code that matters
+      # most.
+      - name: Type-check dependency-free shared modules
+        run: |
+          set -euo pipefail
+          mapfile -t hermetic < <(
+            grep -LE '^import .*"https://' $(find supabase/functions/_shared -name '*.ts') | sort
+          )
+          printf 'Checking %s hermetic module(s)\n' "${#hermetic[@]}"
+          deno check "${hermetic[@]}"
+
+      # Then everything else, which pulls Supabase/std imports over the network.
+      # This is the first time these files are type-checked at all — the Deno
+      # runtime only strips types, it never verifies them.
+      - name: Type-check functions with remote imports
+        run: |
+          set -euo pipefail
+          mapfile -t networked < <(
+            grep -lE '^import .*"https://' $(find supabase/functions -name '*.ts') | sort
+          )
+          printf 'Checking %s networked file(s)\n' "${#networked[@]}"
+          deno check --allow-import "${networked[@]}"
+
+  migrations:
+    name: Migrations (ledger plan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      # Catches a malformed/duplicate migration filename before it reaches the
+      # deploy job, where the same script runs for real.
+      - name: Validate migration filenames and ordering
+        run: node scripts/check-migrations.mjs
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      # Advisory: fails the job on high/critical only, so a low-severity
+      # transitive advisory does not block shipping a fix.
+      - run: npm audit --audit-level=high

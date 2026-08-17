@@ -1,0 +1,29 @@
+version: 2
+updates:
+  # Application dependencies. Grouped so a weekly bump is one reviewable PR
+  # instead of twenty, with majors kept separate because they need real review.
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      radix-ui:
+        patterns: ["@radix-ui/*"]
+      dev-tooling:
+        dependency-type: development
+        update-types: ["minor", "patch"]
+      production-minor:
+        dependency-type: production
+        update-types: ["minor", "patch"]
+    ignore:
+      # Majors land as individual PRs via the security updates channel.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  # Keeps the pinned action versions current (including security fixes).
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3

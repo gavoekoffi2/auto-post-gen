@@ -12,6 +12,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { buildCorsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { matchesSharedSecret } from "../_shared/secret.ts";
+import { consumeQuota } from "../_shared/quota.ts";
 import {
   ayrshareGetComments,
   ayrsharePostReply,
@@ -25,6 +26,10 @@ import {
 type DB = ReturnType<typeof createClient>;
 
 const POSTS_PER_USER = 25;
+// A manual sync walks up to POSTS_PER_USER provider calls and can draft up to
+// AUTO_REPLY_CAP AI replies, so a user hammering "synchroniser" was an
+// unbounded cost. The cron path is unaffected (it is secret-authenticated).
+const MANUAL_SYNC_RATE_LIMIT_MAX = 12;
 const AUTO_REPLY_CAP = 10; // max auto-replies per user per run
 // AI auto-reply is an Enterprise-plan feature. The DB column is protected from
 // client self-upgrade (see migration), so this read is authoritative.
@@ -359,6 +364,23 @@ serve(async (req) => {
     if (userErr || !userData?.user) {
       return jsonResponse({ error: "Invalid token" }, { status: 401, cors });
     }
+    const quota = await consumeQuota(
+      supabase,
+      userData.user.id,
+      "sync-comments",
+      MANUAL_SYNC_RATE_LIMIT_MAX,
+    );
+    if (!quota.allowed) {
+      return jsonResponse(
+        {
+          error:
+            `Limite de ${MANUAL_SYNC_RATE_LIMIT_MAX} synchronisations par heure atteinte. ` +
+            "La synchronisation automatique continue en arrière-plan.",
+        },
+        { status: 429, cors },
+      );
+    }
+
     const result = await syncUser(supabase, userData.user.id);
     if (result.note === "no_comment_provider") {
       return jsonResponse(
