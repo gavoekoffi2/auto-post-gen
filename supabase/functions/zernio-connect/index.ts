@@ -126,8 +126,10 @@ serve(async (req) => {
         { status: 402, cors },
       );
     }
+    // Everything else is an upstream/infrastructure failure: logged above,
+    // never echoed back with the provider's raw body.
     return jsonResponse(
-      { error: message },
+      { error: "Impossible de contacter Zernio pour le moment. Réessayez dans un instant." },
       { status: 502, cors },
     );
   }

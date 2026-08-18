@@ -35,3 +35,22 @@ export async function hitIpRateLimit(
     return true; // fail open
   }
 }
+
+// Constant-time secret comparison for the cron shared secret.
+//
+// `provided !== expected` leaks the length and the position of the first
+// differing byte through timing. Remote timing attacks over HTTP are noisy, but
+// this secret authorises the whole batch publisher and the weekly generator, so
+// there is no reason to hand out the signal.
+export function timingSafeEqual(provided: string, expected: string): boolean {
+  const a = new TextEncoder().encode(provided);
+  const b = new TextEncoder().encode(expected);
+  // Compare a fixed number of bytes so the loop count does not depend on the
+  // supplied length; the length itself is folded into the result.
+  let diff = a.length ^ b.length;
+  const len = Math.max(a.length, b.length);
+  for (let i = 0; i < len; i++) {
+    diff |= (a[i] ?? 0) ^ (b[i] ?? 0);
+  }
+  return diff === 0;
+}

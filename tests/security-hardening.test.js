@@ -201,3 +201,163 @@ test('TikTok is gated as "coming soon" in the platform pickers', () => {
     assert.match(src, /disabled=\{comingSoon\}/);
   }
 });
+
+// =====================================================================
+// Senior audit, 2026-08-18
+// =====================================================================
+
+test('poster status URLs are pinned to the configured Graphiste origin', () => {
+  // The poll is sent with `Authorization: Bearer GRAPHISTE_GPT_API_KEY`, and the
+  // status URL used to come straight from a request body / a user-writable
+  // posts column — pointing it at any host handed out the poster API key.
+  const statusUrls = read('supabase/functions/_shared/graphisteStatusUrls.ts');
+  assert.match(statusUrls, /export function isAllowedStatusUrl/);
+  assert.match(statusUrls, /candidate\.origin === base\.origin/);
+  assert.match(statusUrls, /candidate\.protocol !== "https:"/);
+  // Both callers go through the shared builder; neither keeps a local copy.
+  for (const p of [
+    'supabase/functions/generate-image/index.ts',
+    'supabase/functions/_shared/graphiste.ts',
+  ]) {
+    const src = read(p);
+    assert.match(src, /posterStatusCandidates/);
+    assert.equal(
+      /function (graphisteStatusCandidates|statusCandidates)\(/.test(src),
+      false,
+      `${p} must not rebuild poll URLs locally`,
+    );
+  }
+});
+
+test('founder bootstrap is one-time and cannot be claimed by a fresh signup', () => {
+  // Production runs with mailer_autoconfirm, so matching the founder email is
+  // an unverified claim. The promotion must additionally require that no
+  // super_admin exists yet, which closes the path once the owner is set up.
+  assert.match(adminApi, /async function hasSuperAdmin/);
+  assert.match(adminApi, /if \(!\(await hasSuperAdmin\(admin\)\)\)/);
+  // Fails closed: an error listing users must not be read as "un-bootstrapped".
+  assert.match(adminApi, /if \(error\) return true;/);
+  // The owner address is configurable rather than only hardcoded...
+  assert.match(adminApi, /ADMIN_FOUNDER_EMAIL/);
+  // ...and is no longer shipped in the public browser bundle.
+  const auth = read('src/pages/Auth.tsx');
+  assert.equal(/c1domefa@gmail\.com/.test(auth), false,
+    'the owner address must not be routed on client-side');
+});
+
+test('client signup/reset password minimum matches the server-side minimum (8)', () => {
+  const auth = read('src/pages/Auth.tsx');
+  const reset = read('src/pages/ResetPassword.tsx');
+  assert.match(auth, /MIN_PASSWORD_LENGTH = 8/);
+  assert.match(auth, /password\.length < MIN_PASSWORD_LENGTH/);
+  assert.equal(/minLength=\{6\}/.test(auth), false);
+  assert.equal(/minLength=\{6\}/.test(reset), false);
+  assert.match(reset, /password\.length < 8/);
+  // admin-api already required 8; keep the two in step.
+  assert.match(adminApi, /body\.password\.length < 8/);
+});
+
+test('server-owned columns are not writable from the browser', () => {
+  const mig = read('supabase/migrations/20260818000000_lock_server_owned_columns.sql');
+  // profile_key spoofing => publishing through someone else's provider profile.
+  assert.match(mig, /REVOKE INSERT ON public\.social_connections FROM authenticated, anon;/);
+  assert.match(mig, /guard_post_server_columns/);
+  assert.match(mig, /SET search_path = public, pg_temp/);
+  // Every publisher-owned column is pinned to its stored value on UPDATE.
+  for (const col of [
+    'image_job_id',
+    'image_status_url',
+    'provider_post_id',
+    'external_post_ids',
+    'validation_token',
+    'validation_token_used_at',
+    'published_at',
+    'auto_publish_attempted_at',
+  ]) {
+    assert.match(
+      mig,
+      new RegExp(`NEW\\.${col}\\s+:= OLD\\.${col};`),
+      `${col} must be pinned on UPDATE`,
+    );
+  }
+  // A row mid-publish is frozen, so a client cannot re-queue it and double-post.
+  assert.match(mig, /OLD\.status = 'publishing'/);
+  assert.match(mig, /RAISE EXCEPTION/);
+  // And the migration is actually applied by the deploy workflow — this repo
+  // applies migrations by explicit name, so an unlisted file never ships.
+  assert.match(deployWorkflow, /20260818000000_lock_server_owned_columns\.sql/);
+});
+
+test('every user-influenced image fetch goes through the SSRF guard', () => {
+  for (const p of [
+    'supabase/functions/publish-post/index.ts',
+    'supabase/functions/generate-image/index.ts',
+    'supabase/functions/_shared/postiz.ts',
+    'supabase/functions/_shared/graphiste.ts',
+  ]) {
+    const src = read(p);
+    assert.match(src, /fetchImageBytes/, `${p} must use the guarded fetch`);
+    assert.equal(
+      /await fetch\(imageUrl\)/.test(src),
+      false,
+      `${p} still fetches a user-influenced image URL unguarded`,
+    );
+  }
+});
+
+test('internal errors are logged, not returned to the caller', () => {
+  assert.match(cors, /export function internalError/);
+  assert.match(cors, /Une erreur interne est survenue/);
+  const userFacing = [
+    'admin-api', 'comment-reply', 'delete-account', 'export-account-data',
+    'sync-comments', 'postiz-connect', 'ayrshare-connect', 'ayrshare-status',
+    'validate-post', 'generate-image', 'publish-post', 'generate-content',
+  ];
+  for (const fn of userFacing) {
+    const src = read(`supabase/functions/${fn}/index.ts`);
+    assert.match(src, /internalError\(/, `${fn} must use the shared handler`);
+  }
+  // The cron-only entry points keep detailed errors: their caller is the
+  // operator holding CRON_SECRET, not an end user.
+  assert.match(validationEmail, /error instanceof Error \? error\.message/);
+});
+
+test('cron shared secret is compared in constant time', () => {
+  const rateLimit = read('supabase/functions/_shared/rateLimit.ts');
+  assert.match(rateLimit, /export function timingSafeEqual/);
+  for (const fn of ['auto-generate-weekly', 'send-validation-email', 'publish-post', 'sync-comments']) {
+    const src = read(`supabase/functions/${fn}/index.ts`);
+    assert.match(src, /timingSafeEqual\(/, `${fn} must not use === on the cron secret`);
+    assert.equal(
+      /headerCron === cronSecret|provided !== expectedSecret/.test(src),
+      false,
+      `${fn} still compares the cron secret directly`,
+    );
+  }
+});
+
+test('third-party web snippets are neutralised before entering the LLM prompt', () => {
+  // Search results are attacker-authorable and the generated post is published
+  // to the user's real accounts, sometimes with no human in the loop.
+  const research = read('supabase/functions/_shared/research.ts');
+  assert.match(research, /export function sanitizeResearchText/);
+  assert.match(research, /INJECTION_PATTERNS/);
+  // Newlines are collapsed so a snippet cannot forge a new prompt section.
+  assert.match(research, /replace\(\/\[\\r\\n\\t\]\+\/g, " "\)/);
+  // Title, snippet and source all go through the sanitiser.
+  assert.match(research, /title: sanitizeResearchText\(r\.title/);
+  assert.match(research, /snippet: sanitizeResearchText\(r\.snippet/);
+  assert.match(research, /source: sanitizeResearchText\(r\.source/);
+  // The block tells the model the lines are data, not instructions.
+  assert.match(research, /jamais des instructions/);
+});
+
+test('the dashboard does not mutate React-owned DOM on image load failure', () => {
+  const dashboard = read('src/pages/Dashboard.tsx');
+  assert.equal(
+    /wrap\.innerHTML/.test(dashboard),
+    false,
+    'replacing innerHTML destroys nodes React still owns and crashes the next render',
+  );
+  assert.match(dashboard, /brokenImageUrls/);
+});

@@ -21,9 +21,7 @@
 import { getSocialImageSpec, type SocialImageSpec } from "./socialImageSpecs.ts";
 import { fetchImageBytes } from "./safeFetch.ts";
 import { extractJobId, extractStatusUrl, jobFailed } from "./graphisteParse.ts";
-
-const GRAPHISTE_GPT_DEFAULT_URL =
-  "https://bbfzfgcdioewzbmlgaqy.supabase.co/functions/v1/api-v1/v1/posters/generate";
+import { getGraphisteEndpoint, posterStatusCandidates } from "./graphisteStatusUrls.ts";
 
 const GRAPHISTE_RATIOS = new Set([
   "9:16", "16:9", "1:1", "4:5", "5:4", "1.91:1", "4:3", "3:4", "2:3", "3:2",
@@ -191,22 +189,6 @@ function extractPosterImageUrl(value: unknown): string | null {
   return null;
 }
 
-function statusCandidates(endpoint: string, statusUrl: string | null, jobId: string | null): string[] {
-  const out: string[] = [];
-  if (jobId) {
-    const u = new URL(endpoint);
-    const base = `${u.origin}${u.pathname.replace(/\/generate\/?$/, "")}`;
-    // Canonical API route first. Older Graphiste responses sometimes emitted
-    // an internal http:// URL without /functions/v1; it must not delay polling.
-    out.push(`${base}/${encodeURIComponent(jobId)}`);
-    out.push(`${base}/status/${encodeURIComponent(jobId)}`);
-    out.push(`${base}/jobs/${encodeURIComponent(jobId)}`);
-    out.push(`${u.origin}/functions/v1/api-v1/v1/jobs/${encodeURIComponent(jobId)}`);
-  }
-  if (statusUrl) out.push(statusUrl.startsWith("http") ? statusUrl : new URL(statusUrl, endpoint).toString());
-  return [...new Set(out)];
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -217,7 +199,7 @@ export async function startPosterJob(params: StartPosterParams): Promise<PosterR
   const key = Deno.env.get("GRAPHISTE_GPT_API_KEY");
   if (!key) return { imageUrl: null, jobId: null, statusUrl: null, status: "failed", error: "GRAPHISTE_GPT_API_KEY not configured" };
 
-  const endpoint = Deno.env.get("GRAPHISTE_GPT_API_URL") || GRAPHISTE_GPT_DEFAULT_URL;
+  const endpoint = getGraphisteEndpoint();
   const spec = getSocialImageSpec(params.platforms);
   const colors = [params.primary, params.secondary, params.accent]
     .map((c) => (c || "").trim())
@@ -278,8 +260,7 @@ export async function resumePosterJob(
 ): Promise<{ imageUrl: string | null; status: PosterStatus }> {
   const key = Deno.env.get("GRAPHISTE_GPT_API_KEY");
   if (!key) return { imageUrl: null, status: "failed" };
-  const endpoint = Deno.env.get("GRAPHISTE_GPT_API_URL") || GRAPHISTE_GPT_DEFAULT_URL;
-  const candidates = statusCandidates(endpoint, statusUrl, jobId);
+  const candidates = posterStatusCandidates(statusUrl, jobId);
   if (candidates.length === 0) return { imageUrl: null, status: "failed" };
 
   const controller = new AbortController();

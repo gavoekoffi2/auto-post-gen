@@ -15,7 +15,7 @@
 //     fail-soft: any search error is logged and ignored.
 //
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { buildCorsHeaders } from "../_shared/cors.ts";
+import { buildCorsHeaders, internalError } from "../_shared/cors.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { AIQuotaError, chatCompletion, getOpenRouterKey, getTextModel } from "../_shared/ai.ts";
 import { buildAudiencePrompt, normalizeAudiences } from "../_shared/audience.ts";
@@ -383,8 +383,14 @@ Réponds UNIQUEMENT avec le texte du post, sans titre ni explication, sans guill
         top_p: 0.9,
       });
       if (!textResponse.ok) {
-        const detail = (await textResponse.text()).slice(0, 240);
-        throw new Error(`OpenRouter ${textResponse.status}: ${detail}`);
+        // The upstream body is logged for operators but must not travel back to
+        // the browser: it lands in the `warning` field of the fallback payload.
+        console.error(
+          "OpenRouter error body:",
+          textResponse.status,
+          (await textResponse.text()).slice(0, 240),
+        );
+        throw new Error(`OpenRouter returned HTTP ${textResponse.status}`);
       }
       const textData = await textResponse.json();
       generatedContent = textData?.choices?.[0]?.message?.content?.trim() || "";
@@ -415,12 +421,6 @@ Réponds UNIQUEMENT avec le texte du post, sans titre ni explication, sans guill
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (error) {
-    console.error("Error in generate-content:", error);
-    return new Response(
-      JSON.stringify({
-        error: error instanceof Error ? error.message : "Unknown error",
-      }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
+    return internalError("generate-content", error, corsHeaders);
   }
 });

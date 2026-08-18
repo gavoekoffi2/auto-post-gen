@@ -6,9 +6,11 @@
 // the "regenerate image" endpoint from the dashboard.
 //
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { buildCorsHeaders } from "../_shared/cors.ts";
+import { buildCorsHeaders, internalError } from "../_shared/cors.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { getSocialImageSpec, type SocialImageSpec } from "../_shared/socialImageSpecs.ts";
+import { getGraphisteEndpoint, posterStatusCandidates } from "../_shared/graphisteStatusUrls.ts";
+import { fetchImageBytes } from "../_shared/safeFetch.ts";
 // Image generation for Pro Social AI must produce real poster layouts.
 // Keep this endpoint dedicated to Graphiste GPT poster output rather than
 // generic image providers. The chosen output format always follows the post's
@@ -24,9 +26,6 @@ const MAX_PAYLOAD_BYTES = 64 * 1024;
 const IMAGE_RATE_LIMIT_MAX = 30;
 // Soft monthly cap per user (cost control for the free beta).
 const IMAGE_MONTHLY_MAX = 200;
-
-const GRAPHISTE_GPT_DEFAULT_URL =
-  "https://bbfzfgcdioewzbmlgaqy.supabase.co/functions/v1/api-v1/v1/posters/generate";
 
 // Aspect ratios supported by the Graphiste GPT API (v1.1). We send the post's
 // exact network ratio when supported (e.g. 1.91:1 for LinkedIn / Facebook) so
@@ -124,23 +123,6 @@ function extractGraphisteStatusUrl(value: unknown): string | null {
   return null;
 }
 
-function graphisteStatusCandidates(endpoint: string, statusUrl: string | null, jobId: string | null): string[] {
-  const out: string[] = [];
-  // Prefer the documented public job route derived from data.job_id. Some API
-  // versions emitted a status_url pointing at an internal/legacy handler which
-  // can return 404 even though the canonical job route works.
-  if (jobId) {
-    const u = new URL(endpoint);
-    const base = `${u.origin}${u.pathname.replace(/\/generate\/?$/, "")}`;
-    out.push(`${base}/${encodeURIComponent(jobId)}`);
-    out.push(`${base}/status/${encodeURIComponent(jobId)}`);
-    out.push(`${base}/jobs/${encodeURIComponent(jobId)}`);
-    out.push(`${u.origin}/functions/v1/api-v1/v1/jobs/${encodeURIComponent(jobId)}`);
-  }
-  if (statusUrl) out.push(statusUrl.startsWith("http") ? statusUrl : new URL(statusUrl, endpoint).toString());
-  return [...new Set(out)];
-}
-
 // Detect a terminal "failed" job so polling can stop early instead of waiting
 // out the whole budget.
 function graphisteJobFailed(value: unknown): boolean {
@@ -211,8 +193,7 @@ async function resumeGraphisteJob(
 ): Promise<{ imageUrl: string | null; status: GraphisteJobStatus }> {
   const key = Deno.env.get("GRAPHISTE_GPT_API_KEY");
   if (!key) return { imageUrl: null, status: "failed" };
-  const endpoint = Deno.env.get("GRAPHISTE_GPT_API_URL") || GRAPHISTE_GPT_DEFAULT_URL;
-  const candidates = graphisteStatusCandidates(endpoint, statusUrl, jobId);
+  const candidates = posterStatusCandidates(statusUrl, jobId);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), budgetMs + 10_000);
   try {
@@ -384,7 +365,7 @@ async function tryGraphisteGptPoster(params: {
   const key = Deno.env.get("GRAPHISTE_GPT_API_KEY");
   if (!key) return fail("GRAPHISTE_GPT_API_KEY not configured");
 
-  const endpoint = Deno.env.get("GRAPHISTE_GPT_API_URL") || GRAPHISTE_GPT_DEFAULT_URL;
+  const endpoint = getGraphisteEndpoint();
   const colors = [params.primary, params.secondary, params.accent]
     .map((c) => (c || "").trim())
     .filter((c) => /^#[0-9a-f]{6}$/i.test(c));
@@ -448,7 +429,7 @@ async function tryGraphisteGptPoster(params: {
     if (direct) return { imageUrl: direct, warning: null, jobId, statusUrl, status: "completed" };
     // Async (HTTP 202 + job_id + absolute status_url): poll briefly, then hand
     // the job back to the client to resume so no single call runs too long.
-    const candidates = graphisteStatusCandidates(endpoint, statusUrl, jobId);
+    const candidates = posterStatusCandidates(statusUrl, jobId, endpoint);
     const r = await pollGraphisteJob(candidates, key, 40_000, controller.signal);
     if (r.status === "failed") {
       return { imageUrl: null, warning: "Graphiste GPT a signalé un échec de génération.", jobId, statusUrl, status: "failed" };
@@ -725,13 +706,13 @@ serve(async (req) => {
             bytes = new TextEncoder().encode(decodeURIComponent(payload));
           }
         } else {
-          const fetched = await fetch(imageUrl);
-          if (!fetched.ok) throw new Error(`image fetch ${fetched.status}`);
-          contentType = (fetched.headers.get("content-type") || "image/png").toLowerCase();
-          if (!contentType.startsWith("image/") || contentType.includes("svg")) {
-            throw new Error(`unexpected content-type ${contentType}`);
-          }
-          bytes = new Uint8Array(await fetched.arrayBuffer());
+          // SSRF-guarded fetch: the poster URL comes from an external provider
+          // response, so it must not be able to aim a service-role function at
+          // localhost / link-local metadata. Also enforces https, an image
+          // content-type (never SVG) and a size cap.
+          const fetched = await fetchImageBytes(imageUrl);
+          contentType = fetched.contentType;
+          bytes = fetched.bytes;
         }
       } catch (verifyErr) {
         console.error("generate-image: could not verify a real raster poster:", verifyErr);
@@ -777,10 +758,6 @@ serve(async (req) => {
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err) {
-    console.error("generate-image error:", err);
-    return new Response(
-      JSON.stringify({ error: err instanceof Error ? err.message : String(err) }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
+    return internalError("generate-image", err, corsHeaders);
   }
 });

@@ -5,7 +5,7 @@
 // Auth: requires the user's JWT; ownership of the comment is enforced.
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
-import { buildCorsHeaders, jsonResponse } from "../_shared/cors.ts";
+import { buildCorsHeaders, internalError, jsonResponse } from "../_shared/cors.ts";
 import { ayrsharePostReply, draftReply, zernioReply } from "../_shared/engagement.ts";
 
 serve(async (req) => {
@@ -127,10 +127,6 @@ serve(async (req) => {
 
     return jsonResponse({ error: "mode invalide" }, { status: 400, cors });
   } catch (err) {
-    console.error("comment-reply error:", err);
-    return jsonResponse(
-      { error: err instanceof Error ? err.message : String(err) },
-      { status: 500, cors },
-    );
+    return internalError("comment-reply", err, cors);
   }
 });

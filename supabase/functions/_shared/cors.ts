@@ -42,3 +42,24 @@ export function jsonResponse(
     },
   });
 }
+
+// Generic 500 for user-facing endpoints.
+//
+// Returning `error.message` verbatim hands the caller whatever the failure
+// happened to contain — Postgres messages naming tables and columns, upstream
+// provider bodies, occasionally a URL with a token in it. Log the real error
+// where operators can read it (function logs), and tell the client only that
+// something failed. Product-level failures that the user can act on should be
+// returned explicitly by the caller instead of falling through to here.
+export function internalError(
+  scope: string,
+  error: unknown,
+  cors: Record<string, string>,
+  status = 500,
+): Response {
+  console.error(`${scope}:`, error);
+  return jsonResponse(
+    { error: "Une erreur interne est survenue. Réessayez dans un instant." },
+    { status, cors },
+  );
+}

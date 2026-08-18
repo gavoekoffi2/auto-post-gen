@@ -26,7 +26,15 @@ test('generate-content enforces an atomic per-user quota before spending on the 
 });
 
 test('generate-content converts OpenRouter non-2xx into a usable local post fallback', () => {
-  assert.match(source, /throw new Error\(`OpenRouter \$\{textResponse\.status\}:/);
+  // Non-2xx still becomes a thrown error that the fallback catch handles, but
+  // the upstream body is logged rather than folded into the message: it ends up
+  // in the `warning` field the browser receives.
+  assert.match(source, /throw new Error\(`OpenRouter returned HTTP \$\{textResponse\.status\}`\)/);
+  assert.equal(
+    /throw new Error\(`OpenRouter \$\{textResponse\.status\}: \$\{detail\}`\)/.test(source),
+    false,
+    'must not put the upstream response body into the client-visible warning',
+  );
   assert.match(source, /const payload = fallbackContent\(fallbackReason \|\| "AI returned empty content"\)/);
   assert.match(source, /JSON\.stringify\(payload\)/);
   assert.match(source, /status:\s*200/);

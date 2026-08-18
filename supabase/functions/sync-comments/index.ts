@@ -10,7 +10,7 @@
 // without an Ayrshare connection get a clear notice instead of a hard error.
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
-import { buildCorsHeaders, jsonResponse } from "../_shared/cors.ts";
+import { buildCorsHeaders, internalError, jsonResponse } from "../_shared/cors.ts";
 import {
   ayrshareGetComments,
   ayrsharePostReply,
@@ -20,6 +20,7 @@ import {
   zernioReply,
   type NormalizedComment,
 } from "../_shared/engagement.ts";
+import { timingSafeEqual } from "../_shared/rateLimit.ts";
 
 type DB = ReturnType<typeof createClient>;
 
@@ -328,7 +329,7 @@ serve(async (req) => {
 
   const cronSecret = Deno.env.get("CRON_SECRET");
   const headerCron = req.headers.get("x-cron-secret");
-  const isCron = cronSecret && headerCron && headerCron === cronSecret;
+  const isCron = !!cronSecret && !!headerCron && timingSafeEqual(headerCron, cronSecret);
 
   try {
     if (isCron) {
@@ -380,10 +381,6 @@ serve(async (req) => {
     }
     return jsonResponse({ success: true, ...result }, { cors });
   } catch (err) {
-    console.error("sync-comments error:", err);
-    return jsonResponse(
-      { error: err instanceof Error ? err.message : String(err) },
-      { status: 500, cors },
-    );
+    return internalError("sync-comments", err, cors);
   }
 });

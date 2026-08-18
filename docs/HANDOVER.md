@@ -142,11 +142,65 @@ Supabase ──┬─ Auth (sessions JWT, localStorage, autoRefresh)
 | Headers front | ✅ | CSP stricte, HSTS, X-Frame-Options DENY, etc. via `netlify.toml`. |
 
 Notes mineures (acceptées, pas des trous) :
-- La comparaison du `CRON_SECRET` est un `!==` simple (pas timing-safe). Avec
-  un secret long aléatoire sur TLS, l'attaque par timing est impraticable ;
-  si vous y touchez un jour, utilisez une comparaison à temps constant.
 - La clé anon Supabase est visible dans le bundle front : c'est **normal**
   (elle est conçue pour ça) ; la sécurité repose sur RLS, pas sur son secret.
+- La comparaison du `CRON_SECRET` est désormais à temps constant
+  (`timingSafeEqual`, `_shared/rateLimit.ts`) — voir §3 bis.
+
+---
+
+## 3 bis. Audit de sécurité (18/08/2026)
+
+Seconde passe. Quatre failles exploitables trouvées, toutes corrigées.
+
+| Criticité | Faille | Mécanisme | Correctif |
+|---|---|---|---|
+| **CRITIQUE** | Exfiltration de `GRAPHISTE_GPT_API_KEY` (+ SSRF) | Chaque poll de job part avec `Authorization: Bearer <clé Graphiste>`. L'URL pollée venait de deux entrées contrôlées par l'utilisateur : le champ `statusUrl` du corps de `generate-image`, et la colonne `posts.image_status_url` que le navigateur pouvait écrire sur sa propre ligne (reprise par le cron `publish-post`). Pointer l'une des deux sur `https://attaquant.tld/` livrait la clé à un hôte arbitraire. | Constructeur d'URL unique et partagé (`_shared/graphisteStatusUrls.ts`) : une `statusUrl` fournie n'est retenue que si elle est en https **et** sur la même origine que l'endpoint Graphiste configuré. Les deux appelants passent par lui, aucune copie locale. |
+| **CRITIQUE** | Prise de contrôle du compte `super_admin` | `admin-api` promouvait tout utilisateur authentifié dont l'email correspondait à l'adresse fondateur codée en dur. La production tourne avec `mailer_autoconfirm: true` (workflow de déploiement) : l'email n'est donc **pas** vérifié. Si le compte fondateur n'existait pas encore, n'importe qui pouvait s'inscrire avec cette adresse et obtenir la main sur tous les locataires. L'adresse était en plus livrée dans le bundle public (`Auth.tsx`), désignant la cible. | Le bootstrap est réellement *one-time* : il exige qu'**aucun** `super_admin` n'existe déjà (fail-closed si la vérification échoue), et l'adresse passe par `ADMIN_FOUNDER_EMAIL`. L'adresse a été retirée du bundle front. |
+| **ÉLEVÉE** | Publication au nom d'un autre locataire | `authenticated` gardait le droit d'`INSERT` sur `social_connections`. `profile_key` décide *par quel profil fournisseur* un post est publié : insérer `{user_id: soi, provider:'zernio', profile_key: <profil victime>}` faisait sortir ses propres posts sur les comptes sociaux d'autrui. Le front n'insère jamais (il ne fait que lire et supprimer). | `REVOKE INSERT ... FROM authenticated, anon` + suppression de la policy devenue inatteignable. Les écritures passent uniquement par les edge functions (service role). |
+| **ÉLEVÉE** | Colonnes serveur réinscriptibles depuis le navigateur | RLS filtre les *lignes*, jamais les *colonnes* : `posts` autorisait l'UPDATE sur toute la ligne. Un utilisateur pouvait réécrire `image_status_url`/`image_job_id` (cf. faille n°1), `provider_post_id` (qui pilote la reprise des publications bloquées), les colonnes de jeton de validation, et sortir une ligne de l'état `publishing` en pleine publication — exactement la course que le verrou atomique de `publish-post` existe pour empêcher. | Trigger `guard_post_server_columns` (même forme que `guard_profile_plan`) : colonnes serveur épinglées à leur valeur stockée, ligne gelée pendant `publishing`, états `publishing`/`published` réservés au publieur. Migration `20260818000000`, **exécutée et vérifiée sur une vraie base Postgres 16** (5 attaques bloquées, tous les flux applicatifs et le service role intacts). |
+
+Durcissements complémentaires de la même passe :
+
+- **SSRF** : les derniers `fetch()` bruts sur des URL d'image influençables
+  (upload LinkedIn dans `publish-post`, re-hébergement dans `generate-image`,
+  upload `_shared/postiz.ts`) passent par `fetchImageBytes`.
+- **Fuite d'informations** : les 500 des fonctions destinées aux utilisateurs
+  renvoyaient `error.message` tel quel (messages Postgres nommant tables et
+  colonnes, corps de réponse des fournisseurs). Centralisé dans
+  `internalError()` : journalisé côté serveur, message générique côté client.
+  Les entrées cron gardent le détail — leur appelant est l'opérateur.
+- **Injection de prompt** : les titres/extraits de recherche web sont rédigés
+  par des tiers et le post généré part sur les vrais comptes sociaux, parfois
+  sans humain dans la boucle (`auto-generate-weekly`). `sanitizeResearchText`
+  neutralise les leviers d'injection (sauts de ligne, caractères de structure,
+  caractères invisibles, formules d'instruction) et le bloc est explicitement
+  étiqueté « données, pas instructions ».
+- **Mots de passe** : le minimum à l'inscription et à la réinitialisation passe
+  de 6 à 8 caractères, aligné sur ce qu'`admin-api` impose déjà.
+- **Dépendances** : `nanoid` et `postcss` (les deux alertes *high*) corrigées.
+
+### Points laissés en l'état — décision opérateur requise
+
+1. **`mailer_autoconfirm: true`** (`.github/workflows/deploy-functions.yml`).
+   Les emails ne sont jamais vérifiés : n'importe qui peut créer un compte
+   avec l'adresse d'autrui. Le code applicatif gère déjà les deux modes
+   (`Auth.tsx` affiche un écran « confirmez votre email »), mais activer la
+   confirmation suppose un SMTP correctement configuré — le SMTP par défaut de
+   Supabase est fortement limité en volume. **Recommandation : configurer un
+   SMTP réel, puis passer `mailer_autoconfirm` à `false`.** La faille de
+   promotion `super_admin` qui en découlait est déjà fermée côté code.
+2. **`react-router` 6.30.6** conserve deux alertes *moderate*. Les deux sont
+   inapplicables ici : l'une concerne l'hydratation SSR (l'app est une SPA pure
+   sans SSR), l'autre l'open-redirect via une cible de navigation contrôlée par
+   l'utilisateur (vérifié : toutes les cibles de `navigate()`/`<Link to>` sont
+   des littéraux). Le correctif impose un passage en v7, changement majeur
+   touchant toutes les routes : à planifier, pas à subir.
+3. **`?token=<JWT>` sur `oauth-start-*`** : le JWT transite en query string
+   (donc dans les logs et le `Referer`). C'est un compromis assumé — un
+   fournisseur OAuth ne peut pas poser d'en-tête sur une redirection. Ces
+   routes ne sont plus appelées par le front (mode Zernio only) ; si elles
+   restent inutilisées, les retirer du déploiement est la meilleure option.
 
 ---
 

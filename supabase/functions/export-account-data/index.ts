@@ -3,7 +3,7 @@
 // includes secrets (OAuth tokens / profile keys are explicitly excluded).
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
-import { buildCorsHeaders, jsonResponse } from "../_shared/cors.ts";
+import { buildCorsHeaders, internalError, jsonResponse } from "../_shared/cors.ts";
 
 serve(async (req) => {
   const corsHeaders = buildCorsHeaders(req.headers.get("origin"));
@@ -68,9 +68,6 @@ serve(async (req) => {
       },
     });
   } catch (err) {
-    return jsonResponse(
-      { error: err instanceof Error ? err.message : String(err) },
-      { status: 500, cors: corsHeaders },
-    );
+    return internalError("export-account-data", err, corsHeaders);
   }
 });

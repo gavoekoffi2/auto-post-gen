@@ -5,7 +5,7 @@
 // per-platform connect indicators.
 //
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { buildCorsHeaders } from "../_shared/cors.ts";
+import { buildCorsHeaders, internalError } from "../_shared/cors.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 
 const AYRSHARE_BASE = "https://app.ayrshare.com/api";
@@ -89,10 +89,6 @@ serve(async (req) => {
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err) {
-    console.error("ayrshare-status error:", err);
-    return new Response(
-      JSON.stringify({ error: err instanceof Error ? err.message : String(err) }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
+    return internalError("ayrshare-status", err, corsHeaders);
   }
 });

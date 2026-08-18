@@ -132,6 +132,10 @@ serve(async (req) => {
     return htmlSuccessPage("Meta / Facebook / Instagram");
   } catch (err) {
     console.error("oauth-callback-meta error:", err);
-    return htmlErrorPage(err instanceof Error ? err.message : String(err));
+    // Generic page: the exception can carry provider bodies or internal URLs,
+    // and this renders in a browser the user may not control.
+    return htmlErrorPage(
+      "Une erreur interne est survenue pendant la connexion. Réessayez dans un instant.",
+    );
   }
 });

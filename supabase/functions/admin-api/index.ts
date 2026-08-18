@@ -1,8 +1,12 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient, type User } from "https://esm.sh/@supabase/supabase-js@2.74.0";
-import { buildCorsHeaders, jsonResponse } from "../_shared/cors.ts";
+import { createClient, type SupabaseClient, type User } from "https://esm.sh/@supabase/supabase-js@2.74.0";
+import { buildCorsHeaders, internalError, jsonResponse } from "../_shared/cors.ts";
 
-const FOUNDER_EMAIL = "c1domefa@gmail.com";
+// Canonical owner address. Overridable per-deployment so the address is not
+// baked into the source; the historical default keeps existing installs working.
+const FOUNDER_EMAIL = (Deno.env.get("ADMIN_FOUNDER_EMAIL") || "c1domefa@gmail.com")
+  .trim()
+  .toLowerCase();
 const VALID_PLANS = new Set(["starter", "pro", "enterprise"]);
 
 type AdminBody = {
@@ -15,6 +19,24 @@ type AdminBody = {
   blocked?: boolean;
   companyName?: string;
 };
+
+// True when at least one account already holds the super_admin role. Used to
+// make the founder bootstrap one-time; scanning is fine here because the check
+// only runs on the rare bootstrap path.
+async function hasSuperAdmin(admin: SupabaseClient): Promise<boolean> {
+  const MAX_PAGES = 10;
+  const PER_PAGE = 1000;
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const { data, error } = await admin.auth.admin.listUsers({ page, perPage: PER_PAGE });
+    // Fail CLOSED: if we cannot prove the system is un-bootstrapped, refuse to
+    // hand out super_admin.
+    if (error) return true;
+    const users = data?.users ?? [];
+    if (users.some((u) => u.app_metadata?.role === "super_admin")) return true;
+    if (users.length < PER_PAGE) return false;
+  }
+  return true;
+}
 
 function safeUser(user: User) {
   return {
@@ -50,18 +72,29 @@ serve(async (req) => {
     return jsonResponse({ error: "Session invalide" }, { status: 401, cors: corsHeaders });
   }
 
-  // One-time founder bootstrap: only the already-authenticated canonical owner
-  // email can promote itself. Every subsequent request relies on app_metadata,
-  // which ordinary browser clients cannot edit.
+  // Founder bootstrap — genuinely ONE-TIME.
+  //
+  // Matching the founder email is NOT sufficient on its own: production runs
+  // with mailer_autoconfirm enabled, so the address on a fresh account is an
+  // unverified claim. If the founder account did not exist yet, anyone could
+  // sign up as that address and be handed super_admin over every tenant.
+  // The promotion therefore additionally requires that NO super_admin exists
+  // yet, which closes the path permanently the moment the real owner is set up.
+  // Afterwards, roles come only from app_metadata, which browser clients
+  // cannot edit.
   let actorRole = actor.app_metadata?.role ?? "user";
   if (actor.email?.toLowerCase() === FOUNDER_EMAIL && actorRole !== "super_admin") {
-    const { data, error } = await admin.auth.admin.updateUserById(actor.id, {
-      app_metadata: { ...actor.app_metadata, role: "super_admin" },
-    });
-    if (error || !data.user) {
-      return jsonResponse({ error: "Impossible d’activer le compte propriétaire" }, { status: 500, cors: corsHeaders });
+    if (!(await hasSuperAdmin(admin))) {
+      const { data, error } = await admin.auth.admin.updateUserById(actor.id, {
+        app_metadata: { ...actor.app_metadata, role: "super_admin" },
+      });
+      if (error || !data.user) {
+        return jsonResponse({ error: "Impossible d’activer le compte propriétaire" }, { status: 500, cors: corsHeaders });
+      }
+      actorRole = "super_admin";
+    } else {
+      console.error("Refused founder bootstrap: a super_admin already exists", actor.id);
     }
-    actorRole = "super_admin";
   }
   if (!new Set(["admin", "super_admin"]).has(actorRole)) {
     return jsonResponse({ error: "Accès administrateur requis" }, { status: 403, cors: corsHeaders });
@@ -182,7 +215,6 @@ serve(async (req) => {
 
     return jsonResponse({ success: true }, { cors: corsHeaders });
   } catch (error) {
-    console.error("admin-api", action, error);
-    return jsonResponse({ error: error instanceof Error ? error.message : "Erreur interne" }, { status: 500, cors: corsHeaders });
+    return internalError(`admin-api ${action}`, error, corsHeaders);
   }
 });

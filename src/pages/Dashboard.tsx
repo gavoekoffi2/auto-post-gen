@@ -145,6 +145,12 @@ export default function Dashboard() {
   const [regeneratingContentIds, setRegeneratingContentIds] = useState<Set<string>>(new Set());
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [hasConnection, setHasConnection] = useState<boolean | null>(null);
+  // Image URLs that failed to load. Tracked in state rather than by rewriting
+  // the DOM: the old onError handler replaced the wrapper's innerHTML, which
+  // destroys nodes React still owns — the next render of that list (poll tick,
+  // edit, delete) then crashes on a missing child. Keyed by URL, not post id,
+  // so a regenerated image is retried instead of staying stuck on the error.
+  const [brokenImageUrls, setBrokenImageUrls] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     checkAuthAndLoadData();
@@ -852,22 +858,22 @@ export default function Dashboard() {
                         )}
                       </div>
                      )}
-                     {post.image_url ? (
+                     {post.image_url && !brokenImageUrls.has(post.image_url) ? (
                        <div className="mb-4 rounded-lg overflow-hidden bg-muted">
                          <img
                            src={post.image_url}
                            alt="Post illustration"
                            className="w-full h-48 object-cover"
-                           onError={(e) => {
-                             const img = e.currentTarget;
-                             img.style.display = "none";
-                             const wrap = img.parentElement;
-                             if (wrap) {
-                               wrap.innerHTML =
-                                 '<div class="flex items-center justify-center h-48 text-xs text-muted-foreground">Image indisponible</div>';
-                             }
-                           }}
+                           onError={() =>
+                             setBrokenImageUrls((prev) => new Set(prev).add(post.image_url!))
+                           }
                          />
+                       </div>
+                     ) : post.image_url && brokenImageUrls.has(post.image_url) ? (
+                       <div className="mb-4 rounded-lg overflow-hidden bg-muted">
+                         <div className="flex items-center justify-center h-48 text-xs text-muted-foreground">
+                           Image indisponible
+                         </div>
                        </div>
                      ) : generatingImageIds.has(post.id) ? (
                        <div className="mb-4 rounded-lg overflow-hidden bg-muted h-48 flex items-center justify-center">
@@ -1081,20 +1087,20 @@ export default function Dashboard() {
                   {/* Post image */}
                   {previewPost.image_url && (
                     <div className="w-full">
-                      <img
-                        src={previewPost.image_url}
-                        alt="Post illustration"
-                        className="w-full h-auto object-cover"
-                        onError={(e) => {
-                          const img = e.currentTarget;
-                          img.style.display = "none";
-                          const wrap = img.parentElement;
-                          if (wrap) {
-                            wrap.innerHTML =
-                              '<div class="py-12 text-center text-xs text-muted-foreground">Image indisponible</div>';
+                      {brokenImageUrls.has(previewPost.image_url) ? (
+                        <div className="py-12 text-center text-xs text-muted-foreground">
+                          Image indisponible
+                        </div>
+                      ) : (
+                        <img
+                          src={previewPost.image_url}
+                          alt="Post illustration"
+                          className="w-full h-auto object-cover"
+                          onError={() =>
+                            setBrokenImageUrls((prev) => new Set(prev).add(previewPost.image_url!))
                           }
-                        }}
-                      />
+                        />
+                      )}
                     </div>
                   )}
 

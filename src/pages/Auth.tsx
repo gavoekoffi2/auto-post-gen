@@ -10,6 +10,10 @@ import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
+// Kept in sync with the 8-character minimum admin-api enforces when an
+// administrator creates or resets an account.
+const MIN_PASSWORD_LENGTH = 8;
+
 export default function Auth() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
@@ -22,6 +26,12 @@ export default function Auth() {
     setLoading(true);
 
     try {
+      if (password.length < MIN_PASSWORD_LENGTH) {
+        toast.error(`Le mot de passe doit contenir au moins ${MIN_PASSWORD_LENGTH} caractères.`);
+        setLoading(false);
+        return;
+      }
+
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
@@ -82,7 +92,11 @@ export default function Auth() {
       }
 
       toast.success("Connexion réussie !");
-      navigate(authData.user?.email?.toLowerCase() === "c1domefa@gmail.com" ? "/admin" : "/dashboard");
+      // Everyone lands on the dashboard. The admin console is reached at
+      // /admin, where the role is checked server-side (admin-api). Routing on a
+      // hardcoded owner address here shipped that address in the public bundle
+      // and told an attacker exactly which account to target.
+      navigate("/dashboard");
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Erreur lors de la connexion";
       toast.error(message);
@@ -207,7 +221,7 @@ export default function Auth() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
-                    minLength={6}
+                    minLength={MIN_PASSWORD_LENGTH}
                     className="glass-card"
                   />
                 </div>

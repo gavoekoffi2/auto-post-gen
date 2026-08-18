@@ -2,7 +2,7 @@
 // auth.users row is removed.
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
-import { buildCorsHeaders, jsonResponse } from "../_shared/cors.ts";
+import { buildCorsHeaders, internalError, jsonResponse } from "../_shared/cors.ts";
 
 serve(async (req) => {
   const corsHeaders = buildCorsHeaders(req.headers.get("origin"));
@@ -67,10 +67,6 @@ serve(async (req) => {
 
     return jsonResponse({ success: true }, { cors: corsHeaders });
   } catch (err) {
-    console.error("delete-account error:", err);
-    return jsonResponse(
-      { error: err instanceof Error ? err.message : String(err) },
-      { status: 500, cors: corsHeaders },
-    );
+    return internalError("delete-account", err, corsHeaders);
   }
 });

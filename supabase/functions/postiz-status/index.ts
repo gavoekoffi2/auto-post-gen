@@ -39,9 +39,15 @@ serve(async (req) => {
     );
     return jsonResponse({ provisioned: true, platforms, channels }, { cors });
   } catch (err) {
+    // Shape is preserved (the UI reads provisioned/platforms), but the upstream
+    // provider body is logged rather than returned.
     console.error("postiz-status error:", err);
     return jsonResponse(
-      { provisioned: true, platforms: [], error: err instanceof Error ? err.message : String(err) },
+      {
+        provisioned: true,
+        platforms: [],
+        error: "Impossible de récupérer les comptes connectés pour le moment.",
+      },
       { cors },
     );
   }

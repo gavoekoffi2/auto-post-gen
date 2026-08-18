@@ -7,6 +7,7 @@ import { buildAudiencePrompt, normalizeAudiences } from "../_shared/audience.ts"
 import { ensurePostEngagement } from "../_shared/post-engagement.ts";
 import { buildInspirationBlock, researchInspiration } from "../_shared/research.ts";
 import { rehostToUserAssets, startPosterJob } from "../_shared/graphiste.ts";
+import { timingSafeEqual } from "../_shared/rateLimit.ts";
 
 
 // ISO 8601 week number (1..53)
@@ -90,7 +91,7 @@ serve(async (req) => {
   const provided =
     req.headers.get("x-cron-secret") ||
     req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
-  if (provided !== expectedSecret) {
+  if (!provided || !timingSafeEqual(provided, expectedSecret)) {
     return new Response(
       JSON.stringify({ error: "Unauthorized" }),
       { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },

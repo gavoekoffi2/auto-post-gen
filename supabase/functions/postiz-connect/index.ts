@@ -6,7 +6,7 @@
 // Requires POSTIZ_API_KEY in the Supabase secrets (Settings → Developers →
 // Public API on Postiz, cloud or self-hosted).
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { buildCorsHeaders, jsonResponse } from "../_shared/cors.ts";
+import { buildCorsHeaders, internalError, jsonResponse } from "../_shared/cors.ts";
 import { getSupabaseAdmin, getUserIdFromAuthHeader } from "../_shared/oauth.ts";
 import { getPostizKey, postizConnectUrl } from "../_shared/postiz.ts";
 
@@ -71,10 +71,6 @@ serve(async (req) => {
     const connectUrl = await postizConnectUrl(platform);
     return jsonResponse({ connectUrl, platform }, { cors });
   } catch (err) {
-    console.error("postiz-connect error:", err);
-    return jsonResponse(
-      { error: err instanceof Error ? err.message : String(err) },
-      { status: 502, cors },
-    );
+    return internalError("postiz-connect", err, cors, 502);
   }
 });

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const source = readFileSync(join(__dirname, '..', 'supabase/functions/generate-image/index.ts'), 'utf8');
 const sharedGraphiste = readFileSync(join(__dirname, '..', 'supabase/functions/_shared/graphiste.ts'), 'utf8');
+const statusUrls = readFileSync(join(__dirname, '..', 'supabase/functions/_shared/graphisteStatusUrls.ts'), 'utf8');
 
 test('generate-image uses Graphiste GPT premium only — no generic/Gemini/OpenRouter providers', () => {
   assert.equal(source.includes('generateImageUrl('), false, 'must not call a generic image generator');
@@ -125,13 +126,20 @@ test('all Graphiste pollers ignore unsupported-route HTTP errors before parsing 
 });
 
 test('generate-image prioritizes the canonical public poll route over an emitted status URL', () => {
-  const fnStart = source.indexOf('function graphisteStatusCandidates');
-  const fnEnd = source.indexOf('\n}\n', fnStart);
-  const fn = source.slice(fnStart, fnEnd);
+  // The builder now lives in _shared/graphisteStatusUrls.ts so generate-image
+  // and publish-post cannot drift apart (and so the origin check below is
+  // enforced for both).
+  const fnStart = statusUrls.indexOf('export function posterStatusCandidates');
+  const fn = statusUrls.slice(fnStart);
   assert.ok(fn.indexOf('if (jobId)') >= 0);
-  assert.ok(fn.indexOf('if (statusUrl)') >= 0);
-  assert.ok(fn.indexOf('if (jobId)') < fn.indexOf('if (statusUrl)'),
+  assert.ok(fn.indexOf('if (statusUrl') >= 0);
+  assert.ok(fn.indexOf('if (jobId)') < fn.indexOf('if (statusUrl'),
     'canonical job-id route must be tried before potentially stale/internal status_url');
+  for (const src of [source, sharedGraphiste]) {
+    assert.match(src, /posterStatusCandidates/);
+    assert.equal(/function (graphisteStatusCandidates|statusCandidates)\(/.test(src), false,
+      'must not keep a local copy of the poll-URL builder');
+  }
 });
 
 test('generate-image extracts the canonical data.job_id, never the trace request_id', () => {

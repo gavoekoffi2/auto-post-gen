@@ -14,7 +14,7 @@
 // invocations can't double-publish.
 //
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { buildCorsHeaders } from "../_shared/cors.ts";
+import { buildCorsHeaders, internalError } from "../_shared/cors.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import {
   postizCreatePost,
@@ -25,6 +25,7 @@ import {
 import { zernioCreatePost, zernioListAccounts } from "../_shared/zernio.ts";
 import { resumePosterJob } from "../_shared/graphiste.ts";
 import { fetchImageBytes } from "../_shared/safeFetch.ts";
+import { timingSafeEqual } from "../_shared/rateLimit.ts";
 
 
 interface SocialConnection {
@@ -115,22 +116,26 @@ async function publishToLinkedIn(
         // defensively in case LinkedIn ever advertises a different one.
         const uploadMethod = (uploadMech?.method as string) || "PUT";
         if (uploadUrl) {
-          const imgResp = await fetch(imageUrl);
-          if (!imgResp.ok) {
+          // SSRF-guarded: image_url is user-influenced, and this runs with the
+          // service role inside the infra. fetchImageBytes enforces https, a
+          // public host, an image content-type and a size cap.
+          let image: { bytes: Uint8Array; contentType: string };
+          try {
+            image = await fetchImageBytes(imageUrl);
+          } catch (imgErr) {
             return {
               platform: "linkedin",
               status: "error",
-              message: `Image download failed: ${imgResp.status}`,
+              message: `Image download refused: ${imgErr instanceof Error ? imgErr.message : String(imgErr)}`,
             };
           }
-          const blob = await imgResp.arrayBuffer();
           const uploadResp = await fetch(uploadUrl, {
             method: uploadMethod,
             headers: {
               Authorization: `Bearer ${connection.access_token}`,
-              "Content-Type": imgResp.headers.get("content-type") || "application/octet-stream",
+              "Content-Type": image.contentType || "application/octet-stream",
             },
-            body: blob,
+            body: image.bytes,
           });
           if (!uploadResp.ok) {
             return {
@@ -752,7 +757,7 @@ serve(async (req) => {
 
   const cronSecret = Deno.env.get("CRON_SECRET");
   const headerCron = req.headers.get("x-cron-secret");
-  const isCron = cronSecret && headerCron && headerCron === cronSecret;
+  const isCron = !!cronSecret && !!headerCron && timingSafeEqual(headerCron, cronSecret);
 
   let userId: string | null = null;
   // The body is optional (cron mode sends none). `.catch(() => ({}))`
@@ -863,10 +868,6 @@ serve(async (req) => {
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (error) {
-    console.error("publish-post error:", error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : String(error) }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
+    return internalError("publish-post", error, corsHeaders);
   }
 });
