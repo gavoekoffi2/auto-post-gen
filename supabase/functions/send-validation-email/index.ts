@@ -43,6 +43,9 @@ async function sendEmailWithResend(opts: {
   return await resp.json();
 }
 
+// Max posts pulled per run (see the query below).
+const EMAIL_BATCH_SIZE = 200;
+
 serve(async (req) => {
   const corsHeaders = buildCorsHeaders(req.headers.get("origin"));
 
@@ -95,7 +98,12 @@ serve(async (req) => {
       .not("validation_token", "is", null)
       // Only posts we haven't already emailed — previously every run re-emailed
       // all pending posts.
-      .is("validation_email_sent_at", null);
+      .is("validation_email_sent_at", null)
+      .order("created_at", { ascending: true })
+      // Bound the run: each user costs one Resend call, and the edge runtime
+      // stops at ~150s. Anything not covered is picked up on the next tick
+      // because validation_email_sent_at is only stamped once sent.
+      .limit(EMAIL_BATCH_SIZE);
 
     if (postsError) throw postsError;
 

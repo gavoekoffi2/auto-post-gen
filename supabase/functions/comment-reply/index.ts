@@ -6,7 +6,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { buildCorsHeaders, internalError, jsonResponse } from "../_shared/cors.ts";
-import { ayrsharePostReply, draftReply, zernioReply } from "../_shared/engagement.ts";
+import { ayrsharePostReply, draftReply, UnsafeCommentError, zernioReply } from "../_shared/engagement.ts";
 
 serve(async (req) => {
   const cors = buildCorsHeaders(req.headers.get("origin"));
@@ -62,13 +62,27 @@ serve(async (req) => {
 
   try {
     if (body.mode === "draft" || !body.mode) {
-      const reply = await draftReply({
-        comment: comment.message || "",
-        postContent: post?.content || null,
-        brandTone: profile?.tone || null,
-        instructions: profile?.auto_reply_instructions || null,
-      });
-      return jsonResponse({ reply }, { cors });
+      try {
+        const reply = await draftReply({
+          comment: comment.message || "",
+          postContent: post?.content || null,
+          brandTone: profile?.tone || null,
+          instructions: profile?.auto_reply_instructions || null,
+        });
+        return jsonResponse({ reply }, { cors });
+      } catch (draftErr) {
+        if (draftErr instanceof UnsafeCommentError) {
+          return jsonResponse(
+            {
+              error:
+                "Ce commentaire ne contient pas de texte exploitable (ou tente de manipuler la génération). Répondez manuellement.",
+              code: "unsafe_comment",
+            },
+            { status: 422, cors },
+          );
+        }
+        throw draftErr;
+      }
     }
 
     if (body.mode === "send") {

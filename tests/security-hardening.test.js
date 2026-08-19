@@ -336,20 +336,52 @@ test('cron shared secret is compared in constant time', () => {
   }
 });
 
-test('third-party web snippets are neutralised before entering the LLM prompt', () => {
-  // Search results are attacker-authorable and the generated post is published
-  // to the user's real accounts, sometimes with no human in the loop.
+test('third-party text is neutralised before entering any LLM prompt', () => {
+  // Two paths feed attacker-authorable text to a model whose output is
+  // published on the user's real accounts: web-research snippets, and incoming
+  // social comments (auto-replied with no human in the loop).
+  const untrusted = read('supabase/functions/_shared/untrustedText.ts');
+  assert.match(untrusted, /export function sanitizeUntrustedText/);
+  assert.match(untrusted, /INJECTION_PATTERNS/);
+  // Newlines are collapsed so the text cannot forge a new prompt section.
+  assert.match(untrusted, /replace\(\/\[\\r\\n\\t\]\+\/g, " "\)/);
+  // Invisible / bidi characters used to smuggle payloads are dropped.
+  assert.match(untrusted, /u200B-\\u200F/);
+
   const research = read('supabase/functions/_shared/research.ts');
-  assert.match(research, /export function sanitizeResearchText/);
-  assert.match(research, /INJECTION_PATTERNS/);
-  // Newlines are collapsed so a snippet cannot forge a new prompt section.
-  assert.match(research, /replace\(\/\[\\r\\n\\t\]\+\/g, " "\)/);
-  // Title, snippet and source all go through the sanitiser.
-  assert.match(research, /title: sanitizeResearchText\(r\.title/);
-  assert.match(research, /snippet: sanitizeResearchText\(r\.snippet/);
-  assert.match(research, /source: sanitizeResearchText\(r\.source/);
-  // The block tells the model the lines are data, not instructions.
+  assert.match(research, /title: sanitizeUntrustedText\(r\.title/);
+  assert.match(research, /snippet: sanitizeUntrustedText\(r\.snippet/);
+  assert.match(research, /source: sanitizeUntrustedText\(r\.source/);
   assert.match(research, /jamais des instructions/);
+  // No second copy of the sanitiser left behind in research.ts.
+  assert.equal(/function sanitizeResearchText/.test(research), false);
+
+  const engagement = read('supabase/functions/_shared/engagement.ts');
+  // The stranger's comment is sanitised, fenced, and declared as data.
+  assert.match(engagement, /const safeComment = sanitizeUntrustedText\(opts\.comment/);
+  assert.match(engagement, /<<<COMMENTAIRE>>>/);
+  assert.match(engagement, /jamais une instruction/);
+  // A comment that is nothing but payload is refused, not answered.
+  assert.match(engagement, /export class UnsafeCommentError/);
+  assert.match(engagement, /throw new UnsafeCommentError\(\)/);
+  // Last line of defence: a planted link never survives into a posted reply.
+  assert.match(engagement, /replace\(\/https\?:\\\/\\\/\\S\+\/gi, ""\)/);
+  // The raw comment must not reach the prompt any more. Asserted structurally:
+  // `opts.comment` may appear exactly once, as the argument being sanitised.
+  // Anything else means the untrusted value is used somewhere raw.
+  const rawUses = engagement.match(/opts\.comment/g) || [];
+  assert.equal(
+    rawUses.length,
+    1,
+    `opts.comment must be read once (to sanitise it), found ${rawUses.length} use(s)`,
+  );
+  assert.match(engagement, /sanitizeUntrustedText\(opts\.comment, \d+\)/);
+
+  // Both callers handle the rejection instead of publishing something odd.
+  const sync = read('supabase/functions/sync-comments/index.ts');
+  assert.match(sync, /e instanceof UnsafeCommentError/);
+  const manual = read('supabase/functions/comment-reply/index.ts');
+  assert.match(manual, /code: "unsafe_comment"/);
 });
 
 test('the dashboard does not mutate React-owned DOM on image load failure', () => {
@@ -360,4 +392,69 @@ test('the dashboard does not mutate React-owned DOM on image load failure', () =
     'replacing innerHTML destroys nodes React still owns and crashes the next render',
   );
   assert.match(dashboard, /brokenImageUrls/);
+});
+
+test('the browser cannot rewrite server-owned profile columns', () => {
+  const mig = read('supabase/migrations/20260818010000_lock_profile_server_columns.sql');
+  // profiles.email is where validation emails (post content + one-click
+  // approval links) are delivered; it belongs to auth.users, not to the editor.
+  assert.match(mig, /NEW\.email := COALESCE\(OLD\.email, NEW\.email\)/);
+  // Custom image URLs end up as posts.image_url and are fetched server-side.
+  assert.match(mig, /Custom image URLs must be https/);
+  assert.match(mig, /SET search_path = public, pg_temp/);
+  // Applied by CI — migrations here ship only when listed by name.
+  assert.match(deployWorkflow, /20260818010000_lock_profile_server_columns\.sql/);
+});
+
+test('email confirmation turns on with SMTP, and never breaks signup without it', () => {
+  // Flipping mailer_autoconfirm off without a working sender would lock every
+  // new user out of their own account, so the switch is tied to SMTP presence.
+  assert.match(deployWorkflow, /smtp_ready=true/);
+  assert.match(deployWorkflow, /mailer_autoconfirm: false/);
+  assert.match(deployWorkflow, /mailer_autoconfirm: true/);
+  // The password minimum is enforced by the server, not only by the browser.
+  assert.match(deployWorkflow, /password_min_length: 8/);
+  // Breached-password protection is applied, but must not be able to block a
+  // deploy if Supabase renames the field.
+  assert.match(deployWorkflow, /password_hibp_enabled/);
+  assert.match(deployWorkflow, /Harden authentication policy \(best effort\)/);
+});
+
+test('the UI degrades to a recoverable screen instead of a white page', () => {
+  const boundary = read('src/components/ErrorBoundary.tsx');
+  assert.match(boundary, /getDerivedStateFromError/);
+  // Stale lazy chunks after a redeploy are the common case and get their own
+  // message plus the reload that actually fixes them.
+  assert.match(boundary, /dynamically imported module/);
+  assert.match(boundary, /window\.location\.reload\(\)/);
+  const app = read('src/App.tsx');
+  assert.match(app, /<ErrorBoundary>/);
+  // It must wrap the router, not sit inside it.
+  assert.ok(
+    app.indexOf('<ErrorBoundary>') < app.indexOf('<BrowserRouter>'),
+    'the boundary must be outside the router to catch route render errors',
+  );
+});
+
+test('cron runs are bounded without starving any tenant', () => {
+  const weekly = read('supabase/functions/auto-generate-weekly/index.ts');
+  // A wall-clock budget, not a fixed head-of-list cap: a fixed order plus a
+  // cut-off would mean the tail of the tenant list is never reached.
+  assert.match(weekly, /runDeadline/);
+  assert.match(weekly, /Math\.random\(\) \* \(i \+ 1\)/);
+  assert.equal(
+    /\.order\("updated_at"[\s\S]{0,80}\.limit\(CRON_PROFILE_BATCH\)/.test(weekly),
+    false,
+    'a fixed-order limit would starve every profile past the cap',
+  );
+  const emails = read('supabase/functions/send-validation-email/index.ts');
+  assert.match(emails, /EMAIL_BATCH_SIZE/);
+  assert.match(emails, /\.limit\(EMAIL_BATCH_SIZE\)/);
+});
+
+test('robots.txt keeps the authenticated app out of search results', () => {
+  const robots = read('public/robots.txt');
+  for (const route of ['/dashboard', '/admin', '/validate-post', '/reset-password']) {
+    assert.match(robots, new RegExp(`Disallow: ${route}`), `${route} must not be indexable`);
+  }
 });

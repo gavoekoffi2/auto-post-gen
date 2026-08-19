@@ -119,10 +119,13 @@ serve(async (req) => {
     // text-only. publish-post still publishes everything on schedule.
     const posterDeadline = Date.now() + 90_000;
 
+    // Safety valve only — never pull an unbounded result set into memory.
+    const MAX_PROFILES_FETCHED = 1000;
     const { data: profiles, error: profilesError } = await supabase
       .from("profiles")
       .select("*")
-      .eq("auto_publish", true);
+      .eq("auto_publish", true)
+      .limit(MAX_PROFILES_FETCHED);
 
     if (profilesError) throw profilesError;
 
@@ -130,7 +133,29 @@ serve(async (req) => {
 
     const results: any[] = [];
 
-    for (const profile of profiles || []) {
+    // Wall-clock budget for STARTING new per-profile work. The edge runtime cuts
+    // a request off at ~150s and each profile can make several AI calls, so with
+    // enough tenants a run would be killed part-way through the list.
+    //
+    // The order is randomised rather than fixed: a fixed order (by id, or by
+    // updated_at) combined with a cut-off means the tail of the list is never
+    // reached — the same users would be served every week and the rest never.
+    // Randomising gives every profile the same chance each run, and the top-up
+    // below is idempotent (it counts what is already queued and only fills the
+    // gap), so a profile skipped this tick is simply completed on the next one.
+    const runDeadline = Date.now() + 110_000;
+    const queue = [...(profiles || [])];
+    for (let i = queue.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [queue[i], queue[j]] = [queue[j], queue[i]];
+    }
+
+    let deferred = 0;
+    for (const profile of queue) {
+      if (Date.now() > runDeadline) {
+        deferred++;
+        continue;
+      }
       try {
         const postsNeeded = Math.min(
           HARD_MAX_POSTS_PER_RUN,
@@ -462,8 +487,11 @@ Génère uniquement le texte du post, sans titre ni explication.`;
       }
     }
 
+    if (deferred > 0) {
+      console.warn(`Run budget reached: ${deferred} profile(s) deferred to the next tick.`);
+    }
     return new Response(
-      JSON.stringify({ success: true, results }),
+      JSON.stringify({ success: true, deferred, results }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (error) {

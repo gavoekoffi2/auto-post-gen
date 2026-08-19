@@ -12,3 +12,16 @@ Allow: /
 
 User-agent: *
 Allow: /
+
+# The authenticated application is not public content: keep it out of search
+# results (it also stops indexers from following one-click links that appear
+# in shared URLs).
+Disallow: /dashboard
+Disallow: /admin
+Disallow: /profile
+Disallow: /calendar
+Disallow: /statistics
+Disallow: /comments
+Disallow: /onboarding
+Disallow: /validate-post
+Disallow: /reset-password

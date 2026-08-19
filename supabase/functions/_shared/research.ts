@@ -15,6 +15,8 @@
 //   - Targeted: queries are built from the company's own description, not
 //     just the broad sector label.
 
+import { isOnlyFilteredNoise, sanitizeUntrustedText } from "./untrustedText.ts";
+
 export interface WebResult {
   title: string;
   snippet: string;
@@ -364,40 +366,6 @@ export async function researchInspiration(
   return deduped;
 }
 
-// Neutralise prompt injection coming from third-party web content.
-//
-// Titles and snippets are attacker-authorable: anyone who can get a page into
-// Google News / DuckDuckGo results for a sector keyword can put text in front
-// of the model. The generated post is then published to the user's real social
-// accounts — sometimes without a human in the loop (auto-generate-weekly), so
-// a successful injection speaks in the brand's voice.
-//
-// We can't make the model immune, but we remove the levers that make injection
-// easy: no line breaks (so a snippet can't fake a new prompt section), no
-// prompt-structure characters, no runs of instruction-like keywords, and a hard
-// length cap. The block itself is fenced and explicitly labelled as data.
-const INJECTION_PATTERNS: RegExp[] = [
-  /ignore[a-z]*\s+(les\s+|the\s+|toutes?\s+|all\s+)?(instructions?|consignes?)(\s+(précédent\w*|previous|above|ci-dessus))?/gi,
-  /(oublie|forget|disregard)\s+(tout|tous|all|everything|les\s+instructions?)/gi,
-  /(system|assistant|user)\s*:/gi,
-  /<\/?(system|instructions?|prompt)[^>]*>/gi,
-  /(nouvelles?|new)\s+(instructions?|consignes?)/gi,
-  /\b(tu\s+dois|you\s+must|act\s+as|agis\s+comme|réponds\s+uniquement|respond\s+only)\b/gi,
-];
-
-export function sanitizeResearchText(value: string, maxLength: number): string {
-  let out = String(value ?? "")
-    // Collapse every newline/tab: a snippet must stay a single inert line so it
-    // cannot forge headings or a new section of the prompt.
-    .replace(/[\r\n\t]+/g, " ")
-    // Strip characters used to fence or structure the prompt.
-    .replace(/[`{}<>|]/g, " ")
-    // Drop zero-width / bidi control characters used to hide payloads.
-    .replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/g, "");
-  for (const re of INJECTION_PATTERNS) out = out.replace(re, "[filtré]");
-  return out.replace(/\s+/g, " ").trim().slice(0, maxLength);
-}
-
 // Render the inspiration block injected into the LLM system prompt, with
 // explicit filtering instructions so the model only uses what is truly
 // relevant to this specific business. Every value interpolated here is
@@ -406,17 +374,17 @@ export function buildInspirationBlock(webResults: WebResult[], focus: string): s
   if (!webResults.length) {
     return `\n(Aucune matière web trouvée — génère depuis ton expertise du métier décrit ci-dessous.)\n`;
   }
-  const safeFocus = sanitizeResearchText(focus, 150);
+  const safeFocus = sanitizeUntrustedText(focus, 150);
   const items = webResults
     .slice(0, 6)
     .map((r) => ({
-      title: sanitizeResearchText(r.title, 200),
-      snippet: sanitizeResearchText(r.snippet, 400),
-      source: sanitizeResearchText(r.source, 40),
+      title: sanitizeUntrustedText(r.title, 200),
+      snippet: sanitizeUntrustedText(r.snippet, 400),
+      source: sanitizeUntrustedText(r.source, 40),
     }))
     // A result whose title is nothing but filtered payload carries no
     // inspiration; drop it rather than feeding the model an empty entry.
-    .filter((r) => r.title.replace(/\[filtré\]/g, "").trim().length > 0)
+    .filter((r) => !isOnlyFilteredNoise(r.title))
     .map((r, i) => `${i + 1}. [${r.source}] ${r.title}${r.snippet ? " — " + r.snippet : ""}`);
   if (items.length === 0) {
     return `\n(Aucune matière web exploitable — génère depuis ton expertise du métier décrit ci-dessous.)\n`;

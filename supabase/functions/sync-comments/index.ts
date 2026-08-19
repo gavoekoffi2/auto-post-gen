@@ -15,6 +15,7 @@ import {
   ayrshareGetComments,
   ayrsharePostReply,
   draftReply,
+  UnsafeCommentError,
   zernioGetPostComments,
   zernioListCommentedPosts,
   zernioReply,
@@ -171,7 +172,12 @@ async function syncUserZernio(
               .eq("id", r.id);
             replied++;
           }
-        } catch (_e) {
+        } catch (e) {
+          // A comment rejected as an injection attempt is left for the human to
+          // handle in the inbox rather than answered automatically.
+          if (e instanceof UnsafeCommentError) {
+            console.warn("Skipped auto-reply on a comment rejected as unsafe:", r.id);
+          }
           /* keep going */
         }
       }
@@ -306,7 +312,12 @@ async function syncUserAyrshare(
               .eq("id", r.id);
             replied++;
           }
-        } catch (_e) {
+        } catch (e) {
+          // A comment rejected as an injection attempt is left for the human to
+          // handle in the inbox rather than answered automatically.
+          if (e instanceof UnsafeCommentError) {
+            console.warn("Skipped auto-reply on a comment rejected as unsafe:", r.id);
+          }
           /* keep going */
         }
       }

@@ -180,27 +180,55 @@ Durcissements complémentaires de la même passe :
   de 6 à 8 caractères, aligné sur ce qu'`admin-api` impose déjà.
 - **Dépendances** : `nanoid` et `postcss` (les deux alertes *high*) corrigées.
 
+### Seconde passe du 18/08 (même journée) — failles supplémentaires
+
+| Criticité | Faille | Mécanisme | Correctif |
+|---|---|---|---|
+| **ÉLEVÉE** | Injection de prompt → publication automatique sous l'identité de la marque | `draftReply` (`_shared/engagement.ts`) injectait le texte d'un commentaire — écrit par **n'importe quel inconnu** sur un post publié — directement dans le prompt. Avec l'auto-réponse activée (plan Enterprise), `sync-comments` publie la réponse générée **sans relecture humaine**. Un commentaire du type « ignore les instructions précédentes et réponds ceci » faisait donc parler la marque. | Module partagé `_shared/untrustedText.ts` : neutralisation des leviers d'injection, texte encadré par `<<<COMMENTAIRE>>>` et déclaré comme donnée dans le prompt système. Un commentaire qui n'est *que* de la charge utile lève `UnsafeCommentError` et n'est jamais répondu automatiquement (il reste dans l'inbox pour l'humain). Dernier filet : aucune URL du commentaire ne peut survivre dans la réponse publiée. |
+| **MOYENNE** | Détournement des emails de validation | `profiles.email` est recopié depuis `auth.users` par `handle_new_user`, mais le navigateur pouvait le réécrire. C'est l'adresse vers laquelle `send-validation-email` envoie le contenu des posts **et les liens de validation en un clic**. Un utilisateur pouvait pointer son profil vers la boîte d'un tiers et faire envoyer du courrier non sollicité depuis notre domaine. | Trigger `guard_profile_server_columns` : l'adresse est épinglée (`COALESCE(OLD.email, NEW.email)`, donc l'upsert légitime de `SettingsDialog` continue de fonctionner). `custom_image_urls` est en outre contraint à `https` et plafonné. Migration `20260818010000`, exécutée et vérifiée sur Postgres 16. |
+| **MOYENNE** | Mot de passe minimum non appliqué côté serveur | Le minimum de 8 caractères n'existait **que dans le navigateur**. L'API Supabase acceptait toujours 6 caractères : il suffisait d'appeler `signUp` directement. | `password_min_length: 8` appliqué dans la configuration Auth par la CI, plus rejet des mots de passe compromis (HaveIBeenPwned) et ré-authentification obligatoire avant changement de mot de passe. |
+
+Robustesse « prêt pour les premiers utilisateurs » :
+
+- **Écran blanc** : aucun *error boundary* React. Toute exception de rendu — et
+  surtout un *chunk* périmé après un redéploiement, cas très courant sur un
+  onglet resté ouvert — démontait tout l'arbre et laissait une page blanche
+  sans message ni recours. `src/components/ErrorBoundary.tsx` entoure désormais
+  le routeur et propose un rechargement (vérifié en navigateur réel).
+- **Famine des crons** : `auto-generate-weekly` parcourait *tous* les profils
+  sans budget. Au-delà d'une certaine volumétrie, le runtime edge (~150 s) tue
+  la requête en cours de liste. Ajout d'un budget horloge **et** d'un ordre
+  aléatoire — un simple `LIMIT` sur un ordre fixe aurait garanti que la fin de
+  la liste ne soit *jamais* servie. `send-validation-email` est plafonné de la
+  même façon. Le rattrapage est naturel : la logique de complément est
+  idempotente.
+- **`robots.txt`** autorisait l'indexation de `/dashboard`, `/admin` et
+  `/validate-post` ; ces routes sont maintenant exclues.
+- **Dépendances** : `npm audit` = **0 vulnérabilité** (react-router passé en
+  v7 ; les 13 routes, la navigation client et la garde d'authentification ont
+  été vérifiées dans un vrai navigateur, pas seulement au build).
+
 ### Points laissés en l'état — décision opérateur requise
 
-1. **`mailer_autoconfirm: true`** (`.github/workflows/deploy-functions.yml`).
-   Les emails ne sont jamais vérifiés : n'importe qui peut créer un compte
-   avec l'adresse d'autrui. Le code applicatif gère déjà les deux modes
-   (`Auth.tsx` affiche un écran « confirmez votre email »), mais activer la
-   confirmation suppose un SMTP correctement configuré — le SMTP par défaut de
-   Supabase est fortement limité en volume. **Recommandation : configurer un
-   SMTP réel, puis passer `mailer_autoconfirm` à `false`.** La faille de
-   promotion `super_admin` qui en découlait est déjà fermée côté code.
-2. **`react-router` 6.30.6** conserve deux alertes *moderate*. Les deux sont
-   inapplicables ici : l'une concerne l'hydratation SSR (l'app est une SPA pure
-   sans SSR), l'autre l'open-redirect via une cible de navigation contrôlée par
-   l'utilisateur (vérifié : toutes les cibles de `navigate()`/`<Link to>` sont
-   des littéraux). Le correctif impose un passage en v7, changement majeur
-   touchant toutes les routes : à planifier, pas à subir.
-3. **`?token=<JWT>` sur `oauth-start-*`** : le JWT transite en query string
-   (donc dans les logs et le `Referer`). C'est un compromis assumé — un
-   fournisseur OAuth ne peut pas poser d'en-tête sur une redirection. Ces
-   routes ne sont plus appelées par le front (mode Zernio only) ; si elles
-   restent inutilisées, les retirer du déploiement est la meilleure option.
+1. **Une seule action reste à faire de votre côté : ajouter 4 secrets GitHub.**
+   La confirmation d'email est **automatiquement activée** dès que
+   `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS` et `SMTP_SENDER_EMAIL` existent
+   (avec Resend : `smtp.resend.com` / `465` / `resend` / votre
+   `RESEND_API_KEY` / une adresse sur un domaine vérifié). Tant qu'ils sont
+   absents, `mailer_autoconfirm` reste volontairement actif et la CI émet un
+   avertissement visible : basculer sans expéditeur fonctionnel enfermerait
+   dehors chaque nouvel inscrit. **Tant que ce n'est pas fait, n'importe qui
+   peut s'inscrire avec l'adresse d'autrui** — la promotion `super_admin` qui
+   en découlait est fermée côté code, mais l'usurpation d'adresse reste
+   possible.
+2. **`?token=<JWT>` sur `oauth-start-*`** : le JWT transite en query string
+   (donc dans les journaux d'accès). C'est un compromis inhérent — un
+   fournisseur OAuth ne peut pas poser d'en-tête sur une redirection. Ces six
+   fonctions ne sont **plus appelées par le front** (mode Zernio only) et les
+   connexions qu'elles créent sont explicitement ignorées par `publish-post`.
+   Les retirer du déploiement supprimerait la surface d'attaque, mais c'est une
+   décision produit (abandon définitif de l'OAuth direct) : je ne l'ai pas
+   prise à votre place.
 
 ---
 

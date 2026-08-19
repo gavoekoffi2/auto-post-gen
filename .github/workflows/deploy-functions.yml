@@ -23,6 +23,17 @@ jobs:
       ZERNIO_API_KEY: ${{ secrets.ZERNIO_API_KEY }}
       PROJECT_REF: tktoyntaeajgsuplhntd
       APP_ORIGIN: https://auto-post-gen.76.13.129.252.sslip.io
+      # Transactional SMTP for Supabase Auth (confirmation / recovery emails).
+      # Set all four and email confirmation turns itself on — see the
+      # "Configure production authentication" step. With Resend:
+      #   SMTP_HOST=smtp.resend.com  SMTP_PORT=465  SMTP_USER=resend
+      #   SMTP_PASS=<RESEND_API_KEY> SMTP_SENDER_EMAIL=no-reply@yourdomain
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}
+      SMTP_PORT: ${{ secrets.SMTP_PORT }}
+      SMTP_USER: ${{ secrets.SMTP_USER }}
+      SMTP_PASS: ${{ secrets.SMTP_PASS }}
+      SMTP_SENDER_EMAIL: ${{ secrets.SMTP_SENDER_EMAIL }}
+      SMTP_SENDER_NAME: Pro Social AI
     steps:
       - uses: actions/checkout@v4
 
@@ -76,15 +87,80 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          jq -n \
-            --arg origin "$APP_ORIGIN" \
-            '{mailer_autoconfirm: true, site_url: $origin, uri_allow_list: ($origin + "/**")}' \
-            > /tmp/auth-config.json
+
+          # Email confirmation is turned ON as soon as a real SMTP sender is
+          # configured, and only then. Flipping mailer_autoconfirm to false
+          # without a working sender would lock every new user out of their own
+          # account, so the safe default (autoconfirm) stands until the four
+          # SMTP secrets exist.
+          smtp_ready=false
+          if [ -n "${SMTP_HOST:-}" ] && [ -n "${SMTP_USER:-}" ] \
+             && [ -n "${SMTP_PASS:-}" ] && [ -n "${SMTP_SENDER_EMAIL:-}" ]; then
+            smtp_ready=true
+          fi
+
+          if [ "$smtp_ready" = "true" ]; then
+            echo "SMTP configured → enabling email confirmation."
+            jq -n \
+              --arg origin "$APP_ORIGIN" \
+              --arg host "$SMTP_HOST" \
+              --arg user "$SMTP_USER" \
+              --arg pass "$SMTP_PASS" \
+              --arg sender "$SMTP_SENDER_EMAIL" \
+              --arg sender_name "${SMTP_SENDER_NAME:-Pro Social AI}" \
+              --argjson port "${SMTP_PORT:-465}" \
+              '{
+                 mailer_autoconfirm: false,
+                 site_url: $origin,
+                 uri_allow_list: ($origin + "/**"),
+                 password_min_length: 8,
+                 smtp_host: $host,
+                 smtp_port: ($port | tostring),
+                 smtp_user: $user,
+                 smtp_pass: $pass,
+                 smtp_admin_email: $sender,
+                 smtp_sender_name: $sender_name
+               }' > /tmp/auth-config.json
+          else
+            echo "::warning::SMTP is not configured (SMTP_HOST/USER/PASS/SENDER_EMAIL).\
+          Email confirmation stays OFF, so anyone can sign up with an address they do not own.\
+          Add the four secrets to turn confirmation on automatically."
+            jq -n \
+              --arg origin "$APP_ORIGIN" \
+              '{
+                 mailer_autoconfirm: true,
+                 site_url: $origin,
+                 uri_allow_list: ($origin + "/**"),
+                 password_min_length: 8
+               }' > /tmp/auth-config.json
+          fi
+
           curl --fail-with-body -sS -X PATCH \
             -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
             -H "Content-Type: application/json" \
             --data-binary @/tmp/auth-config.json \
             "https://api.supabase.com/v1/projects/$PROJECT_REF/config/auth" >/dev/null
+
+      - name: Harden authentication policy (best effort)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Breached-password rejection (HaveIBeenPwned) and re-authentication
+          # before a password change. Deliberately NOT fatal: these are extra
+          # controls, and a rename in Supabase's management API must not be able
+          # to block a deployment. A rejection is surfaced as a warning instead.
+          payload='{"password_hibp_enabled":true,"security_update_password_require_reauthentication":true}'
+          if curl --fail-with-body -sS -X PATCH \
+               -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
+               -H "Content-Type: application/json" \
+               -d "$payload" \
+               "https://api.supabase.com/v1/projects/$PROJECT_REF/config/auth" >/tmp/auth-harden.json 2>&1; then
+            echo "Breached-password protection and re-auth on password change are enabled."
+          else
+            echo "::warning::Could not apply the optional auth hardening flags; enable them"
+            echo "::warning::manually in Supabase → Authentication → Policies. Response:"
+            sed -n '1,10p' /tmp/auth-harden.json
+          fi
 
       - name: Configure production secrets and origins
         shell: bash
@@ -160,6 +236,18 @@ jobs:
             -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
             --data-binary @/tmp/column-lockdown-query.json \
+            "https://api.supabase.com/v1/projects/$PROJECT_REF/database/query" >/dev/null
+
+      - name: Apply profile server-column lockdown migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          migration="supabase/migrations/20260818010000_lock_profile_server_columns.sql"
+          jq -Rs '{query: .}' < "$migration" > /tmp/profile-lockdown-query.json
+          curl --fail-with-body -sS -X POST \
+            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data-binary @/tmp/profile-lockdown-query.json \
             "https://api.supabase.com/v1/projects/$PROJECT_REF/database/query" >/dev/null
 
       - name: Deploy all edge functions
