@@ -12,12 +12,23 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { AudienceEditor } from "@/components/AudienceEditor";
 import { AudienceSegment, normalizeAudienceSegments } from "@/lib/audiences";
+import { browserTimeZone } from "@/lib/timezone";
+
+// detect-audiences rejects anything shorter than 20 characters. Gating the
+// step at 10 let the user press "Suivant" and then hit a server-side refusal
+// they could not act on, on the very first step that calls the AI.
+const MIN_DESCRIPTION_LENGTH = 20;
 
 export default function Onboarding() {
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [analyzingAudiences, setAnalyzingAudiences] = useState(false);
+  // The inputs the current audience suggestions were derived from. If the user
+  // navigates back and edits them, the suggestions are stale and must be
+  // recomputed — otherwise they would confirm targets for a different business
+  // than the one they just described.
+  const [analyzedFrom, setAnalyzedFrom] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     companyName: "",
     posterFooterText: "",
@@ -70,6 +81,14 @@ export default function Onboarding() {
     checkAuth();
   }, [navigate]);
 
+  // Identity of the inputs detect-audiences actually reads.
+  const audienceInputsKey = [
+    formData.companyName.trim(),
+    formData.sector,
+    formData.contentType,
+    formData.description.trim(),
+  ].join("\u0000");
+
   const analyzeAudiences = async (): Promise<boolean> => {
     setAnalyzingAudiences(true);
     try {
@@ -89,6 +108,7 @@ export default function Onboarding() {
         audienceSuggestions: audiences,
         selectedAudienceIds: [],
       }));
+      setAnalyzedFrom(audienceInputsKey);
       toast.success("Vos cibles recommandées sont prêtes. Sélectionnez celles que vous souhaitez toucher.");
       return true;
     } catch (error: unknown) {
@@ -102,7 +122,10 @@ export default function Onboarding() {
 
   const handleNext = async () => {
     if (step === 3) {
-      if (formData.audienceSuggestions.length === 0) {
+      if (
+        formData.audienceSuggestions.length === 0 ||
+        analyzedFrom !== audienceInputsKey
+      ) {
         const analyzed = await analyzeAudiences();
         if (!analyzed) return;
       }
@@ -132,6 +155,9 @@ export default function Onboarding() {
               style_example: formData.styleExample,
               platforms: formData.platforms.length > 0 ? formData.platforms : ['Instagram'],
               preferred_days: formData.preferredDays,
+              // Captured from the browser so "10:00" means 10:00 where the
+              // user actually is. Editable later from the profile page.
+              timezone: browserTimeZone(),
               auto_publish: false,
               image_people_type: formData.imagePeopleType,
               audience_suggestions: formData.audienceSuggestions,
@@ -167,7 +193,7 @@ export default function Onboarding() {
       case 2:
         return formData.tone && formData.frequency;
       case 3:
-        return formData.description.length > 10;
+        return formData.description.trim().length >= MIN_DESCRIPTION_LENGTH;
       case 4:
         return formData.selectedAudienceIds.length > 0;
       case 5:
@@ -328,7 +354,16 @@ export default function Onboarding() {
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Plus vous êtes précis, meilleur sera le contenu généré
+                  Plus vous êtes précis, meilleur sera le contenu généré.
+                  {formData.description.trim().length < MIN_DESCRIPTION_LENGTH && (
+                    <>
+                      {" "}
+                      <span className="text-destructive">
+                        Encore {MIN_DESCRIPTION_LENGTH - formData.description.trim().length} caractère(s)
+                        pour lancer l’analyse de vos cibles.
+                      </span>
+                    </>
+                  )}
                 </p>
               </div>
             </div>

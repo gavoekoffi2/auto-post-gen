@@ -1,4 +1,11 @@
-export interface AudienceSegment {
+import type { Json } from "@/integrations/supabase/types";
+
+// Declared as a type with an index signature (rather than a plain interface)
+// so it is structurally assignable to `Json`. Without it, every
+// `.update({ target_audiences: segments })` failed to typecheck and fell
+// through to Supabase's array overload, whose error message ("'id' does not
+// exist") pointed at the wrong line entirely.
+export type AudienceSegment = {
   id: string;
   name: string;
   description: string;
@@ -8,7 +15,8 @@ export interface AudienceSegment {
   buying_triggers: string[];
   preferred_tone?: string;
   priority?: number;
-}
+  [key: string]: Json | undefined;
+};
 
 const strings = (value: unknown) =>
   Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];

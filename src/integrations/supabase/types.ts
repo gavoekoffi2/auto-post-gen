@@ -27,6 +27,7 @@ export type Database = {
           image_status_url: string | null
           platforms: string[]
           publish_error: string | null
+          publish_attempts: number
           published_at: string | null
           scheduled_for: string | null
           status: string
@@ -54,6 +55,7 @@ export type Database = {
           image_status_url?: string | null
           platforms?: string[]
           publish_error?: string | null
+          publish_attempts?: number
           published_at?: string | null
           scheduled_for?: string | null
           status?: string
@@ -81,6 +83,7 @@ export type Database = {
           image_status_url?: string | null
           platforms?: string[]
           publish_error?: string | null
+          publish_attempts?: number
           published_at?: string | null
           scheduled_for?: string | null
           status?: string
@@ -284,6 +287,7 @@ export type Database = {
           style_examples: Json | null
           target_audiences: Json
           tiktok_username: string | null
+          timezone: string
           tone: string
           twitter_username: string | null
           updated_at: string | null
@@ -327,6 +331,7 @@ export type Database = {
           style_examples?: Json | null
           target_audiences?: Json
           tiktok_username?: string | null
+          timezone?: string
           tone: string
           twitter_username?: string | null
           updated_at?: string | null
@@ -370,6 +375,7 @@ export type Database = {
           style_examples?: Json | null
           target_audiences?: Json
           tiktok_username?: string | null
+          timezone?: string
           tone?: string
           twitter_username?: string | null
           updated_at?: string | null

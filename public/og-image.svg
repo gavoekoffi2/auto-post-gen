@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-label="Pro Social AI">
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-label="Pro Social AI">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#0F172A"/>
@@ -19,5 +19,5 @@
   <text x="300" y="242" font-family="Inter, Arial, sans-serif" font-size="72" font-weight="800" fill="#FFFFFF">Pro Social AI</text>
   <text x="300" y="318" font-family="Inter, Arial, sans-serif" font-size="34" fill="#DDEBFF">Génération, planification et publication</text>
   <text x="300" y="368" font-family="Inter, Arial, sans-serif" font-size="34" fill="#DDEBFF">automatisées pour vos réseaux sociaux.</text>
-  <text x="138" y="476" font-family="Inter, Arial, sans-serif" font-size="28" fill="#BAE6FD">IA • Images GPT Image 2 • Calendrier • Publication</text>
+  <text x="138" y="476" font-family="Inter, Arial, sans-serif" font-size="28" fill="#BAE6FD">IA • Affiches Graphiste GPT • Calendrier • Publication</text>
 </svg>

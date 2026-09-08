@@ -44,8 +44,12 @@ export default function Statistics() {
       if (error) throw error;
 
       const now = new Date();
+      // getDay() is 0 for Sunday, so `- getDay()` starts the week on Sunday.
+      // In France (and everywhere this product ships) the week starts Monday,
+      // so "cette semaine" was wrong every Sunday.
+      const daysSinceMonday = (now.getDay() + 6) % 7;
       const startOfWeek = new Date(now);
-      startOfWeek.setDate(now.getDate() - now.getDay());
+      startOfWeek.setDate(now.getDate() - daysSinceMonday);
       startOfWeek.setHours(0, 0, 0, 0);
 
       const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -68,10 +72,10 @@ export default function Statistics() {
       });
 
       // Generate weekly data for chart (last 4 weeks)
-      const weeklyStats = [];
+      const weeklyStats: { name: string; posts: number }[] = [];
       for (let i = 3; i >= 0; i--) {
         const weekStart = new Date(now);
-        weekStart.setDate(now.getDate() - (now.getDay() + 7 * i));
+        weekStart.setDate(now.getDate() - (daysSinceMonday + 7 * i));
         weekStart.setHours(0, 0, 0, 0);
         const weekEnd = new Date(weekStart);
         weekEnd.setDate(weekStart.getDate() + 7);
@@ -82,7 +86,11 @@ export default function Statistics() {
         }).length;
 
         weeklyStats.push({
-          name: `Sem. ${4 - i}`,
+          // "Sem. 1..4" told the user nothing. Show the week's start date,
+          // and name the current one explicitly.
+          name: i === 0
+            ? 'Cette sem.'
+            : weekStart.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }),
           posts: count,
         });
       }
@@ -232,8 +240,14 @@ export default function Statistics() {
             <div className="p-4 rounded-lg bg-muted/50">
               <span className="text-sm text-muted-foreground">Taux de validation</span>
               <p className="text-2xl font-bold gradient-text mt-1">
-                {stats.totalPosts > 0 
-                  ? Math.round((stats.validatedPosts / stats.totalPosts) * 100) 
+                {/* A published post was validated first, but no longer carries
+                    the 'validated' status — counting only that status made the
+                    rate FALL as the user published, reaching 0% for someone who
+                    published everything. */}
+                {stats.totalPosts > 0
+                  ? Math.round(
+                      ((stats.validatedPosts + stats.publishedPosts) / stats.totalPosts) * 100,
+                    )
                   : 0}%
               </p>
             </div>

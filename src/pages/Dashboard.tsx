@@ -10,6 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { getSocialImageSpec } from "@/lib/socialImageSpecs";
+import { joinLocalDateTime, splitLocalDateTime } from "@/lib/timezone";
 import { useNavigate } from "react-router-dom";
 import SettingsDialog from "@/components/SettingsDialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -17,18 +18,21 @@ import { SocialMediaConnect } from "@/components/SocialMediaConnect";
 
 type PostStatus = "pending" | "validated" | "published" | "failed";
 
+// Mirrors the `posts` row: nullable columns are `| null`, not `| undefined`.
+// Declaring them optional made every read from Supabase fail to typecheck
+// under strict mode and hid the fact that these values are genuinely absent.
 type Post = {
   id: string;
   user_id?: string;
   platform?: string;
-  platforms?: string[];
+  platforms?: string[] | null;
   date?: string;
   time?: string;
-  scheduled_for?: string;
+  scheduled_for?: string | null;
   title: string;
   content: string;
   content_category?: string | null;
-  image_url?: string;
+  image_url?: string | null;
   image_status?: string | null;
   image_job_id?: string | null;
   image_status_url?: string | null;
@@ -197,10 +201,10 @@ export default function Dashboard() {
         return {
           ...post,
           platform: post.platforms?.[0] || 'Instagram',
-          date: post.scheduled_for ? new Date(post.scheduled_for).toISOString().split('T')[0] : '',
-          time: post.scheduled_for
-            ? new Date(post.scheduled_for).toTimeString().substring(0, 5)
-            : '',
+          // Date and time must come from the SAME clock. Reading the date via
+          // toISOString() (UTC) and the time via toTimeString() (local) showed
+          // two different instants — a full day off east of UTC late at night.
+          ...splitLocalDateTime(post.scheduled_for),
           status,
         };
       });
@@ -361,7 +365,14 @@ export default function Dashboard() {
     try {
       const { error } = await supabase
         .from('posts')
-        .update({ status: 'validated', publish_error: null })
+        .update({
+          status: 'validated',
+          publish_error: null,
+          // An explicit user retry is a fresh start: without this the post
+          // would still be past the give-up threshold and the cron publisher
+          // would refuse to pick it up again.
+          publish_attempts: 0,
+        })
         .eq('id', post.id);
       if (error) throw error;
       const revived: Post = { ...post, status: 'validated' };
@@ -387,9 +398,9 @@ export default function Dashboard() {
           title: editingPost.title,
           content: editingPost.content,
           platforms: editingPost.platforms || ['Instagram'],
-          scheduled_for: editingPost.date && editingPost.time
-            ? `${editingPost.date}T${editingPost.time}:00`
-            : null,
+          // A bare "2026-09-09T00:30:00" has no zone, so Postgres stores it as
+          // UTC — re-saving an unchanged post shifted it by the user's offset.
+          scheduled_for: joinLocalDateTime(editingPost.date || '', editingPost.time || ''),
         })
         .eq('id', editingPost.id);
 
@@ -427,6 +438,7 @@ export default function Dashboard() {
       if (!data || !data.content) {
         throw new Error('Aucun contenu reçu de la génération');
       }
+      const isFallback = data.fallback === true;
 
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error("Non authentifié");
@@ -440,7 +452,7 @@ export default function Dashboard() {
       //    the result without waiting for the slow image generation.
       const newPost = {
         user_id: session.user.id,
-        title: "Nouveau contenu IA",
+        title: isFallback ? "Texte de secours — à régénérer" : "Nouveau contenu IA",
         content: data.content,
         content_category: data.postType,
         image_url: null,
@@ -466,13 +478,31 @@ export default function Dashboard() {
       const transformedPost: Post = {
         ...savedPost,
         platform: savedPost.platforms?.[0] || 'Instagram',
-        date: savedPost.scheduled_for ? new Date(savedPost.scheduled_for).toISOString().split('T')[0] : '',
-        time: savedPost.scheduled_for ? new Date(savedPost.scheduled_for).toTimeString().substring(0, 5) : '',
+        ...splitLocalDateTime(savedPost.scheduled_for),
         status,
       };
 
       setPosts((prev) => [transformedPost, ...prev]);
-      toast.success("Post enrichi par recherche web généré. L'image est en cours...");
+
+      // generate-content answers 200 with a generic canned post when the AI
+      // provider is unreachable, so a success toast here would tell the user
+      // their post was written for them when it was not. Say what actually
+      // happened, and do NOT spend a paid 2K poster on filler text.
+      if (isFallback) {
+        toast.warning(
+          "Texte de secours utilisé : le service d'écriture IA est momentanément indisponible. " +
+            "Cliquez sur « Régénérer le texte » dans un instant pour obtenir un vrai post.",
+          { duration: 10000 },
+        );
+        if (data.warning) console.warn("generate-content fallback reason:", data.warning);
+        return;
+      }
+
+      toast.success(
+        data.usedWebInspiration
+          ? "Post enrichi par recherche web généré. L'affiche est en cours..."
+          : "Post généré. L'affiche est en cours...",
+      );
 
       // 2. Kick off image generation asynchronously. Don't block the UI.
       //    Mark the post as generating-image so the card can show a
@@ -577,17 +607,31 @@ export default function Dashboard() {
       });
       if (error) throw error;
       if (!data?.content) throw new Error("Aucun contenu reçu");
+      const isFallback = data.fallback === true;
 
       const updatedPost: Post = {
         ...post,
-        title: "Contenu régénéré",
+        title: isFallback ? "Texte de secours — à régénérer" : "Contenu régénéré",
         content: data.content,
         image_url: undefined,
+        // The old poster belongs to the old text. Clear the whole image state,
+        // not just the URL, so a job that finishes later is not re-attached to
+        // content it was never generated for.
+        image_status: null,
+        image_job_id: null,
+        image_status_url: null,
       };
 
       const { error: updateError } = await supabase
         .from('posts')
-        .update({ title: updatedPost.title, content: updatedPost.content, image_url: null })
+        .update({
+          title: updatedPost.title,
+          content: updatedPost.content,
+          image_url: null,
+          image_status: null,
+          image_job_id: null,
+          image_status_url: null,
+        })
         .eq('id', post.id);
       if (updateError) throw updateError;
 
@@ -596,6 +640,15 @@ export default function Dashboard() {
         setEditingPost(updatedPost);
       }
       toast.dismiss(loadingToast);
+      if (isFallback) {
+        // Don't chain a paid poster onto filler text.
+        if (data.warning) console.warn("generate-content fallback reason:", data.warning);
+        toast.warning(
+          "Texte de secours utilisé : le service d'écriture IA est momentanément indisponible. Réessayez dans un instant.",
+          { duration: 10000 },
+        );
+        return;
+      }
       toast.success("Contenu régénéré. Nouvelle affiche en cours...");
       await handleRegenerateImage(updatedPost);
     } catch (err) {

@@ -10,15 +10,34 @@ import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
+// Supabase's own default is 6. These accounts hold connected social-network
+// tokens, so require a little more.
+const MIN_PASSWORD_LENGTH = 8;
+
 export default function Auth() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [confirmationEmail, setConfirmationEmail] = useState("");
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Validate before hitting the network. Without a confirmation field a
+    // single typo created an account the user could never sign into, and
+    // Supabase's 6-character default is too weak for an account that holds
+    // connected social-network tokens.
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      toast.error(`Le mot de passe doit contenir au moins ${MIN_PASSWORD_LENGTH} caractères.`);
+      return;
+    }
+    if (password !== confirmPassword) {
+      toast.error("Les deux mots de passe ne correspondent pas.");
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -43,6 +62,7 @@ export default function Auth() {
         // user on the same form with only a temporary toast.
         setConfirmationEmail(email);
         setPassword("");
+        setConfirmPassword("");
         toast.success("Compte créé ! Confirmez votre email pour continuer.");
       }
     } catch (error: unknown) {
@@ -82,7 +102,11 @@ export default function Auth() {
       }
 
       toast.success("Connexion réussie !");
-      navigate(authData.user?.email?.toLowerCase() === "c1domefa@gmail.com" ? "/admin" : "/dashboard");
+      // Always land on the dashboard. Routing on a hardcoded personal email
+      // shipped that address in the public JS bundle and told every visitor
+      // who the owner is; /admin stays reachable and is guarded server-side
+      // by admin-api, which is the only check that actually matters.
+      navigate("/dashboard");
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Erreur lors de la connexion";
       toast.error(message);
@@ -156,6 +180,7 @@ export default function Auth() {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     required
+                    autoComplete="email"
                     className="glass-card"
                   />
                 </div>
@@ -169,6 +194,7 @@ export default function Auth() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
+                    autoComplete="current-password"
                     className="glass-card"
                   />
                 </div>
@@ -194,6 +220,7 @@ export default function Auth() {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     required
+                    autoComplete="email"
                     className="glass-card"
                   />
                 </div>
@@ -207,9 +234,33 @@ export default function Auth() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
-                    minLength={6}
+                    minLength={MIN_PASSWORD_LENGTH}
+                    autoComplete="new-password"
+                    aria-describedby="signup-password-hint"
                     className="glass-card"
                   />
+                  <p id="signup-password-hint" className="text-xs text-muted-foreground">
+                    {MIN_PASSWORD_LENGTH} caractères minimum.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="signup-password-confirm">Confirmez le mot de passe</Label>
+                  <Input
+                    id="signup-password-confirm"
+                    type="password"
+                    placeholder="••••••••"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    required
+                    autoComplete="new-password"
+                    className="glass-card"
+                  />
+                  {confirmPassword.length > 0 && confirmPassword !== password && (
+                    <p className="text-xs text-destructive">
+                      Les deux mots de passe ne correspondent pas.
+                    </p>
+                  )}
                 </div>
 
                 <Button

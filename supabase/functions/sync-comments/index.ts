@@ -9,7 +9,7 @@
 // so this routes through Ayrshare's Comments API (Premium plan). Users
 // without an Ayrshare connection get a clear notice instead of a hard error.
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
+import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { buildCorsHeaders, jsonResponse } from "../_shared/cors.ts";
 import {
   ayrshareGetComments,
@@ -21,7 +21,10 @@ import {
   type NormalizedComment,
 } from "../_shared/engagement.ts";
 
-type DB = ReturnType<typeof createClient>;
+// `ReturnType<typeof createClient>` resolves the schema type parameter to
+// `never`, so every call site failed to typecheck. Name the client shape
+// explicitly, the same way publish-post does.
+type DB = SupabaseClient<any, "public", any>;
 
 const POSTS_PER_USER = 25;
 const AUTO_REPLY_CAP = 10; // max auto-replies per user per run

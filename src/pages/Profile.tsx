@@ -12,6 +12,7 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from '@/integrations/supabase/client';
 import { AudienceEditor } from '@/components/AudienceEditor';
 import { AudienceSegment, normalizeAudienceSegments } from '@/lib/audiences';
+import { browserTimeZone, timeZoneLabel, timeZoneOptions } from '@/lib/timezone';
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -58,6 +59,7 @@ export default function Profile() {
     platforms: [] as string[],
     preferred_days: [] as string[],
     preferred_time: "10:00",
+    timezone: browserTimeZone(),
     promo_posts_per_week: 1,
     research_posts_per_week: 1,
     auto_publish: false,
@@ -113,6 +115,9 @@ export default function Profile() {
           platforms: data.platforms || [],
           preferred_days: data.preferred_days || [],
           preferred_time: data.preferred_time || "10:00",
+          // Legacy rows default to "UTC"; offer the browser zone instead so the
+          // first save records where the user actually is.
+          timezone: data.timezone && data.timezone !== "UTC" ? data.timezone : browserTimeZone(),
           promo_posts_per_week: data.promo_posts_per_week ?? 1,
           research_posts_per_week: data.research_posts_per_week ?? 1,
           auto_publish: data.auto_publish || false,
@@ -200,6 +205,7 @@ export default function Profile() {
           platforms: profile.platforms,
           preferred_days: profile.preferred_days,
           preferred_time: profile.preferred_time,
+          timezone: profile.timezone,
           promo_posts_per_week: profile.promo_posts_per_week,
           research_posts_per_week: profile.research_posts_per_week,
           auto_publish: profile.auto_publish,
@@ -581,6 +587,28 @@ export default function Profile() {
                   />
                   <p className="text-xs text-muted-foreground">
                     Heure à laquelle vos posts automatiques seront publiés les jours choisis.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="timezone">Fuseau horaire</Label>
+                  <Select
+                    value={profile.timezone}
+                    onValueChange={(v) => setProfile({ ...profile, timezone: v })}
+                  >
+                    <SelectTrigger id="timezone" className="glass-card w-full md:w-80">
+                      <SelectValue placeholder="Choisissez votre fuseau horaire" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {timeZoneOptions(profile.timezone).map((tz) => (
+                        <SelectItem key={tz} value={tz}>
+                          {timeZoneLabel(tz)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    L’heure et les jours ci-dessus sont interprétés dans ce fuseau.
                   </p>
                 </div>
 

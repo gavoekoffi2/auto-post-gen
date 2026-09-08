@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Upload, X, Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { validateImageFile } from "@/lib/imageUpload";
 
 interface LogoUploadProps {
   currentLogoUrl?: string;
@@ -17,15 +18,11 @@ export const LogoUpload = ({ currentLogoUrl, onUpload, onRemove }: LogoUploadPro
     const file = event.target.files?.[0];
     if (!file) return;
 
-    // Validate file type
-    if (!file.type.startsWith('image/')) {
-      toast.error("Veuillez sélectionner une image");
-      return;
-    }
-
-    // Validate file size (max 5MB)
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error("L'image ne doit pas dépasser 5 Mo");
+    // Type, size and extension all validated in one place — notably this
+    // rejects SVG, which the poster pipeline refuses everywhere else.
+    const validation = validateImageFile(file);
+    if (validation.error) {
+      toast.error(validation.error);
       return;
     }
 
@@ -34,12 +31,13 @@ export const LogoUpload = ({ currentLogoUrl, onUpload, onRemove }: LogoUploadPro
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error("Non authentifié");
 
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${session.user.id}/logo-${Date.now()}.${fileExt}`;
+      // Extension comes from the validated MIME type, never from the
+      // user-controlled filename.
+      const fileName = `${session.user.id}/logo-${Date.now()}.${validation.extension}`;
 
       const { error: uploadError } = await supabase.storage
         .from('user-assets')
-        .upload(fileName, file, { upsert: true });
+        .upload(fileName, file, { upsert: true, contentType: file.type });
 
       if (uploadError) throw uploadError;
 

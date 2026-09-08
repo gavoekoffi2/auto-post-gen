@@ -43,19 +43,20 @@ Les secrets backend ne doivent jamais être mis dans `.env.local` : ils vont dan
 ## Checks avant livraison
 
 ```bash
-npm run lint
+npm run lint       # 0 erreur (7 warnings shadcn/fast-refresh connus)
+npm run typecheck  # ⚠️ npm run build NE vérifie PAS les types
+npm test           # 161 tests
 npm run build
 ```
 
-Les Edge Functions peuvent être vérifiées avec Deno :
+Les 25 Edge Functions se vérifient d'un coup :
 
 ```bash
-deno check \
-  supabase/functions/generate-content/index.ts \
-  supabase/functions/generate-image/index.ts \
-  supabase/functions/auto-generate-weekly/index.ts \
-  supabase/functions/publish-post/index.ts
+deno check supabase/functions/*/index.ts
 ```
+
+La CI (`.github/workflows/ci.yml`) exécute exactement ces commandes sur chaque
+PR.
 
 ## Secrets Supabase minimum pour un premier utilisateur
 
@@ -111,7 +112,7 @@ sur `main` touchant `supabase/functions/**` déploie **toutes** les fonctions
 (`.github/workflows/deploy-functions.yml`). En manuel si besoin :
 
 ```bash
-supabase functions deploy --project-ref ixinojsmymqovekgkbdg
+supabase functions deploy --project-ref tktoyntaeajgsuplhntd
 ```
 
 ## Cron Supabase à configurer
@@ -129,13 +130,24 @@ Cadences recommandées :
 - `publish-post` : toutes les 15 minutes
 - `sync-comments` : toutes les 15–30 minutes si commentaires activés
 
-## État actuel vérifié
+## État actuel vérifié (8 septembre 2026)
 
+- `npm run lint` : OK (warnings shadcn/fast-refresh non bloquants)
+- `npm run typecheck` : OK — TypeScript en mode `strict`
+- `npm test` : 161/161
 - `npm run build` : OK
-- `npm run lint` : OK avec warnings shadcn/fast-refresh non bloquants
+- `deno check supabase/functions/*/index.ts` : OK sur les 25 fonctions
 - Recherche web mutualisée : `supabase/functions/_shared/research.ts`
 - Génération manuelle et automatique utilisent la recherche web
-- Dashboard affiche un indicateur “Génération enrichie par recherche web”
+- Les libellés de secteur/ton/type de contenu sont traduits avant d'entrer dans
+  les prompts (`supabase/functions/_shared/profileLabels.ts`) — ne jamais
+  réinjecter `profile.sector` brut
+- Planification dans le fuseau de l'utilisateur (`profiles.timezone`)
+- Publication : retries bornés avec backoff (`due_posts_for_publishing`)
+
+Le détail des défauts trouvés et corrigés lors du dernier audit est dans
+[`docs/HANDOVER.md`](./docs/HANDOVER.md) §6 bis, y compris les trois points
+laissés à votre décision.
 
 Voir aussi :
 
