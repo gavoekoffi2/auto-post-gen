@@ -23,13 +23,18 @@ npm run dev                       # http://localhost:8080
 Vérifications avant tout commit :
 
 ```bash
-npm test        # 73 tests — DOIVENT tous passer
-npm run lint    # 0 erreur (7 warnings shadcn/fast-refresh connus, non bloquants)
-npm run build   # build Vite 7
+npm run lint      # 0 erreur (7 warnings shadcn/fast-refresh connus, non bloquants)
+npm run typecheck # 0 erreur — `npm run build` (vite) NE vérifie PAS les types
+npm test          # 161 tests — DOIVENT tous passer
+npm run build     # build Vite 7
+deno check supabase/functions/*/index.ts   # les 25 edge functions
 ```
 
-La CI (`.github/workflows/ci.yml`) exécute exactement ces trois commandes sur
-chaque PR : si ça passe en local, ça passera en CI.
+La CI (`.github/workflows/ci.yml`) exécute exactement ces commandes sur chaque
+PR : si ça passe en local, ça passera en CI.
+
+> ⚠️ `npm run build` ne typecheck pas. C'est pour cette raison que des erreurs
+> de types atteignaient `main` sans être vues. Lancez toujours `npm run typecheck`.
 
 ### En production
 
@@ -38,7 +43,7 @@ Il n'y a **ni VPS, ni serveur à administrer, ni n8n**. Tout est géré :
 | Quoi | Où | Déclencheur |
 |---|---|---|
 | Frontend (SPA React) | **Netlify** | push sur `main` touchant `src/**` → `.github/workflows/deploy-netlify.yml` |
-| Edge Functions (23) | **Supabase** (projet `ixinojsmymqovekgkbdg`) | push sur `main` touchant `supabase/functions/**` → `.github/workflows/deploy-functions.yml` (déploie TOUT) |
+| Edge Functions (25) | **Supabase** (projet `tktoyntaeajgsuplhntd`) | push sur `main` touchant `supabase/functions/**` → `.github/workflows/deploy-functions.yml` (déploie TOUT) |
 | Base de données | **Supabase Postgres** | migrations dans `supabase/migrations/` (`supabase db push`) |
 | Tâches planifiées | **Supabase Scheduler** (dashboard) | voir cadences dans `DEPLOYMENT.md` §Cron |
 
@@ -57,7 +62,7 @@ Supabase ──┬─ Auth (sessions JWT, localStorage, autoRefresh)
            │    profiles, posts, social_connections, social_comments,
            │    generation_usage, ip_rate_events
            ├─ Storage : bucket user-assets (affiches réhébergées)
-           └─ 23 Edge Functions (Deno) ── APIs externes :
+           └─ 25 Edge Functions (Deno) ── APIs externes :
                 ├─ OpenRouter        → TEXTE IA (gemini-2.5-flash)
                 ├─ Graphiste GPT     → AFFICHES IA (exclusif, pas de repli)
                 ├─ Zernio            → publication sociale (voie principale)
@@ -199,7 +204,7 @@ Notes mineures (acceptées, pas des trous) :
    sur main est bonne à reprendre à cette occasion.
 9. **`src/integrations/supabase/types.ts` est généré** : après toute
    migration, regénérer (`supabase gen types typescript --project-id
-   ixinojsmymqovekgkbdg > src/integrations/supabase/types.ts`).
+   tktoyntaeajgsuplhntd > src/integrations/supabase/types.ts`).
 10. **`deno check` des edge functions n'est pas dans la CI** (Deno absent du
     runner CI actuel). L'ajouter éviterait qu'une erreur de type edge ne se
     découvre qu'au déploiement.
@@ -210,7 +215,7 @@ Notes mineures (acceptées, pas des trous) :
 
 | Accès | Où le trouver / le mettre |
 |---|---|
-| Secrets des edge functions (OpenRouter, Graphiste, Zernio, Resend, CRON_SECRET…) | **Supabase Dashboard → Project Settings → Edge Functions → Secrets** (projet `ixinojsmymqovekgkbdg`). Liste de référence : DEPLOYMENT.md §2. |
+| Secrets des edge functions (OpenRouter, Graphiste, Zernio, Resend, CRON_SECRET…) | **Supabase Dashboard → Project Settings → Edge Functions → Secrets** (projet `tktoyntaeajgsuplhntd`). Liste de référence : DEPLOYMENT.md §2. |
 | Variables front (VITE_*) | Local : `.env.local` (jamais commité). CI/prod : **GitHub → repo → Settings → Secrets and variables → Actions** (`VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, + `NETLIFY_AUTH_TOKEN`, `NETLIFY_SITE_ID`, `SUPABASE_ACCESS_TOKEN`). |
 | Compte Graphiste GPT (clé + crédits) | Compte Graphiste GPT du propriétaire ; solde vérifiable via `GET /v1/account/credits` ou le script de diagnostic. |
 | Zernio | https://zernio.com/dashboard/api-keys (clé `sk_` + 64 hex). |
@@ -236,6 +241,76 @@ Notes mineures (acceptées, pas des trous) :
 
 ---
 
+## 6 bis. Audit du 8 septembre 2026 — ce qui a été corrigé
+
+Second audit complet (relecture ligne à ligne des chemins génération,
+publication, planification, onboarding et upload). Résumé des défauts trouvés
+et corrigés, pour éviter de les réintroduire.
+
+### Qualité de génération — la cause racine
+
+`profiles.sector`, `tone` et `content_types` contiennent les **slugs** du
+formulaire d'onboarding (`tech`, `other`, `professional`, `educational`), pas
+des libellés. Ces valeurs partaient telles quelles dans les prompts français
+et dans les requêtes de recherche web : le modèle lisait
+`Secteur général: other` et le module de recherche cherchait
+`actualité other`. **Tous** les posts en étaient dégradés.
+
+→ `supabase/functions/_shared/profileLabels.ts` traduit slug → libellé français
+et laisse passer le texte libre. Appliqué dans `generate-content`,
+`auto-generate-weekly`, `detect-audiences`, `generate-image` et le ton des
+réponses aux commentaires. **Ne jamais réinjecter `profile.sector` brut dans un
+prompt.**
+
+### Défauts corrigés
+
+| Zone | Défaut | Conséquence pour l'utilisateur |
+|---|---|---|
+| Génération | Le repli local (`fallback: true`, HTTP 200) était présenté comme une vraie génération | L'utilisateur croyait que l'IA avait écrit son post ; une affiche payante était même générée pour ce texte bouche-trou |
+| Publication | Le cron reprenait les 12 posts dus les plus anciens ; un post qui échoue repassait `validated` avec une date passée, donc redû immédiatement | 12 posts d'un compte sans réseau connecté (**l'état par défaut d'un nouveau compte**) monopolisaient chaque lot : plus rien ne se publiait |
+| Planification | `setHours()`/`getDay()` s'exécutaient sur l'horloge UTC du runtime | « 10:00 » devenait 11:00–12:00 à Paris, et le jour choisi pouvait glisser |
+| Dashboard | Date lue en UTC, heure lue en local | Date affichée décalée d'un jour ; **ré-enregistrer un post sans le modifier décalait son horaire** |
+| Statistiques | Semaine démarrée le dimanche ; taux de validation ne comptant pas les posts publiés | « Cette semaine » faux le dimanche ; taux tombant à 0 % pour qui a tout publié |
+| Onboarding | Description acceptée dès 11 caractères, refusée par `detect-audiences` sous 20 | Échec incompréhensible sur la première étape qui appelle l'IA |
+| Inscription | Pas de confirmation de mot de passe, minimum 6 | Une faute de frappe créait un compte inaccessible |
+| Uploads | Extension tirée du nom de fichier, SVG accepté, pas de `contentType` | Chemins de stockage douteux, logos que le moteur d'affiches refuse |
+| Fuite | L'email personnel du propriétaire était codé en dur dans 2 fichiers client | Publié dans le bundle JS public |
+| Types | `strict: false` **et** `npm run build` ne typecheck pas | 3 erreurs de types étaient déjà parties en production sans être vues |
+| SEO | `og:image` en SVG | Facebook, LinkedIn, WhatsApp et X n'affichaient **aucun** aperçu |
+
+### Garde-fous ajoutés
+
+- `npm run typecheck` + `deno check` sur les 25 edge functions, **exécutés en CI**.
+- `strict: true` dans les deux tsconfig (coût réel : 4 erreurs, toutes corrigées).
+- `ErrorBoundary` à la racine : plus d'écran blanc sur une erreur de rendu ou un
+  chunk périmé après déploiement.
+- Suite de tests portée de 98 à 158, dont le comportement réel (et pas
+  seulement le texte source) de la traduction des slugs, du calcul de fuseau, de
+  l'aller-retour des dates et de la validation des uploads.
+- Backoff de publication vérifié contre un PostgreSQL 16 réel.
+
+### Restant à décider (non fait volontairement)
+
+1. **Pipeline de migrations.** `deploy-functions.yml` applique les migrations
+   avec **une étape écrite à la main par fichier**. Une nouvelle migration part
+   donc en production *sans son schéma* si l'on oublie l'étape. Le correctif est
+   une boucle pilotée par une table de registre (appliquer une fois, ne jamais
+   rejouer les fichiers antérieurs à la baseline `20260723000000`, qui ne sont
+   pas rejouables). Cela change la façon dont les migrations atteignent la base
+   de production : à décider explicitement, pas au détour d'un audit.
+2. **`react-router-dom` v6 → v7.** Les 2 dernières vulnérabilités `npm audit`
+   en dépendent. L'avis concerne une redirection ouverte via `<Link>`/
+   `useNavigate` ; **toutes** les destinations de navigation de l'app sont des
+   littéraux et rien ne lit de cible de redirection dans l'URL ou dans
+   `location.state`, donc l'avis n'est pas atteignable ici. Upgrade majeur à
+   planifier sereinement.
+3. **Fuseau horaire des comptes existants.** La colonne `profiles.timezone`
+   vaut `UTC` par défaut : le comportement des comptes actuels est donc
+   inchangé. Ils basculent sur leur vrai fuseau au premier enregistrement de
+   leur profil.
+
+---
+
 ## 7. CHECKLIST FINALE — à dérouler AVANT de développer quoi que ce soit
 
 Cochez dans l'ordre. Chaque étape a un résultat observable.
@@ -246,7 +321,7 @@ Cochez dans l'ordre. Chaque étape a un résultat observable.
       sécurité et cette documentation. Le merge déclenchera automatiquement
       le déploiement des fonctions ET du front.
 - [ ] 2. `git pull` sur main, puis `npm ci && npm test && npm run lint && npm run build`
-      → attendu : 73 tests OK, 0 erreur lint, build vert.
+      → attendu : 161 tests OK, 0 erreur lint, 0 erreur typecheck, build vert.
 
 ### B. Prouver la génération d'images (la panne historique)
 - [ ] 3. Supabase → Edge Functions → Secrets : vérifier que
