@@ -12,13 +12,14 @@ import { useNavigate } from "react-router-dom";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
 
+// Nullable `posts` columns are `| null`, matching what Supabase returns.
 type Post = {
   id: string;
   title: string;
   content: string;
-  image_url?: string;
-  scheduled_for?: string;
-  platforms?: string[];
+  image_url?: string | null;
+  scheduled_for?: string | null;
+  platforms?: string[] | null;
   status: string;
 };
 

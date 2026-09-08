@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
+import { validateImageFile } from "@/lib/imageUpload";
 import { supabase } from "@/integrations/supabase/client";
 import { Upload, X } from "lucide-react";
 
@@ -124,22 +125,19 @@ export default function SettingsDialog({ isOpen, onOpenChange, userProfile, onPr
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.user) throw new Error("Non authentifié");
 
-      if (!file.type.startsWith("image/")) {
-        toast.error("Veuillez sélectionner une image");
-        return;
-      }
-      if (file.size > 5 * 1024 * 1024) {
-        toast.error("L'image ne doit pas dépasser 5 Mo");
+      const validation = validateImageFile(file);
+      if (validation.error) {
+        toast.error(validation.error);
         return;
       }
 
-      const fileExt = file.name.split('.').pop();
-      // RLS requires the first folder segment to equal the user id.
-      const filePath = `${session.user.id}/logo-${Date.now()}.${fileExt}`;
+      // RLS requires the first folder segment to equal the user id. The
+      // extension comes from the validated MIME type, not the filename.
+      const filePath = `${session.user.id}/logo-${Date.now()}.${validation.extension}`;
 
       const { error: uploadError } = await supabase.storage
         .from('user-assets')
-        .upload(filePath, file, { upsert: true });
+        .upload(filePath, file, { upsert: true, contentType: file.type });
 
       if (uploadError) throw uploadError;
 
@@ -164,19 +162,16 @@ export default function SettingsDialog({ isOpen, onOpenChange, userProfile, onPr
       if (!session?.user) throw new Error("Non authentifié");
 
       const uploadPromises = Array.from(files).map(async (file) => {
-        if (!file.type.startsWith("image/")) {
-          throw new Error(`${file.name} n'est pas une image`);
+        const validation = validateImageFile(file);
+        if (validation.error) {
+          throw new Error(`${file.name} : ${validation.error}`);
         }
-        if (file.size > 5 * 1024 * 1024) {
-          throw new Error(`${file.name} dépasse 5 Mo`);
-        }
-        const fileExt = file.name.split('.').pop();
         // RLS requires the first folder segment to equal the user id.
-        const filePath = `${session.user.id}/custom-${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
+        const filePath = `${session.user.id}/custom-${Date.now()}-${Math.random().toString(36).substring(7)}.${validation.extension}`;
 
         const { error: uploadError } = await supabase.storage
           .from('user-assets')
-          .upload(filePath, file);
+          .upload(filePath, file, { contentType: file.type });
 
         if (uploadError) throw uploadError;
 

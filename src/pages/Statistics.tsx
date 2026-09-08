@@ -72,7 +72,7 @@ export default function Statistics() {
       });
 
       // Generate weekly data for chart (last 4 weeks)
-      const weeklyStats = [];
+      const weeklyStats: { name: string; posts: number }[] = [];
       for (let i = 3; i >= 0; i--) {
         const weekStart = new Date(now);
         weekStart.setDate(now.getDate() - (daysSinceMonday + 7 * i));

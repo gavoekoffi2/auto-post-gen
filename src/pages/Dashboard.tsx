@@ -18,18 +18,21 @@ import { SocialMediaConnect } from "@/components/SocialMediaConnect";
 
 type PostStatus = "pending" | "validated" | "published" | "failed";
 
+// Mirrors the `posts` row: nullable columns are `| null`, not `| undefined`.
+// Declaring them optional made every read from Supabase fail to typecheck
+// under strict mode and hid the fact that these values are genuinely absent.
 type Post = {
   id: string;
   user_id?: string;
   platform?: string;
-  platforms?: string[];
+  platforms?: string[] | null;
   date?: string;
   time?: string;
-  scheduled_for?: string;
+  scheduled_for?: string | null;
   title: string;
   content: string;
   content_category?: string | null;
-  image_url?: string;
+  image_url?: string | null;
   image_status?: string | null;
   image_job_id?: string | null;
   image_status_url?: string | null;

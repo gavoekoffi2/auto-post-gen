@@ -7,6 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { Upload, X, ImagePlus, Trash2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { validateImageFile } from "@/lib/imageUpload";
 
 interface CustomImageLibraryProps {
   images: string[];
@@ -35,22 +36,20 @@ export function CustomImageLibrary({
       if (!session) throw new Error("Non authentifié");
 
       for (const file of Array.from(files)) {
-        if (!file.type.startsWith("image/")) {
-          toast.error(`${file.name} n'est pas une image`);
+        // Same validation as the logo upload: rejects SVG and anything the
+        // poster pipeline cannot render, and derives the extension from the
+        // MIME type rather than the user-controlled filename.
+        const validation = validateImageFile(file);
+        if (validation.error) {
+          toast.error(`${file.name} : ${validation.error}`);
           continue;
         }
 
-        if (file.size > 5 * 1024 * 1024) {
-          toast.error(`${file.name} dépasse 5MB`);
-          continue;
-        }
-
-        const fileExt = file.name.split(".").pop();
-        const fileName = `${session.user.id}/${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
+        const fileName = `${session.user.id}/${Date.now()}-${Math.random().toString(36).substring(7)}.${validation.extension}`;
 
         const { error: uploadError } = await supabase.storage
           .from("user-assets")
-          .upload(fileName, file);
+          .upload(fileName, file, { contentType: file.type });
 
         if (uploadError) throw uploadError;
 
