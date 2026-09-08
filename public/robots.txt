@@ -1,14 +1,19 @@
-User-agent: Googlebot
-Allow: /
-
-User-agent: Bingbot
-Allow: /
-
-User-agent: Twitterbot
-Allow: /
-
-User-agent: facebookexternalhit
-Allow: /
+# Public marketing pages are crawlable; the authenticated app is not.
+# These routes only ever return the SPA shell to a crawler, so indexing them
+# adds duplicate, contentless results.
 
 User-agent: *
 Allow: /
+Disallow: /dashboard
+Disallow: /calendar
+Disallow: /statistics
+Disallow: /comments
+Disallow: /profile
+Disallow: /onboarding
+Disallow: /admin
+Disallow: /auth
+Disallow: /reset-password
+Disallow: /forgot-password
+Disallow: /validate-post
+
+Sitemap: https://auto-post-gen.76.13.129.252.sslip.io/sitemap.xml

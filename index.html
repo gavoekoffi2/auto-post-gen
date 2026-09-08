@@ -10,19 +10,39 @@
     <link rel="icon" type="image/svg+xml" href="/pro-social-ai-icon.svg" />
     <link rel="apple-touch-icon" href="/pro-social-ai-icon.svg" />
 
+    <meta name="theme-color" content="#0F172A" />
+
+    <!-- Social preview. These MUST point at a raster image: Facebook,
+         LinkedIn, WhatsApp and X silently show no preview at all for an
+         SVG og:image. public/og-image.png is generated from og-image.svg
+         by scripts/render-og-image.py — regenerate it after editing the SVG. -->
     <meta property="og:title" content="Pro Social AI - Publication Automatisée sur Réseaux Sociaux" />
     <meta property="og:description" content="Automatisez vos publications sur les réseaux sociaux avec l'IA. Génération, validation et planification intelligente." />
     <meta property="og:type" content="website" />
-    <meta property="og:image" content="https://auto-post-gen.76.13.129.252.sslip.io/og-image.svg" />
+    <meta property="og:site_name" content="Pro Social AI" />
+    <meta property="og:locale" content="fr_FR" />
+    <meta property="og:url" content="https://auto-post-gen.76.13.129.252.sslip.io/" />
+    <meta property="og:image" content="https://auto-post-gen.76.13.129.252.sslip.io/og-image.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Pro Social AI — génération, planification et publication automatisées pour vos réseaux sociaux." />
 
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:site" content="@prosocialai" />
-    <meta name="twitter:image" content="https://auto-post-gen.76.13.129.252.sslip.io/og-image.svg" />
+    <meta name="twitter:image" content="https://auto-post-gen.76.13.129.252.sslip.io/og-image.png" />
+    <meta name="twitter:image:alt" content="Pro Social AI — génération, planification et publication automatisées pour vos réseaux sociaux." />
     <link rel="canonical" href="https://auto-post-gen.76.13.129.252.sslip.io/" />
   </head>
 
   <body>
     <div id="root"></div>
+    <noscript>
+      <div style="font-family: system-ui, sans-serif; max-width: 34rem; margin: 4rem auto; padding: 0 1rem; text-align: center;">
+        <h1>Pro Social AI</h1>
+        <p>Cette application a besoin de JavaScript pour fonctionner. Activez-le dans votre navigateur, puis rechargez la page.</p>
+      </div>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
