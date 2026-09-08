@@ -19,5 +19,15 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run lint
+      # `npm run build` (vite) does NOT typecheck, so type errors used to
+      # reach production unnoticed. Gate them explicitly.
+      - run: npm run typecheck
       - run: npm test
       - run: npm run build
+
+      # The edge functions are deployed straight from this repo and are never
+      # covered by the frontend build, so typecheck them here too.
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: deno check supabase/functions/*/index.ts

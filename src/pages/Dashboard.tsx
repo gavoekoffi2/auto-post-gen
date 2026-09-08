@@ -427,6 +427,7 @@ export default function Dashboard() {
       if (!data || !data.content) {
         throw new Error('Aucun contenu reçu de la génération');
       }
+      const isFallback = data.fallback === true;
 
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error("Non authentifié");
@@ -440,7 +441,7 @@ export default function Dashboard() {
       //    the result without waiting for the slow image generation.
       const newPost = {
         user_id: session.user.id,
-        title: "Nouveau contenu IA",
+        title: isFallback ? "Texte de secours — à régénérer" : "Nouveau contenu IA",
         content: data.content,
         content_category: data.postType,
         image_url: null,
@@ -472,7 +473,26 @@ export default function Dashboard() {
       };
 
       setPosts((prev) => [transformedPost, ...prev]);
-      toast.success("Post enrichi par recherche web généré. L'image est en cours...");
+
+      // generate-content answers 200 with a generic canned post when the AI
+      // provider is unreachable, so a success toast here would tell the user
+      // their post was written for them when it was not. Say what actually
+      // happened, and do NOT spend a paid 2K poster on filler text.
+      if (isFallback) {
+        toast.warning(
+          "Texte de secours utilisé : le service d'écriture IA est momentanément indisponible. " +
+            "Cliquez sur « Régénérer le texte » dans un instant pour obtenir un vrai post.",
+          { duration: 10000 },
+        );
+        if (data.warning) console.warn("generate-content fallback reason:", data.warning);
+        return;
+      }
+
+      toast.success(
+        data.usedWebInspiration
+          ? "Post enrichi par recherche web généré. L'affiche est en cours..."
+          : "Post généré. L'affiche est en cours...",
+      );
 
       // 2. Kick off image generation asynchronously. Don't block the UI.
       //    Mark the post as generating-image so the card can show a
@@ -577,17 +597,31 @@ export default function Dashboard() {
       });
       if (error) throw error;
       if (!data?.content) throw new Error("Aucun contenu reçu");
+      const isFallback = data.fallback === true;
 
       const updatedPost: Post = {
         ...post,
-        title: "Contenu régénéré",
+        title: isFallback ? "Texte de secours — à régénérer" : "Contenu régénéré",
         content: data.content,
         image_url: undefined,
+        // The old poster belongs to the old text. Clear the whole image state,
+        // not just the URL, so a job that finishes later is not re-attached to
+        // content it was never generated for.
+        image_status: null,
+        image_job_id: null,
+        image_status_url: null,
       };
 
       const { error: updateError } = await supabase
         .from('posts')
-        .update({ title: updatedPost.title, content: updatedPost.content, image_url: null })
+        .update({
+          title: updatedPost.title,
+          content: updatedPost.content,
+          image_url: null,
+          image_status: null,
+          image_job_id: null,
+          image_status_url: null,
+        })
         .eq('id', post.id);
       if (updateError) throw updateError;
 
@@ -596,6 +630,15 @@ export default function Dashboard() {
         setEditingPost(updatedPost);
       }
       toast.dismiss(loadingToast);
+      if (isFallback) {
+        // Don't chain a paid poster onto filler text.
+        if (data.warning) console.warn("generate-content fallback reason:", data.warning);
+        toast.warning(
+          "Texte de secours utilisé : le service d'écriture IA est momentanément indisponible. Réessayez dans un instant.",
+          { duration: 10000 },
+        );
+        return;
+      }
       toast.success("Contenu régénéré. Nouvelle affiche en cours...");
       await handleRegenerateImage(updatedPost);
     } catch (err) {

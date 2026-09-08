@@ -255,6 +255,14 @@ export async function braveSearch(query: string): Promise<WebResult[]> {
 // Pull meaningful nouns out of a free-form description so queries focus on
 // the actual activity (e.g. "boulangerie artisanale Paris bio") instead of
 // the generic sector label.
+// Tokens are accent-stripped before the stopword lookup, so the stopword set
+// must be stripped the same way — otherwise "été", "déjà", "très" and "mêmes"
+// never matched and leaked into the search queries as if they were meaningful
+// keywords about the business.
+function stripAccents(value: string): string {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
 const FR_STOPWORDS = new Set([
   "je", "tu", "il", "elle", "on", "nous", "vous", "ils", "elles",
   "le", "la", "les", "un", "une", "des", "de", "du", "au", "aux",
@@ -266,14 +274,11 @@ const FR_STOPWORDS = new Set([
   "été", "étant", "fait", "faire", "fais", "très", "plus", "moins",
   "aussi", "encore", "déjà", "ne", "pas", "non", "oui", "si", "alors",
   "comme", "mêmes", "the", "and", "for", "with",
-]);
+].map(stripAccents));
 
 export function extractKeywords(text: string, max = 6): string[] {
   if (!text) return [];
-  const tokens = text
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "") // strip accents for stopword match
+  const tokens = stripAccents(text.toLowerCase())
     .replace(/[^a-z0-9àâäéèêëîïôöùûüç \-]/gi, " ")
     .split(/\s+/)
     .filter((t) => t.length >= 3 && !FR_STOPWORDS.has(t));

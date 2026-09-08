@@ -31,3 +31,64 @@ test('generate-content converts OpenRouter non-2xx into a usable local post fall
   assert.match(source, /JSON\.stringify\(payload\)/);
   assert.match(source, /status:\s*200/);
 });
+
+// --- The dashboard must not present a fallback post as a real generation ---
+const dashboard = readFileSync(
+  join(__dirname, '..', 'src/pages/Dashboard.tsx'),
+  'utf8',
+);
+
+test('the dashboard tells the truth when generate-content returned canned filler', () => {
+  // generate-content answers HTTP 200 with { fallback: true } when the AI
+  // provider is down. The dashboard used to show a plain success toast, so
+  // the user believed the AI had written their post.
+  assert.match(dashboard, /const isFallback = data\.fallback === true/);
+  assert.match(dashboard, /Texte de secours/);
+  assert.match(dashboard, /toast\.warning\(/);
+});
+
+test('a fallback post never triggers a paid poster generation', () => {
+  // Each poster is a paid premium 2K render. Spending one on filler text the
+  // user is about to regenerate is pure waste, so both generation paths must
+  // bail out before kicking the image job.
+  const generateBlock = dashboard.slice(
+    dashboard.indexOf('const handleGenerate ='),
+    dashboard.indexOf('const handleRegenerateImage ='),
+  );
+  const fallbackIdx = generateBlock.indexOf('if (isFallback)');
+  const imageKickIdx = generateBlock.indexOf('setGeneratingImageIds((prev) => new Set(prev).add(savedPost.id))');
+  assert.ok(fallbackIdx > 0, 'handleGenerate must check the fallback flag');
+  assert.ok(imageKickIdx > 0, 'handleGenerate must kick the poster job');
+  assert.ok(
+    fallbackIdx < imageKickIdx,
+    'the fallback bail-out must come BEFORE the paid poster job is started',
+  );
+
+  const regenBlock = dashboard.slice(
+    dashboard.indexOf('const handleRegenerateContent ='),
+    dashboard.indexOf('const handlePreview ='),
+  );
+  assert.ok(
+    regenBlock.indexOf('if (isFallback)') < regenBlock.indexOf('await handleRegenerateImage(updatedPost)'),
+    'regeneration must bail out before chaining a poster onto filler text',
+  );
+});
+
+test('the dashboard does not claim web research it did not do', () => {
+  // The toast used to hardcode "enrichi par recherche web" even when
+  // researchInspiration returned nothing.
+  assert.match(dashboard, /data\.usedWebInspiration/);
+});
+
+test('regenerating the text clears the whole stale poster job, not just the URL', () => {
+  const regenBlock = dashboard.slice(
+    dashboard.indexOf('const handleRegenerateContent ='),
+    dashboard.indexOf('const handlePreview ='),
+  );
+  for (const column of ['image_url: null', 'image_status: null', 'image_job_id: null', 'image_status_url: null']) {
+    assert.ok(
+      regenBlock.includes(column),
+      `regeneration must reset ${column} so an in-flight poster is not re-attached to new text`,
+    );
+  }
+});
