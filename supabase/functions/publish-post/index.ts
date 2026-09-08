@@ -50,7 +50,13 @@ interface PostRow {
   image_job_id: string | null;
   image_status_url: string | null;
   image_status: string | null;
+  publish_attempts: number | null;
 }
+
+// After this many failed attempts a post stops being retried and is marked
+// 'failed', so it leaves the cron queue and becomes visible (and retryable)
+// in the dashboard. Must match due_posts_for_publishing's p_max_attempts.
+const MAX_PUBLISH_ATTEMPTS = 6;
 
 interface SocialConnectionRow {
   id?: string;
@@ -594,11 +600,22 @@ async function publishPost(
   // Atomically claim the post: only succeed if it is still in the
   // 'validated' state, transitioning it to 'publishing'. This prevents
   // a concurrent cron run and a manual click from both posting.
+  // Read the current attempt count first so the claim can increment it in the
+  // same write that flips the status — the counter is what stops a post that
+  // can never publish from being retried on every single cron tick.
+  const { data: current } = await supabase
+    .from("posts")
+    .select("publish_attempts")
+    .eq("id", postId)
+    .maybeSingle();
+  const attemptNumber = (current?.publish_attempts ?? 0) + 1;
+
   const { data: claimed, error: claimError } = await supabase
     .from("posts")
     .update({
       status: "publishing",
       auto_publish_attempted_at: new Date().toISOString(),
+      publish_attempts: attemptNumber,
     })
     .eq("id", postId)
     .eq("status", "validated")
@@ -710,7 +727,18 @@ async function publishPost(
   // Zernio counts as 'published'. A queued/processing response stays
   // validated with publish_error details so the dashboard doesn't claim a
   // LinkedIn post exists before LinkedIn/Zernio confirms it.
-  const finalStatus = anyOk ? "published" : allErrors ? "failed" : "validated";
+  // A post that nothing published normally goes back to 'validated' to be
+  // retried later. Once it has exhausted its attempts it is marked 'failed'
+  // instead: otherwise it stays permanently due, and because the cron batch is
+  // ordered by scheduled_for, a handful of such posts (a user who never
+  // connected a network — the default state of a new account) would occupy
+  // every batch and starve all newer posts.
+  const exhausted = attemptNumber >= MAX_PUBLISH_ATTEMPTS;
+  const finalStatus = anyOk
+    ? "published"
+    : allErrors || exhausted
+      ? "failed"
+      : "validated";
 
   // Persist external post ids so the engagement/comments sync can later
   // map a published post back to its per-platform social post.
@@ -725,7 +753,7 @@ async function publishPost(
     .update({
       status: finalStatus,
       published_at: anyOk ? new Date().toISOString() : null,
-      publish_error: allErrors || anyPending || finalStatus === "validated" ? JSON.stringify(results) : null,
+      publish_error: anyOk && !anyPending ? null : JSON.stringify(results),
       provider_post_id: providerPostId,
       external_post_ids: externalPostIds,
     })
@@ -831,19 +859,34 @@ serve(async (req) => {
     const { error: recoverError } = await supabase.rpc("recover_stuck_publishing");
     if (recoverError) console.error("recover_stuck_publishing:", recoverError);
 
-    const nowIso = new Date().toISOString();
     // Cap the per-run batch so a stuck queue can't exhaust the function
     // runtime; remaining items are picked up on the next cron tick. Kept small
     // because each post can also resume a poster job + make a publish call, all
     // sequential, and the edge runtime limit is ~150s.
     const CRON_BATCH_SIZE = 12;
-    const { data: due } = await supabase
-      .from("posts")
-      .select("id")
-      .eq("status", "validated")
-      .lte("scheduled_for", nowIso)
-      .order("scheduled_for", { ascending: true })
-      .limit(CRON_BATCH_SIZE);
+    // due_posts_for_publishing applies the retry backoff and skips posts that
+    // exhausted their attempts, so a permanently failing post cannot reappear
+    // at the head of every batch. Falls back to the plain query if the
+    // migration has not been applied yet.
+    let due: Array<{ id: string }> | null = null;
+    const { data: dueRows, error: dueErr } = await supabase.rpc("due_posts_for_publishing", {
+      p_limit: CRON_BATCH_SIZE,
+      p_max_attempts: MAX_PUBLISH_ATTEMPTS,
+    });
+    if (dueErr) {
+      console.error("due_posts_for_publishing unavailable, using fallback query:", dueErr.message);
+      const { data: fallback } = await supabase
+        .from("posts")
+        .select("id")
+        .eq("status", "validated")
+        .not("scheduled_for", "is", null)
+        .lte("scheduled_for", new Date().toISOString())
+        .order("scheduled_for", { ascending: true })
+        .limit(CRON_BATCH_SIZE);
+      due = fallback;
+    } else {
+      due = dueRows as Array<{ id: string }> | null;
+    }
 
     // Shared budget for resuming pending poster jobs across the whole batch,
     // so even many unresolved jobs can't push the run past the edge limit.

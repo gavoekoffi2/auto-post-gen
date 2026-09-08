@@ -361,7 +361,14 @@ export default function Dashboard() {
     try {
       const { error } = await supabase
         .from('posts')
-        .update({ status: 'validated', publish_error: null })
+        .update({
+          status: 'validated',
+          publish_error: null,
+          // An explicit user retry is a fresh start: without this the post
+          // would still be past the give-up threshold and the cron publisher
+          // would refuse to pick it up again.
+          publish_attempts: 0,
+        })
         .eq('id', post.id);
       if (error) throw error;
       const revived: Post = { ...post, status: 'validated' };
