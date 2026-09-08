@@ -8,6 +8,7 @@ import { ensurePostEngagement } from "../_shared/post-engagement.ts";
 import { buildInspirationBlock, researchInspiration } from "../_shared/research.ts";
 import { rehostToUserAssets, startPosterJob } from "../_shared/graphiste.ts";
 import { sectorLabelOr, toneLabel } from "../_shared/profileLabels.ts";
+import { nextOccurrenceInZone, safeTimeZone } from "../_shared/timezone.ts";
 
 
 // ISO 8601 week number (1..53)
@@ -170,7 +171,13 @@ serve(async (req) => {
           ? profile.platforms
           : ["Instagram"];
 
-        // Time of day the user picked for automatic posts (defaults to 10:00).
+        // Time of day the user picked for automatic posts (defaults to 10:00),
+        // interpreted in THEIR timezone. The edge runtime's local time is UTC,
+        // so the previous setHours()/getDay() pair scheduled a Paris user's
+        // "10:00" at 11:00-12:00 their time and could resolve their preferred
+        // weekday a day off. Unknown/absent zones fall back to UTC, which is
+        // exactly the old behaviour.
+        const timeZone = safeTimeZone(profile.timezone);
         const [rawHour, rawMinute] = String(profile.preferred_time || "10:00")
           .split(":")
           .map((n) => parseInt(n, 10));
@@ -359,19 +366,16 @@ Génère uniquement le texte du post, sans titre ni explication.`;
           const targetDay = preferredDays[i % preferredDays.length];
           const targetDayNumber = DAY_MAPPING[targetDay] ?? 1;
 
-          const scheduledDate = new Date(now);
-          const currentDay = scheduledDate.getDay();
-          let daysUntilTarget = (targetDayNumber - currentDay + 7) % 7;
-          if (daysUntilTarget === 0) {
-            // Target day is today: keep today only if the chosen time is still
-            // ahead; otherwise push to next week. (The old `|| 7` always pushed
-            // a same-day target a full week out, dropping this week's post.)
-            const todayAtTime = new Date(now);
-            todayAtTime.setHours(hour, minute, 0, 0);
-            if (todayAtTime.getTime() <= now.getTime()) daysUntilTarget = 7;
-          }
-          scheduledDate.setDate(scheduledDate.getDate() + daysUntilTarget);
-          scheduledDate.setHours(hour, minute, 0, 0);
+          // Resolved entirely in the user's zone: the weekday comparison, the
+          // "is today's slot already past" check and the final wall-clock time
+          // all use their calendar, not the runtime's.
+          const scheduledDate = nextOccurrenceInZone(
+            now,
+            targetDayNumber,
+            hour,
+            minute,
+            timeZone,
+          );
 
           // Pick the visual. A custom image library wins (free, instant);
           // otherwise we kick off a Graphiste GPT poster job further below.

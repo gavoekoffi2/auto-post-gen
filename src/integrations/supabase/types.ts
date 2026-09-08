@@ -284,6 +284,7 @@ export type Database = {
           style_examples: Json | null
           target_audiences: Json
           tiktok_username: string | null
+          timezone: string
           tone: string
           twitter_username: string | null
           updated_at: string | null
@@ -327,6 +328,7 @@ export type Database = {
           style_examples?: Json | null
           target_audiences?: Json
           tiktok_username?: string | null
+          timezone?: string
           tone: string
           twitter_username?: string | null
           updated_at?: string | null
@@ -370,6 +372,7 @@ export type Database = {
           style_examples?: Json | null
           target_audiences?: Json
           tiktok_username?: string | null
+          timezone?: string
           tone?: string
           twitter_username?: string | null
           updated_at?: string | null

@@ -150,5 +150,23 @@ jobs:
             --data-binary @/tmp/poster-footer-text-query.json \
             "https://api.supabase.com/v1/projects/$PROJECT_REF/database/query" >/dev/null
 
+      - name: Apply profile timezone migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          migration="supabase/migrations/20260724000000_profile_timezone.sql"
+          jq -Rs '{query: .}' < "$migration" > /tmp/profile-timezone-query.json
+          curl --fail-with-body -sS -X POST \
+            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data-binary @/tmp/profile-timezone-query.json \
+            "https://api.supabase.com/v1/projects/$PROJECT_REF/database/query" >/dev/null
+
+      # NOTE: every migration above needs its own hand-written step, so a new
+      # migration can ship its code without its schema and only fail at
+      # runtime. Replacing these with a ledger-driven loop (apply once, never
+      # replay the pre-baseline files) is the right fix but changes how
+      # migrations reach the production database, so it is left for an
+      # explicit decision rather than done as part of an audit.
       - name: Deploy all edge functions
         run: supabase functions deploy --project-ref "$PROJECT_REF"

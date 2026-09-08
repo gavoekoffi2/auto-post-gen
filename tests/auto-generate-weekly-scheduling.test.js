@@ -17,7 +17,10 @@ test('auto-generate-weekly schedules at the user-chosen time, not a hard-coded 1
     'the publish time must come from the profile, not be hard-coded to 10:00',
   );
   assert.match(source, /profile\.preferred_time/);
-  assert.match(source, /setHours\(hour, minute, 0, 0\)/);
+  // The chosen hour/minute now reach the scheduler through the zone-aware
+  // helper instead of setHours(), which resolved against the edge runtime's
+  // UTC clock rather than the user's. See tests/scheduling-timezone.test.js.
+  assert.match(source, /nextOccurrenceInZone\(\s*now,\s*targetDayNumber,\s*hour,\s*minute,/);
 });
 
 test('auto-generate-weekly preserves the chosen value/research/promo mix across retries', () => {

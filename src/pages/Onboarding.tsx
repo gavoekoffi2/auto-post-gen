@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { AudienceEditor } from "@/components/AudienceEditor";
 import { AudienceSegment, normalizeAudienceSegments } from "@/lib/audiences";
+import { browserTimeZone } from "@/lib/timezone";
 
 // detect-audiences rejects anything shorter than 20 characters. Gating the
 // step at 10 let the user press "Suivant" and then hit a server-side refusal
@@ -154,6 +155,9 @@ export default function Onboarding() {
               style_example: formData.styleExample,
               platforms: formData.platforms.length > 0 ? formData.platforms : ['Instagram'],
               preferred_days: formData.preferredDays,
+              // Captured from the browser so "10:00" means 10:00 where the
+              // user actually is. Editable later from the profile page.
+              timezone: browserTimeZone(),
               auto_publish: false,
               image_people_type: formData.imagePeopleType,
               audience_suggestions: formData.audienceSuggestions,
