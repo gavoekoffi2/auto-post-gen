@@ -21,6 +21,7 @@ import { AIQuotaError, chatCompletion, getOpenRouterKey, getTextModel } from "..
 import { buildAudiencePrompt, normalizeAudiences } from "../_shared/audience.ts";
 import { ensurePostEngagement } from "../_shared/post-engagement.ts";
 import { buildInspirationBlock, researchInspiration } from "../_shared/research.ts";
+import { contentTypeLabels, sectorLabelOr, toneLabel } from "../_shared/profileLabels.ts";
 
 
 // Per-user rate limit
@@ -234,12 +235,18 @@ serve(async (req) => {
       userPreferences?.description?.split(" ").slice(0, 3).join(" ") ||
       "notre entreprise";
 
-    const sector = userPreferences?.sector || "Business";
-    const tone = userPreferences?.tone || "Professionnel";
-    const contentTypes =
-      userPreferences?.contentTypes ||
-      userPreferences?.content_types ||
-      ["mixed"];
+    // Onboarding stores SLUGS ("tech", "other", "professional", "educational").
+    // Injecting them raw produced prompts like "Secteur général: other" and
+    // research queries like "actualité other". Map to real French labels; any
+    // free-text value the user already had is passed through untouched.
+    const sector = sectorLabelOr(userPreferences?.sector);
+    const tone = toneLabel(userPreferences?.tone);
+    const contentTypes = (() => {
+      const mapped = contentTypeLabels(
+        userPreferences?.contentTypes ?? userPreferences?.content_types,
+      );
+      return mapped.length ? mapped : ["Mixte"];
+    })();
     const styleExample =
       userPreferences?.styleExample || userPreferences?.style_example || "";
 

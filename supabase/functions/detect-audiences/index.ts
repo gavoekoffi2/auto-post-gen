@@ -6,6 +6,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { buildCorsHeaders } from "../_shared/cors.ts";
 import { chatText, getOpenRouterKey, getTextModel } from "../_shared/ai.ts";
 import { normalizeAudiences } from "../_shared/audience.ts";
+import { contentTypeLabels, sectorLabelOr } from "../_shared/profileLabels.ts";
 
 const MAX_PAYLOAD_BYTES = 32 * 1024;
 
@@ -84,9 +85,9 @@ serve(async (req) => {
     const prompt = `Tu es Claude, stratège senior en segmentation client et en contenu. Analyse l'entreprise ci-dessous et propose 3 à 6 segments de clientèle réellement distincts et exploitables.
 
 ENTREPRISE: ${companyName}
-SECTEUR: ${sector}
+SECTEUR: ${sectorLabelOr(sector)}
 DESCRIPTION PRÉCISE: ${description}
-TYPES DE CONTENU SOUHAITÉS: ${contentTypes.join(", ") || "mixte"}
+TYPES DE CONTENU SOUHAITÉS: ${contentTypeLabels(contentTypes).join(", ") || "Mixte"}
 
 EXIGENCES DE QUALITÉ:
 - Ne propose jamais des catégories vagues comme « tout le monde », « entreprises » ou « particuliers » seules.

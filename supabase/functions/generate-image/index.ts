@@ -9,6 +9,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { buildCorsHeaders } from "../_shared/cors.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { getSocialImageSpec, type SocialImageSpec } from "../_shared/socialImageSpecs.ts";
+import { sectorLabel } from "../_shared/profileLabels.ts";
 // Image generation for Pro Social AI must produce real poster layouts.
 // Keep this endpoint dedicated to Graphiste GPT poster output rather than
 // generic image providers. The chosen output format always follows the post's
@@ -289,9 +290,9 @@ function extractGraphisteImageUrl(value: unknown, allowTemplateImage = false): s
 
 function graphisteDomain(sector: string, description: string, postContent = ""): string {
   const haystack = `${sector} ${description} ${postContent}`.toLowerCase();
-  if (/restaurant|food|cuisine|bar|burger|pizza|menu|boisson|plat|midi|réservez|reservez/.test(haystack)) return "restaurant";
+  if (/restaurant|restauration|alimentation|food|cuisine|bar|burger|pizza|menu|boisson|plat|midi|réservez|reservez/.test(haystack)) return "restaurant";
   if (/église|eglise|church|pasteur|minist/.test(haystack)) return "church";
-  if (/formation|cours|école|ecole|academy|coaching|webinar|atelier|apprendre/.test(haystack)) return "formation";
+  if (/formation|éducation|education|cours|école|ecole|academy|coaching|webinar|atelier|apprendre/.test(haystack)) return "formation";
   if (/event|événement|evenement|concert|conférence|conference|festival/.test(haystack)) return "evenement";
   if (/ecommerce|commerce|boutique|produit|shop|vente|promo|promotion|offre/.test(haystack)) return "ecommerce";
   if (/mode|fashion|vêtement|vetement|beauté|beaute/.test(haystack)) return "fashion";
@@ -665,7 +666,10 @@ serve(async (req) => {
       const primary = profile?.brand_primary_color || "#8B5CF6";
       const secondary = profile?.brand_secondary_color || "#3B82F6";
       const accent = profile?.brand_accent_color || "#F59E0B";
-      const sector = profile?.sector || "";
+      // profiles.sector holds an onboarding SLUG ("tech", "other"). Map it to a
+      // French label so the poster brief reads "Secteur: Technologie et
+      // numérique" instead of "Secteur: tech" — see _shared/profileLabels.ts.
+      const sector = sectorLabel(profile?.sector);
       const description = profile?.description || "";
 
       const graphiste = await tryGraphisteGptPoster({

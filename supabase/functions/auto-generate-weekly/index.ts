@@ -7,6 +7,7 @@ import { buildAudiencePrompt, normalizeAudiences } from "../_shared/audience.ts"
 import { ensurePostEngagement } from "../_shared/post-engagement.ts";
 import { buildInspirationBlock, researchInspiration } from "../_shared/research.ts";
 import { rehostToUserAssets, startPosterJob } from "../_shared/graphiste.ts";
+import { sectorLabelOr, toneLabel } from "../_shared/profileLabels.ts";
 
 
 // ISO 8601 week number (1..53)
@@ -219,7 +220,11 @@ serve(async (req) => {
         // real, current, sector-specific facts (the same enrichment the
         // manual generator uses) while keeping the cron fast.
         const companyName = profile.company_name || "notre entreprise";
-        const sector = profile.sector || "Business";
+        // profiles.sector/tone hold onboarding SLUGS ("tech", "other",
+        // "professional"). Map them to real French labels before they reach a
+        // prompt or a research query — see _shared/profileLabels.ts.
+        const sector = sectorLabelOr(profile.sector);
+        const tone = toneLabel(profile.tone);
         const description = profile.description || "";
         const approvedAudiences = normalizeAudiences(profile.target_audiences);
         // Each weekly post rotates through target_audiences. buildAudiencePrompt
@@ -259,7 +264,7 @@ PROFIL DU CLIENT:
 - Nom de l'entreprise: ${companyName}
 - Secteur: ${sector}
 ${description ? `- Description de l'activité: ${description}` : ""}
-- Ton: ${profile.tone || "Professionnel"}
+- Ton: ${tone}
 ${audienceBlock}
 ${inspirationBlock}
 OBJECTIF DE CE POST: présenter ce que propose ${companyName} et donner envie de faire appel à ses services.
@@ -283,7 +288,7 @@ Génère uniquement le texte du post, sans titre ni explication.`;
 
 SECTEUR: ${sector}
 ${description ? `ACTIVITÉ PRÉCISE: ${description}` : ""}
-TON: ${profile.tone || "Professionnel"}
+TON: ${tone}
 ${audienceBlock}
 
 OBJECTIF ACTUALITÉ/RECHERCHE: informer l'audience sur une nouveauté, une évolution, une étude ou une tendance récente réellement pertinente pour ce métier.
@@ -304,7 +309,7 @@ Génère uniquement le texte du post, sans titre ni explication.`;
 
 SECTEUR: ${sector}
 ${description ? `ACTIVITÉ PRÉCISE: ${description}` : ""}
-TON: ${profile.tone || "Professionnel"}
+TON: ${tone}
 ${audienceBlock}
 ANGLE IMPOSÉ: ${AUTO_ANGLES[(i + weekNumber) % AUTO_ANGLES.length]}
 

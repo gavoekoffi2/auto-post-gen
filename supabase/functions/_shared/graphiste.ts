@@ -90,9 +90,9 @@ function ctaFromPost(postContent: string): string {
 
 function graphisteDomain(sector: string, description: string, postContent = ""): string {
   const haystack = `${sector} ${description} ${postContent}`.toLowerCase();
-  if (/restaurant|food|cuisine|bar|burger|pizza|menu|boisson|plat|midi|réservez|reservez/.test(haystack)) return "restaurant";
+  if (/restaurant|restauration|alimentation|food|cuisine|bar|burger|pizza|menu|boisson|plat|midi|réservez|reservez/.test(haystack)) return "restaurant";
   if (/église|eglise|church|pasteur|minist/.test(haystack)) return "church";
-  if (/formation|cours|école|ecole|academy|coaching|webinar|atelier|apprendre/.test(haystack)) return "formation";
+  if (/formation|éducation|education|cours|école|ecole|academy|coaching|webinar|atelier|apprendre/.test(haystack)) return "formation";
   if (/event|événement|evenement|concert|conférence|conference|festival/.test(haystack)) return "evenement";
   if (/ecommerce|commerce|boutique|produit|shop|vente|promo|promotion|offre/.test(haystack)) return "ecommerce";
   if (/mode|fashion|vêtement|vetement|beauté|beaute/.test(haystack)) return "fashion";

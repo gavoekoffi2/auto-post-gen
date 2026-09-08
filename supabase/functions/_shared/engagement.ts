@@ -11,6 +11,7 @@
 // defensive and the reply payload is isolated for easy live validation.
 
 import { chatText } from "./ai.ts";
+import { toneLabel } from "./profileLabels.ts";
 
 const AYR = "https://app.ayrshare.com/api";
 
@@ -119,7 +120,9 @@ export async function draftReply(opts: {
     "Tu es un community manager expérimenté. Rédige UNE réponse à un commentaire reçu sur les réseaux sociaux.",
     "Règles:",
     "- Chaleureuse, professionnelle, utile.",
-    opts.brandTone ? `- Respecte le ton de la marque: ${opts.brandTone}.` : "",
+    // profiles.tone is an onboarding slug ("professional"); map it to the
+    // French label so the instruction reads naturally to the model.
+    opts.brandTone ? `- Respecte le ton de la marque: ${toneLabel(opts.brandTone)}.` : "",
     "- 1 à 2 phrases maximum, pas de hashtags, au plus un emoji.",
     "- N'invente pas de promesses commerciales.",
     opts.instructions ? `- Consignes spécifiques: ${opts.instructions}` : "",

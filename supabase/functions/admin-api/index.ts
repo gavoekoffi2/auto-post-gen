@@ -16,14 +16,23 @@ type AdminBody = {
   companyName?: string;
 };
 
+// `banned_until` is returned by the GoTrue admin API but is not part of the
+// public `User` type, so read it through a narrow structural cast instead of
+// widening the whole user object to `any`.
+function bannedUntil(user: User): string | null {
+  const value = (user as User & { banned_until?: unknown }).banned_until;
+  return typeof value === "string" ? value : null;
+}
+
 function safeUser(user: User) {
+  const banned = bannedUntil(user);
   return {
     id: user.id,
     email: user.email ?? "",
     createdAt: user.created_at,
     lastSignInAt: user.last_sign_in_at ?? null,
     role: user.app_metadata?.role ?? "user",
-    blocked: !!user.banned_until && new Date(user.banned_until).getTime() > Date.now(),
+    blocked: !!banned && new Date(banned).getTime() > Date.now(),
   };
 }
 
