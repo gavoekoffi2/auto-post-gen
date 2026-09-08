@@ -10,6 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { getSocialImageSpec } from "@/lib/socialImageSpecs";
+import { joinLocalDateTime, splitLocalDateTime } from "@/lib/timezone";
 import { useNavigate } from "react-router-dom";
 import SettingsDialog from "@/components/SettingsDialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -197,10 +198,10 @@ export default function Dashboard() {
         return {
           ...post,
           platform: post.platforms?.[0] || 'Instagram',
-          date: post.scheduled_for ? new Date(post.scheduled_for).toISOString().split('T')[0] : '',
-          time: post.scheduled_for
-            ? new Date(post.scheduled_for).toTimeString().substring(0, 5)
-            : '',
+          // Date and time must come from the SAME clock. Reading the date via
+          // toISOString() (UTC) and the time via toTimeString() (local) showed
+          // two different instants — a full day off east of UTC late at night.
+          ...splitLocalDateTime(post.scheduled_for),
           status,
         };
       });
@@ -394,9 +395,9 @@ export default function Dashboard() {
           title: editingPost.title,
           content: editingPost.content,
           platforms: editingPost.platforms || ['Instagram'],
-          scheduled_for: editingPost.date && editingPost.time
-            ? `${editingPost.date}T${editingPost.time}:00`
-            : null,
+          // A bare "2026-09-09T00:30:00" has no zone, so Postgres stores it as
+          // UTC — re-saving an unchanged post shifted it by the user's offset.
+          scheduled_for: joinLocalDateTime(editingPost.date || '', editingPost.time || ''),
         })
         .eq('id', editingPost.id);
 
@@ -474,8 +475,7 @@ export default function Dashboard() {
       const transformedPost: Post = {
         ...savedPost,
         platform: savedPost.platforms?.[0] || 'Instagram',
-        date: savedPost.scheduled_for ? new Date(savedPost.scheduled_for).toISOString().split('T')[0] : '',
-        time: savedPost.scheduled_for ? new Date(savedPost.scheduled_for).toTimeString().substring(0, 5) : '',
+        ...splitLocalDateTime(savedPost.scheduled_for),
         status,
       };
 
