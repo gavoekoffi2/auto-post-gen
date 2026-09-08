@@ -24,6 +24,10 @@ function bannedUntil(user: User): string | null {
   return typeof value === "string" ? value : null;
 }
 
+function isFounder(user: User): boolean {
+  return user.email?.toLowerCase() === FOUNDER_EMAIL;
+}
+
 function safeUser(user: User) {
   const banned = bannedUntil(user);
   return {
@@ -33,6 +37,10 @@ function safeUser(user: User) {
     lastSignInAt: user.last_sign_in_at ?? null,
     role: user.app_metadata?.role ?? "user",
     blocked: !!banned && new Date(banned).getTime() > Date.now(),
+    // The owner account cannot be demoted, blocked or deleted (enforced
+    // below). Ship the flag so the admin UI can grey out those controls
+    // without hardcoding — and publishing — the owner's email address.
+    protected: isFounder(user),
   };
 }
 
@@ -63,7 +71,7 @@ serve(async (req) => {
   // email can promote itself. Every subsequent request relies on app_metadata,
   // which ordinary browser clients cannot edit.
   let actorRole = actor.app_metadata?.role ?? "user";
-  if (actor.email?.toLowerCase() === FOUNDER_EMAIL && actorRole !== "super_admin") {
+  if (isFounder(actor) && actorRole !== "super_admin") {
     const { data, error } = await admin.auth.admin.updateUserById(actor.id, {
       app_metadata: { ...actor.app_metadata, role: "super_admin" },
     });
@@ -162,7 +170,7 @@ serve(async (req) => {
     const { data: targetData, error: targetError } = await admin.auth.admin.getUserById(targetId);
     if (targetError || !targetData.user) return jsonResponse({ error: "Compte introuvable" }, { status: 404, cors: corsHeaders });
     const target = targetData.user;
-    const targetIsFounder = target.email?.toLowerCase() === FOUNDER_EMAIL;
+    const targetIsFounder = isFounder(target);
 
     if (action === "set_plan") {
       if (!body.plan || !VALID_PLANS.has(body.plan)) return jsonResponse({ error: "Forfait invalide" }, { status: 400, cors: corsHeaders });
