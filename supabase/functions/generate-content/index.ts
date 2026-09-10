@@ -199,12 +199,40 @@ serve(async (req) => {
         }),
         { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
+    let quotaReserved = false;
+    // A canned fallback is not a generation: if the AI provider never produced
+    // anything, the reservation taken here is given back below rather than
+    // counting against the user's hourly and monthly budgets.
+    const releaseQuota = async () => {
+      if (!quotaReserved) return;
+      quotaReserved = false;
+      const { data: reservation, error: findErr } = await supabase
+        .from("generation_usage")
+        .select("id")
+        .eq("user_id", userId)
+        .eq("function_name", "generate-content")
+        .eq("status", "reserved")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (findErr || !reservation?.id) {
+        if (findErr) console.error("Could not find text quota reservation:", findErr.message);
+        return;
+      }
+      const { error: releaseErr } = await supabase
+        .from("generation_usage")
+        .delete()
+        .eq("id", reservation.id);
+      if (releaseErr) console.error("Could not release text quota:", releaseErr.message);
+    };
+
     const { data: quotaOk, error: quotaErr } = await supabase.rpc("consume_generation_quota", {
       p_user: userId,
       p_function: "generate-content",
       p_max: RATE_LIMIT_MAX,
       p_window_seconds: Math.floor(RATE_LIMIT_WINDOW_MS / 1000),
     });
+    quotaReserved = !quotaErr && quotaOk !== false;
     if (quotaErr) {
       // RPC unavailable (e.g. migration not yet applied): degrade to the legacy
       // non-atomic count check + insert rather than failing the request.
@@ -222,6 +250,7 @@ serve(async (req) => {
         function_name: "generate-content",
         status: "reserved",
       });
+      quotaReserved = true;
     } else if (quotaOk === false) {
       return limitResponse();
     }
@@ -400,6 +429,7 @@ Réponds UNIQUEMENT avec le texte du post, sans titre ni explication, sans guill
     }
 
     if (!generatedContent) {
+      await releaseQuota();
       const payload = fallbackContent(fallbackReason || "AI returned empty content");
       return new Response(
         JSON.stringify(payload),

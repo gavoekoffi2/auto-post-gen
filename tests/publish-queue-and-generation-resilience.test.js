@@ -212,3 +212,28 @@ test("the landing page carries no invented customers or usage figures", () => {
     assert.equal(source.includes("images.unsplash.com"), false, `${label} still uses stock faces`);
   }
 });
+
+// ---------------------------------------------------------------------------
+// A canned fallback must be visible as one, and must not cost a generation.
+// ---------------------------------------------------------------------------
+
+test("the canned fallback text is surfaced to the user, not passed off as AI output", () => {
+  // generate-content answers { fallback: true } when the AI provider was
+  // unreachable and it returned a generic placeholder post. The dashboard used
+  // to announce that as a successful generation, so a user could publish
+  // boilerplate believing it had been written for their business.
+  assert.match(dashboard, /if \(data\.fallback\)/);
+  assert.match(dashboard, /modèle générique/);
+});
+
+test("the dashboard only claims web enrichment when the search actually returned something", () => {
+  assert.match(dashboard, /data\.usedWebInspiration\s*\n?\s*\?/);
+});
+
+test("a fallback does not consume the user's text generation quota", () => {
+  const generateContent = read("supabase/functions/generate-content/index.ts");
+  assert.match(generateContent, /const releaseQuota = async \(\) => \{/);
+  assert.match(generateContent, /await releaseQuota\(\);\n\s*const payload = fallbackContent/);
+  // Released by id, for the same reason as the image quota.
+  assert.match(generateContent, /\.eq\("id", reservation\.id\)/);
+});

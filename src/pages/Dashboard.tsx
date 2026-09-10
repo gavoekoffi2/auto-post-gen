@@ -535,7 +535,23 @@ export default function Dashboard() {
       };
 
       setPosts((prev) => [transformedPost, ...prev]);
-      toast.success("Post enrichi par recherche web généré. L'image est en cours...");
+      // generate-content answers with `fallback: true` when the AI provider was
+      // unreachable and it returned one of its canned placeholder posts. That
+      // used to be announced as a successful AI generation, so the user
+      // published boilerplate believing it was written for their business.
+      if (data.fallback) {
+        toast.warning(
+          "L'IA de rédaction est momentanément indisponible : ce texte est un modèle générique. " +
+            "Modifiez-le ou cliquez sur « Régénérer le contenu » dans un instant.",
+          { duration: 12000 },
+        );
+      } else {
+        toast.success(
+          data.usedWebInspiration
+            ? "Post enrichi par recherche web généré. L'image est en cours..."
+            : "Post généré. L'image est en cours...",
+        );
+      }
 
       // 2. Kick off image generation asynchronously. Don't block the UI.
       //    Mark the post as generating-image so the card can show a
@@ -677,7 +693,14 @@ export default function Dashboard() {
         setEditingPost(updatedPost);
       }
       toast.dismiss(loadingToast);
-      toast.success("Contenu régénéré. Nouvelle affiche en cours...");
+      if (data.fallback) {
+        toast.warning(
+          "L'IA de rédaction est momentanément indisponible : ce texte est un modèle générique. Réessayez dans un instant.",
+          { duration: 12000 },
+        );
+      } else {
+        toast.success("Contenu régénéré. Nouvelle affiche en cours...");
+      }
       await handleRegenerateImage(updatedPost);
     } catch (err) {
       toast.dismiss(loadingToast);
