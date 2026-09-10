@@ -174,6 +174,13 @@ serve(async (req) => {
           : ["Instagram"];
 
         // Time of day the user picked for automatic posts (defaults to 10:00).
+        //
+        // KNOWN LIMITATION: getDay()/setHours() below run in the edge runtime's
+        // timezone, which is UTC, and profiles carry no timezone column. That is
+        // correct for the primary market (Côte d'Ivoire, Sénégal, Mali… are all
+        // UTC+0) but a user in, say, Cameroon (UTC+1) gets their posts an hour
+        // off. Fixing it properly means storing a per-profile IANA timezone and
+        // asking for it in onboarding — a schema plus UI change, not a patch here.
         const [rawHour, rawMinute] = String(profile.preferred_time || "10:00")
           .split(":")
           .map((n) => parseInt(n, 10));

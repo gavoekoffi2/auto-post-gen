@@ -88,7 +88,14 @@ export default function CalendarPage() {
 
       const { error } = await supabase
         .from('posts')
-        .update({ scheduled_for: scheduledDateTime.toISOString() })
+        .update({
+          scheduled_for: scheduledDateTime.toISOString(),
+          // Rescheduling means "try at this new time": drop any retry backoff
+          // left over from a previous failed attempt, so the new slot is
+          // honoured instead of being held back by the old backoff window.
+          publish_attempts: 0,
+          next_publish_attempt_at: new Date().toISOString(),
+        })
         .eq('id', selectedPost.id);
 
       if (error) throw error;

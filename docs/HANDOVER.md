@@ -259,7 +259,14 @@ ci-dessous était atteignable en usage normal.
     merge sur `main` met à jour les Edge Functions mais laisse le frontend
     figé. À automatiser (rsync/scp du `dist/` + `docker compose up -d` depuis
     une action GitHub avec une clé SSH de déploiement).
-12. **Aucun test ne s'exécute contre les vraies APIs externes** (Graphiste,
+12. **Aucun fuseau horaire par profil.** `auto-generate-weekly` calcule le jour
+    et l'heure de publication dans le fuseau du runtime edge, c'est-à-dire UTC.
+    C'est juste pour le marché principal (Côte d'Ivoire, Sénégal, Mali… sont en
+    UTC+0), mais un utilisateur au Cameroun (UTC+1) reçoit ses posts décalés
+    d'une heure. Le correctif est une colonne `timezone` (IANA) sur `profiles`,
+    demandée à l'onboarding, utilisée par le générateur — schéma + UI, pas un
+    patch ponctuel.
+13. **Aucun test ne s'exécute contre les vraies APIs externes** (Graphiste,
     OpenRouter, Zernio). Les tests vérifient les invariants du code et du
     schéma ; ils ne prouvent pas qu'une clé est valide. `scripts/diagnose-graphiste.mjs`
     reste le seul contrôle bout-en-bout, et il est manuel.
