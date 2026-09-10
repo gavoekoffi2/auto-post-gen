@@ -72,25 +72,29 @@ export default function About() {
             </Card>
           </div>
 
-          {/* Stats */}
+          {/* Product facts. This block previously advertised an active-user
+              count, a total of posts generated and a customer-satisfaction
+              rate for a product that has not opened to its first users yet —
+              every one of those figures was invented. What follows are
+              properties of the product that anyone can verify from the app. */}
           <div className="glass-card p-8 md:p-12 rounded-2xl text-center">
-            <h2 className="text-2xl font-bold mb-8">Pro Social AI en chiffres</h2>
+            <h2 className="text-2xl font-bold mb-8">Pro Social AI en bref</h2>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
               <div>
-                <p className="text-4xl font-bold gradient-text">500+</p>
-                <p className="text-muted-foreground">Utilisateurs actifs</p>
+                <p className="text-4xl font-bold gradient-text">4</p>
+                <p className="text-muted-foreground">Réseaux publiables</p>
               </div>
               <div>
-                <p className="text-4xl font-bold gradient-text">10K+</p>
-                <p className="text-muted-foreground">Posts générés</p>
+                <p className="text-4xl font-bold gradient-text">100%</p>
+                <p className="text-muted-foreground">Contenu en français</p>
               </div>
               <div>
-                <p className="text-4xl font-bold gradient-text">5</p>
-                <p className="text-muted-foreground">Réseaux supportés</p>
+                <p className="text-4xl font-bold gradient-text">2K</p>
+                <p className="text-muted-foreground">Affiches haute résolution</p>
               </div>
               <div>
-                <p className="text-4xl font-bold gradient-text">98%</p>
-                <p className="text-muted-foreground">Satisfaction client</p>
+                <p className="text-4xl font-bold gradient-text">0</p>
+                <p className="text-muted-foreground">Publication sans validation</p>
               </div>
             </div>
           </div>

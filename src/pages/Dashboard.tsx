@@ -62,6 +62,58 @@ function formatPublishError(raw?: string | null): string | null {
   return String(raw).slice(0, 200);
 }
 
+// `<input type="date">` + `<input type="time">` give local wall-clock values.
+// Concatenating them into "2026-09-10T14:30:00" and sending that to a
+// timestamptz column made Postgres read it as UTC, so every save shifted the
+// post by the user's offset while the dashboard kept rendering it as local
+// time. Build a real local Date and let toISOString() do the conversion.
+function localDateTimeToIso(date: string, time: string): string | null {
+  if (!date || !time) return null;
+  const [year, month, day] = date.split("-").map((n) => parseInt(n, 10));
+  const [hour, minute] = time.split(":").map((n) => parseInt(n, 10));
+  if ([year, month, day, hour, minute].some((n) => !Number.isFinite(n))) return null;
+  const local = new Date(year, month - 1, day, hour, minute, 0, 0);
+  if (Number.isNaN(local.getTime())) return null;
+  return local.toISOString();
+}
+
+const DAY_NAME_TO_INDEX: Record<string, number> = {
+  Dimanche: 0, Lundi: 1, Mardi: 2, Mercredi: 3, Jeudi: 4, Vendredi: 5, Samedi: 6,
+};
+
+// A manually generated post used to be saved with scheduled_for = null, which
+// left it out of the calendar, showed a blank date on its card, and made it
+// invisible to the publish cron (the due query filters on scheduled_for), so
+// validating it never published anything on its own. Give it the user's next
+// preferred slot instead; they can still publish immediately with "Publier".
+function nextPreferredSlot(profile: UserProfile | null): string {
+  const days = Array.isArray(profile?.preferred_days) && profile.preferred_days.length
+    ? (profile.preferred_days as string[])
+    : ["Lundi", "Mercredi", "Vendredi"];
+  const [rawHour, rawMinute] = String(profile?.preferred_time || "10:00")
+    .split(":")
+    .map((n) => parseInt(n, 10));
+  const hour = Number.isFinite(rawHour) ? Math.min(23, Math.max(0, rawHour)) : 10;
+  const minute = Number.isFinite(rawMinute) ? Math.min(59, Math.max(0, rawMinute)) : 0;
+
+  const now = new Date();
+  const wanted = new Set(
+    days.map((d) => DAY_NAME_TO_INDEX[d]).filter((n): n is number => n !== undefined),
+  );
+  for (let offset = 0; offset <= 7; offset++) {
+    const candidate = new Date(now);
+    candidate.setDate(now.getDate() + offset);
+    candidate.setHours(hour, minute, 0, 0);
+    if (candidate.getTime() <= now.getTime()) continue;
+    if (wanted.size === 0 || wanted.has(candidate.getDay())) return candidate.toISOString();
+  }
+  // No preferred day matched within a week (shouldn't happen): tomorrow.
+  const fallback = new Date(now);
+  fallback.setDate(now.getDate() + 1);
+  fallback.setHours(hour, minute, 0, 0);
+  return fallback.toISOString();
+}
+
 // Client-side ceiling on a single generate-image invoke. The edge function
 // bounds itself well under this; the race is a last-resort guard so a hung
 // gateway/network call can never freeze the dashboard spinner forever.
@@ -268,7 +320,14 @@ export default function Dashboard() {
     try {
       const { error } = await supabase
         .from('posts')
-        .update({ status: 'validated' })
+        .update({
+          status: 'validated',
+          // A post the user just approved starts with a clean publish record:
+          // no inherited retry count and no backoff window holding it back.
+          publish_attempts: 0,
+          next_publish_attempt_at: new Date().toISOString(),
+          publish_error: null,
+        })
         .eq('id', postId);
 
       if (error) throw error;
@@ -361,7 +420,12 @@ export default function Dashboard() {
     try {
       const { error } = await supabase
         .from('posts')
-        .update({ status: 'validated', publish_error: null })
+        .update({
+          status: 'validated',
+          publish_error: null,
+          publish_attempts: 0,
+          next_publish_attempt_at: new Date().toISOString(),
+        })
         .eq('id', post.id);
       if (error) throw error;
       const revived: Post = { ...post, status: 'validated' };
@@ -387,9 +451,7 @@ export default function Dashboard() {
           title: editingPost.title,
           content: editingPost.content,
           platforms: editingPost.platforms || ['Instagram'],
-          scheduled_for: editingPost.date && editingPost.time
-            ? `${editingPost.date}T${editingPost.time}:00`
-            : null,
+          scheduled_for: localDateTimeToIso(editingPost.date || "", editingPost.time || ""),
         })
         .eq('id', editingPost.id);
 
@@ -446,6 +508,7 @@ export default function Dashboard() {
         image_url: null,
         status: 'pending' as const,
         platforms: defaultPlatforms,
+        scheduled_for: nextPreferredSlot(userProfile),
       };
 
       const { data: savedPost, error: saveError } = await supabase
@@ -578,16 +641,34 @@ export default function Dashboard() {
       if (error) throw error;
       if (!data?.content) throw new Error("Aucun contenu reçu");
 
+      const category = data.postType || post.content_category || "value";
       const updatedPost: Post = {
         ...post,
         title: "Contenu régénéré",
         content: data.content,
+        content_category: category,
         image_url: undefined,
+        image_status: null,
+        image_job_id: null,
+        image_status_url: null,
       };
 
       const { error: updateError } = await supabase
         .from('posts')
-        .update({ title: updatedPost.title, content: updatedPost.content, image_url: null })
+        .update({
+          title: updatedPost.title,
+          content: updatedPost.content,
+          // Keep the persisted category in step with the regenerated text, or
+          // the new poster gets built for the previous post's editorial intent.
+          content_category: category,
+          image_url: null,
+          // Drop the poster job that belonged to the OLD text; leaving it set
+          // meant the next page load resumed a job whose image no longer
+          // matches what the post says.
+          image_status: null,
+          image_job_id: null,
+          image_status_url: null,
+        })
         .eq('id', post.id);
       if (updateError) throw updateError;
 

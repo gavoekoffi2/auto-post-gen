@@ -16,12 +16,37 @@ export function getOpenRouterKey(): string | null {
 }
 
 export function getTextModel(): string {
+  return getTextModels()[0];
+}
+
+// Editorial text is intentionally Claude-only: the product promises Claude's
+// writing quality, so an old Gemini/OpenAI secret must never silently
+// downgrade it. But pinning a SINGLE slug meant that the day that slug is
+// unavailable — renamed upstream, temporarily out of capacity, not enabled on
+// the account — every generation fell through to the three canned fallback
+// posts, and nothing in the product said so. The chain below stays entirely
+// within Claude while giving the caller somewhere to go.
+export function getTextModels(): string[] {
   const configured = Deno.env.get("OPENROUTER_TEXT_MODEL")?.trim() || "";
-  // Editorial text is intentionally Claude-only: the product promises Claude's
-  // writing quality. An old Gemini/OpenAI secret must not silently downgrade it.
-  if (configured.startsWith("anthropic/claude-")) return configured;
-  if (configured) console.warn(`Ignoring non-Claude OPENROUTER_TEXT_MODEL: ${configured}`);
-  return "anthropic/claude-sonnet-5";
+  if (configured && !configured.startsWith("anthropic/claude-")) {
+    console.warn(`Ignoring non-Claude OPENROUTER_TEXT_MODEL: ${configured}`);
+  }
+  const chain = [
+    configured.startsWith("anthropic/claude-") ? configured : "",
+    "anthropic/claude-sonnet-5",
+    "anthropic/claude-sonnet-4.5",
+    "anthropic/claude-3.7-sonnet",
+  ].filter(Boolean);
+  return Array.from(new Set(chain));
+}
+
+// HTTP statuses that mean "this particular model is not usable right now" as
+// opposed to "the request or the account is bad". Only these are worth
+// retrying on the next model in the chain: a 401 (bad key) or 402 (no credit)
+// would fail identically on every model.
+function isModelUnavailable(status: number): boolean {
+  return status === 400 || status === 403 || status === 404 || status === 502 ||
+    status === 503;
 }
 
 export function getImageModels(): string[] {
@@ -110,8 +135,28 @@ export class AIQuotaError extends Error {
   }
 }
 
+// Runs one completion, walking the Claude chain when a model is unavailable.
+// Returns the raw Response of the attempt that answered, so callers that need
+// the body themselves (generate-content) get the same resilience as chatText.
+export async function chatCompletionWithFallback(
+  opts: ChatCompletionOptions,
+): Promise<Response> {
+  // An explicit model pins the request; only the default path walks the chain.
+  const chain = opts.model ? [opts.model] : getTextModels();
+  let last: Response | null = null;
+  for (const model of chain) {
+    const resp = await chatCompletion({ ...opts, model });
+    if (resp.ok || !isModelUnavailable(resp.status)) return resp;
+    // Drain the body so the connection can be reused, and log why we moved on.
+    const detail = (await resp.text()).slice(0, 200);
+    console.warn(`Text model ${model} unavailable (${resp.status}): ${detail}`);
+    last = new Response(detail, { status: resp.status });
+  }
+  return last ?? new Response("no text model configured", { status: 503 });
+}
+
 export async function chatText(opts: ChatCompletionOptions): Promise<string> {
-  const resp = await chatCompletion(opts);
+  const resp = await chatCompletionWithFallback(opts);
   if (!resp.ok) {
     if (resp.status === 429) throw new AIQuotaError("rate");
     if (resp.status === 402) throw new AIQuotaError("credit");

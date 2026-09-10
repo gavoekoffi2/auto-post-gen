@@ -111,8 +111,9 @@ Réponds UNIQUEMENT avec un tableau JSON valide. Chaque objet doit respecter exa
   "priority": 1
 }`;
 
+    // No explicit model: chatText walks the Claude chain (getTextModel() is
+    // just its head) so audience detection survives one slug being down.
     const raw = await chatText({
-      model: getTextModel(),
       messages: [{ role: "user", content: prompt }],
       temperature: 0.25,
       top_p: 0.8,

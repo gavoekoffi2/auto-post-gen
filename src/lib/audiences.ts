@@ -33,3 +33,13 @@ export function normalizeAudienceSegments(value: unknown): AudienceSegment[] {
     })
     .filter((item) => item.name.trim());
 }
+
+// Supabase's generated `Json` type only accepts objects carrying an index
+// signature, which a named interface never has. Audience segments are plain
+// JSON-safe data, so widen them explicitly here — at the persistence boundary —
+// instead of loosening AudienceSegment everywhere it is consumed.
+export function audiencesToJson(
+  segments: AudienceSegment[],
+): Array<{ [key: string]: string | number | string[] | undefined }> {
+  return segments.map((segment) => ({ ...segment }));
+}

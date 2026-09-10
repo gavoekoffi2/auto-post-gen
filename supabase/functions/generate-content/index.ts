@@ -17,7 +17,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { buildCorsHeaders } from "../_shared/cors.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
-import { AIQuotaError, chatCompletion, getOpenRouterKey, getTextModel } from "../_shared/ai.ts";
+import { AIQuotaError, chatCompletionWithFallback, getOpenRouterKey } from "../_shared/ai.ts";
 import { buildAudiencePrompt, normalizeAudiences } from "../_shared/audience.ts";
 import { ensurePostEngagement } from "../_shared/post-engagement.ts";
 import { buildInspirationBlock, researchInspiration } from "../_shared/research.ts";
@@ -369,8 +369,10 @@ Réponds UNIQUEMENT avec le texte du post, sans titre ni explication, sans guill
       if (!getOpenRouterKey()) {
         throw new Error("OPENROUTER_API_KEY missing");
       }
-      const textResponse = await chatCompletion({
-        model: getTextModel(),
+      // No explicit model: the helper walks the Claude chain, so a single
+      // unavailable slug can no longer push every generation onto the canned
+      // fallback text without anyone noticing.
+      const textResponse = await chatCompletionWithFallback({
         messages: [
           { role: "system", content: systemPrompt },
           {

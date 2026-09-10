@@ -50,6 +50,25 @@ interface PostRow {
   image_job_id: string | null;
   image_status_url: string | null;
   image_status: string | null;
+  publish_attempts: number | null;
+}
+
+// A post that cannot publish (no connected account, or a provider that only
+// ever queues the job) used to be written back as 'validated' with its
+// scheduled_for still in the past — so the cron re-selected it on every tick,
+// forever. Since the batch is ordered oldest-first and capped, those posts
+// permanently occupied the batch and starved every newer post. Attempts are
+// now counted and spaced out, and a post that keeps failing becomes 'failed'
+// so it leaves the queue and shows up in the dashboard with its reason.
+const MAX_PUBLISH_ATTEMPTS = 5;
+// Backoff between automatic retries, indexed by attempt number.
+const RETRY_BACKOFF_MINUTES = [15, 60, 240, 720];
+
+function nextAttemptAt(attempts: number): string {
+  const minutes =
+    RETRY_BACKOFF_MINUTES[Math.min(attempts - 1, RETRY_BACKOFF_MINUTES.length - 1)] ??
+    RETRY_BACKOFF_MINUTES[RETRY_BACKOFF_MINUTES.length - 1];
+  return new Date(Date.now() + minutes * 60_000).toISOString();
 }
 
 interface SocialConnectionRow {
@@ -707,10 +726,16 @@ async function publishPost(
   const allErrors = results.length > 0 && results.every((r) => r.status === "error");
 
   // Decide the resulting state. Only a confirmed per-platform publish from
-  // Zernio counts as 'published'. A queued/processing response stays
-  // validated with publish_error details so the dashboard doesn't claim a
-  // LinkedIn post exists before LinkedIn/Zernio confirms it.
-  const finalStatus = anyOk ? "published" : allErrors ? "failed" : "validated";
+  // Zernio counts as 'published'. A queued/processing response is retried
+  // later (with backoff) rather than claimed as published, so the dashboard
+  // never says a LinkedIn post exists before LinkedIn/Zernio confirms it.
+  const attempts = (post.publish_attempts ?? 0) + 1;
+  const exhausted = attempts >= MAX_PUBLISH_ATTEMPTS;
+  const finalStatus = anyOk
+    ? "published"
+    : allErrors || exhausted
+    ? "failed"
+    : "validated";
 
   // Persist external post ids so the engagement/comments sync can later
   // map a published post back to its per-platform social post.
@@ -720,16 +745,21 @@ async function publishPost(
     if (r.status === "ok" && r.externalUrl) externalPostIds[`${r.platform}_url`] = r.externalUrl;
   }
 
-  await supabase
-    .from("posts")
-    .update({
-      status: finalStatus,
-      published_at: anyOk ? new Date().toISOString() : null,
-      publish_error: allErrors || anyPending || finalStatus === "validated" ? JSON.stringify(results) : null,
-      provider_post_id: providerPostId,
-      external_post_ids: externalPostIds,
-    })
-    .eq("id", postId);
+  const update: Record<string, unknown> = {
+    status: finalStatus,
+    publish_error: anyOk ? null : JSON.stringify(results),
+    provider_post_id: providerPostId,
+    external_post_ids: externalPostIds,
+    publish_attempts: anyOk ? 0 : attempts,
+    // Only a post going back into the queue needs a backoff stamp.
+    next_publish_attempt_at:
+      finalStatus === "validated" ? nextAttemptAt(attempts) : new Date().toISOString(),
+  };
+  // Never clear an existing published_at: a re-publish that fails must not
+  // erase the timestamp of the publish that did succeed.
+  if (anyOk) update.published_at = new Date().toISOString();
+
+  await supabase.from("posts").update(update).eq("id", postId);
 
   return { post_id: postId, results };
 }
@@ -842,6 +872,11 @@ serve(async (req) => {
       .select("id")
       .eq("status", "validated")
       .lte("scheduled_for", nowIso)
+      // Skip posts still inside their retry backoff window, so a post that
+      // cannot publish yet cannot occupy the (ordered, capped) batch and
+      // starve newer posts behind it. The column is NOT NULL DEFAULT now(),
+      // so a never-attempted post is eligible immediately.
+      .lte("next_publish_attempt_at", nowIso)
       .order("scheduled_for", { ascending: true })
       .limit(CRON_BATCH_SIZE);
 

@@ -9,6 +9,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { buildCorsHeaders } from "../_shared/cors.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { getSocialImageSpec, type SocialImageSpec } from "../_shared/socialImageSpecs.ts";
+import { fetchImageBytes } from "../_shared/safeFetch.ts";
 // Image generation for Pro Social AI must produce real poster layouts.
 // Keep this endpoint dedicated to Graphiste GPT poster output rather than
 // generic image providers. The chosen output format always follows the post's
@@ -573,14 +574,31 @@ serve(async (req) => {
         status,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+
+    // Terminal failure: clear the in-flight job from the post row. Without
+    // this the row kept image_status='processing' with a dead job id, so the
+    // dashboard resumed that same dead job on EVERY page load — a spinner that
+    // could never resolve and a poll that could never succeed.
+    const markImageFailed = async () => {
+      if (!postId) return;
+      const { error: failErr } = await supabase
+        .from("posts")
+        .update({ image_status: "failed", image_job_id: null, image_status_url: null })
+        .eq("id", postId)
+        .eq("user_id", userId);
+      if (failErr) console.error("Failed to mark poster job as failed:", failErr.message);
+    };
+
     // No real Graphiste GPT poster → clear, actionable error (never an SVG).
-    const noFinalImage = (detail?: string) =>
-      jsonResponse({
+    const noFinalImage = async (detail?: string) => {
+      await markImageFailed();
+      return jsonResponse({
         error: "Graphiste GPT n'a pas retourné d'affiche finale. Réessayez ; si le problème persiste, vérifiez la clé GRAPHISTE_GPT_API_KEY et le service Graphiste GPT.",
         code: "no_final_image",
         detail: detail || undefined,
         format,
       });
+    };
     // Still generating → hand the job back so the client resumes polling.
     // Also persist the in-flight job on the post row (best-effort) so a slow
     // poster that finishes AFTER the client gives up is not orphaned: the row
@@ -609,11 +627,39 @@ serve(async (req) => {
     }
 
     let imageUrl: string | null = null;
+    // Set once the hourly image reservation has actually been taken, so a
+    // provider failure that happened before any paid render can give it back.
+    let quotaReserved = false;
+    const releaseImageQuota = async () => {
+      if (!quotaReserved) return;
+      quotaReserved = false;
+      // Delete the single most recent reservation by id. A LIMIT on a DELETE
+      // is not portable across PostgREST versions, and a delete that silently
+      // ignored the limit would wipe the whole month's usage history.
+      const { data: reservation, error: findErr } = await supabase
+        .from("generation_usage")
+        .select("id")
+        .eq("user_id", userId)
+        .eq("function_name", "generate-image")
+        .eq("status", "reserved")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (findErr || !reservation?.id) {
+        if (findErr) console.error("Could not find image quota reservation:", findErr.message);
+        return;
+      }
+      const { error: releaseErr } = await supabase
+        .from("generation_usage")
+        .delete()
+        .eq("id", reservation.id);
+      if (releaseErr) console.error("Could not release image quota:", releaseErr.message);
+    };
 
     if (resumeJobId) {
       // Resume an in-flight job: short bounded poll, then hand back if needed.
       const r = await resumeGraphisteJob(resumeJobId, resumeStatusUrl, 45_000);
-      if (r.status === "failed") return noFinalImage("job failed");
+      if (r.status === "failed") return await noFinalImage("job failed");
       if (!r.imageUrl) return await stillProcessing(resumeJobId, resumeStatusUrl);
       imageUrl = r.imageUrl;
     } else {
@@ -640,6 +686,7 @@ serve(async (req) => {
         p_max: IMAGE_RATE_LIMIT_MAX,
         p_window_seconds: 3600,
       });
+      quotaReserved = !quotaErr && quotaOk !== false;
       if (quotaErr) {
         console.error("consume_generation_quota (image) failed, allowing:", quotaErr.message);
       } else if (quotaOk === false) {
@@ -688,9 +735,18 @@ serve(async (req) => {
       // directly to the user instead of a generic "no final image" message, so
       // the real cause is visible without digging in the logs.
       if (graphiste.status === "failed") {
+        await markImageFailed();
+        // A provider failure that happened before any paid render (bad key,
+        // no credits, rate limited) must not eat the user's hourly image
+        // quota — release the reservation we took above.
+        await releaseImageQuota();
         return graphiste.warning
           ? jsonResponse({ error: graphiste.warning, code: "graphiste_error", format })
-          : noFinalImage();
+          : jsonResponse({
+              error: "Graphiste GPT n'a pas retourné d'affiche finale. Réessayez ; si le problème persiste, vérifiez la clé GRAPHISTE_GPT_API_KEY et le service Graphiste GPT.",
+              code: "no_final_image",
+              format,
+            });
       }
       if (!graphiste.imageUrl) {
         // Still generating: hand the job to the client so it can resume polling
@@ -698,12 +754,12 @@ serve(async (req) => {
         if (graphiste.jobId || graphiste.statusUrl) {
           return await stillProcessing(graphiste.jobId, graphiste.statusUrl);
         }
-        return noFinalImage(graphiste.warning || undefined);
+        return await noFinalImage(graphiste.warning || undefined);
       }
       imageUrl = graphiste.imageUrl;
     }
 
-    if (!imageUrl) return noFinalImage();
+    if (!imageUrl) return await noFinalImage();
 
     // Re-host to user-assets/ for a permanent URL, and verify it is a real
     // raster image (never an SVG/placeholder) before saving it anywhere.
@@ -725,13 +781,13 @@ serve(async (req) => {
             bytes = new TextEncoder().encode(decodeURIComponent(payload));
           }
         } else {
-          const fetched = await fetch(imageUrl);
-          if (!fetched.ok) throw new Error(`image fetch ${fetched.status}`);
-          contentType = (fetched.headers.get("content-type") || "image/png").toLowerCase();
-          if (!contentType.startsWith("image/") || contentType.includes("svg")) {
-            throw new Error(`unexpected content-type ${contentType}`);
-          }
-          bytes = new Uint8Array(await fetched.arrayBuffer());
+          // The URL comes back from an external API response, so this fetch is
+          // SSRF-guarded like every other re-host in the codebase (https-only,
+          // private/metadata hosts blocked, content-type checked, size capped)
+          // instead of a bare fetch with no ceiling on the response body.
+          const fetched = await fetchImageBytes(imageUrl);
+          bytes = fetched.bytes;
+          contentType = fetched.contentType;
         }
       } catch (verifyErr) {
         console.error("generate-image: could not verify a real raster poster:", verifyErr);

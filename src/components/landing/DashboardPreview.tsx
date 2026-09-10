@@ -20,6 +20,12 @@ export const DashboardPreview = () => {
               app.prosocialai.com/dashboard
             </div>
           </div>
+          {/* The figures below are an illustration of the interface, not real
+              analytics: the product tracks post activity, not follower counts
+              or reach. Labelling it keeps the mockup from reading as a claim. */}
+          <div className="hidden sm:block">
+            <span className="text-[10px] text-muted-foreground/70">Aperçu illustratif</span>
+          </div>
         </div>
         
         {/* Dashboard content */}

@@ -19,5 +19,19 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run lint
+      # `vite build` uses SWC, which strips types without checking them, so a
+      # real type error could reach production with a green build. Run tsc.
+      - run: npm run typecheck
       - run: npm test
       - run: npm run build
+
+  # Edge functions are Deno and are never touched by the Node build above, so
+  # a type error in them used to surface only at deploy time.
+  functions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: deno check supabase/functions/*/index.ts supabase/functions/_shared/*.ts

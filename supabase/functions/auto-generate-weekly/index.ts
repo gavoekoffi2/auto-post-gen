@@ -2,7 +2,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { buildCorsHeaders } from "../_shared/cors.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
-import { chatText, getOpenRouterKey, getTextModel } from "../_shared/ai.ts";
+import { chatText, getOpenRouterKey } from "../_shared/ai.ts";
 import { buildAudiencePrompt, normalizeAudiences } from "../_shared/audience.ts";
 import { ensurePostEngagement } from "../_shared/post-engagement.ts";
 import { buildInspirationBlock, researchInspiration } from "../_shared/research.ts";
@@ -31,6 +31,10 @@ const DAY_MAPPING: Record<string, number> = {
 // Maximum posts a single profile can receive per weekly run, defends against
 // runaway configs and platform spam limits.
 const HARD_MAX_POSTS_PER_RUN = 20;
+
+// Hours added between two posts that land on the same preferred day (when the
+// user asks for more posts per week than they picked days).
+const SLOT_SPACING_HOURS = 4;
 
 // Rotated so the week's posts don't all share the same shape.
 const AUTO_ANGLES = [
@@ -324,8 +328,9 @@ Génère uniquement le texte du post, sans titre ni explication.`;
 
           let generatedContent = "";
           try {
+            // No explicit model: chatText walks the Claude chain so one
+            // unavailable slug doesn't silently drop the week's posts.
             generatedContent = await chatText({
-              model: getTextModel(),
               messages: [{ role: "user", content: contentPrompt }],
               temperature: 0.65,
               top_p: 0.9,
@@ -351,8 +356,17 @@ Génère uniquement le texte du post, sans titre ni explication.`;
           // Track for intra-run de-duplication.
           generatedThisRun.push(generatedContent.trim());
 
-          const targetDay = preferredDays[i % preferredDays.length];
+          // Continue the week's sequence past whatever is already queued, so a
+          // top-up run doesn't reuse the days the existing posts already sit on.
+          const slotIndex = (existingPosts?.length || 0) + i;
+          const targetDay = preferredDays[slotIndex % preferredDays.length];
           const targetDayNumber = DAY_MAPPING[targetDay] ?? 1;
+          // More posts than preferred days means the same day comes round
+          // again. Staggering the hour keeps those posts distinct: without it
+          // they were written with the EXACT same scheduled_for and went out
+          // back-to-back in a single publish tick.
+          const passOverDays = Math.floor(slotIndex / preferredDays.length);
+          const slotHour = Math.min(21, hour + passOverDays * SLOT_SPACING_HOURS);
 
           const scheduledDate = new Date(now);
           const currentDay = scheduledDate.getDay();
@@ -362,11 +376,11 @@ Génère uniquement le texte du post, sans titre ni explication.`;
             // ahead; otherwise push to next week. (The old `|| 7` always pushed
             // a same-day target a full week out, dropping this week's post.)
             const todayAtTime = new Date(now);
-            todayAtTime.setHours(hour, minute, 0, 0);
+            todayAtTime.setHours(slotHour, minute, 0, 0);
             if (todayAtTime.getTime() <= now.getTime()) daysUntilTarget = 7;
           }
           scheduledDate.setDate(scheduledDate.getDate() + daysUntilTarget);
-          scheduledDate.setHours(hour, minute, 0, 0);
+          scheduledDate.setHours(slotHour, minute, 0, 0);
 
           // Pick the visual. A custom image library wins (free, instant);
           // otherwise we kick off a Graphiste GPT poster job further below.

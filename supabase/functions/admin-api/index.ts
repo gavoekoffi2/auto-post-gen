@@ -17,13 +17,16 @@ type AdminBody = {
 };
 
 function safeUser(user: User) {
+  // banned_until is returned by the admin API but is absent from the public
+  // User type, so read it through a narrow cast instead of `any` on the row.
+  const bannedUntil = (user as User & { banned_until?: string | null }).banned_until;
   return {
     id: user.id,
     email: user.email ?? "",
     createdAt: user.created_at,
     lastSignInAt: user.last_sign_in_at ?? null,
     role: user.app_metadata?.role ?? "user",
-    blocked: !!user.banned_until && new Date(user.banned_until).getTime() > Date.now(),
+    blocked: !!bannedUntil && new Date(bannedUntil).getTime() > Date.now(),
   };
 }
 

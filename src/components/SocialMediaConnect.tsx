@@ -37,18 +37,17 @@ type ZernioStatus = {
   error?: string;
 };
 
+// Only the networks a post can actually be addressed to. The platform picker
+// in Onboarding/Profil and the posts.platforms CHECK constraint both accept
+// exactly this set, so offering the rest of Zernio's catalogue here was a
+// dead end: a user could connect YouTube or Telegram and then never be able
+// to target it, with nothing explaining why. Add a network here only together
+// with the profile picker and the DB constraint.
 const ZERNIO_PLATFORMS = [
   { id: "linkedin", label: "LinkedIn" },
   { id: "facebook", label: "Facebook" },
   { id: "instagram", label: "Instagram" },
   { id: "twitter", label: "X / Twitter" },
-  { id: "tiktok", label: "TikTok" },
-  { id: "youtube", label: "YouTube" },
-  { id: "pinterest", label: "Pinterest" },
-  { id: "threads", label: "Threads" },
-  { id: "bluesky", label: "Bluesky" },
-  { id: "reddit", label: "Reddit" },
-  { id: "telegram", label: "Telegram" },
 ] as const;
 
 function normalisePlatform(platform: string) {
@@ -197,6 +196,9 @@ export function SocialMediaConnect({
               </div>
               <p className="text-xs text-muted-foreground mt-1 max-w-md">
                 Zernio centralise l'autorisation et la publication vers les réseaux sociaux. Cliquez sur un réseau pour connecter le compte correspondant.
+              </p>
+              <p className="text-xs text-muted-foreground mt-1 max-w-md">
+                Ces quatre réseaux sont ceux vers lesquels vos posts peuvent être publiés aujourd'hui. D'autres réseaux seront ajoutés au fur et à mesure.
               </p>
 
               {zernio?.error && (

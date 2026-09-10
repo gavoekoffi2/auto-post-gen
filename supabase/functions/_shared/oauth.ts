@@ -41,6 +41,15 @@ function base64UrlDecode(s: string): Uint8Array {
   return out;
 }
 
+// WebCrypto's BufferSource wants an ArrayBuffer-backed view. Copying into a
+// fresh ArrayBuffer keeps this valid regardless of how the TypeScript lib
+// types Uint8Array's backing store (ArrayBufferLike vs ArrayBuffer).
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const out = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(out).set(bytes);
+  return out;
+}
+
 async function getHmacKey(): Promise<CryptoKey> {
   const secret = Deno.env.get("OAUTH_STATE_SECRET") || Deno.env.get("CRON_SECRET");
   if (!secret) throw new Error("OAUTH_STATE_SECRET is not configured");
@@ -74,7 +83,7 @@ export async function verifyState(
   const ok = await crypto.subtle.verify(
     "HMAC",
     key,
-    base64UrlDecode(sig),
+    toArrayBuffer(base64UrlDecode(sig)),
     new TextEncoder().encode(body),
   );
   if (!ok) throw new Error("Invalid state signature");

@@ -11,7 +11,7 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { AudienceEditor } from "@/components/AudienceEditor";
-import { AudienceSegment, normalizeAudienceSegments } from "@/lib/audiences";
+import { AudienceSegment, audiencesToJson, normalizeAudienceSegments } from "@/lib/audiences";
 
 export default function Onboarding() {
   const navigate = useNavigate();
@@ -134,9 +134,11 @@ export default function Onboarding() {
               preferred_days: formData.preferredDays,
               auto_publish: false,
               image_people_type: formData.imagePeopleType,
-              audience_suggestions: formData.audienceSuggestions,
-              target_audiences: formData.audienceSuggestions.filter((audience) =>
-                formData.selectedAudienceIds.includes(audience.id)
+              audience_suggestions: audiencesToJson(formData.audienceSuggestions),
+              target_audiences: audiencesToJson(
+                formData.audienceSuggestions.filter((audience) =>
+                  formData.selectedAudienceIds.includes(audience.id)
+                ),
               ),
               audiences_confirmed_at: new Date().toISOString(),
             },

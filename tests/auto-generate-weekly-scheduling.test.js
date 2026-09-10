@@ -17,7 +17,28 @@ test('auto-generate-weekly schedules at the user-chosen time, not a hard-coded 1
     'the publish time must come from the profile, not be hard-coded to 10:00',
   );
   assert.match(source, /profile\.preferred_time/);
-  assert.match(source, /setHours\(hour, minute, 0, 0\)/);
+  // The hour written on the row derives from the profile's preferred_time
+  // (slotHour is `hour` plus the same-day stagger below, never a literal).
+  assert.match(source, /const slotHour = Math\.min\(21, hour \+ passOverDays \* SLOT_SPACING_HOURS\)/);
+  assert.match(source, /setHours\(slotHour, minute, 0, 0\)/);
+});
+
+test('two generated posts never land on the exact same scheduled_for', () => {
+  // With more posts per week than preferred days, `i % preferredDays.length`
+  // reused the same day AND the same hour, so posts 4 and 5 were written with
+  // an identical scheduled_for and went out back-to-back in one publish tick.
+  assert.equal(
+    source.includes('preferredDays[i % preferredDays.length]'),
+    false,
+    'the day index must account for posts already queued and for repeat passes',
+  );
+  // Continue past whatever is already queued, so a top-up run does not reuse
+  // the days the existing posts sit on.
+  assert.match(source, /const slotIndex = \(existingPosts\?\.length \|\| 0\) \+ i/);
+  assert.match(source, /preferredDays\[slotIndex % preferredDays\.length\]/);
+  // Repeat passes over the same day are staggered by whole hours.
+  assert.match(source, /const passOverDays = Math\.floor\(slotIndex \/ preferredDays\.length\)/);
+  assert.match(source, /const SLOT_SPACING_HOURS = \d+/);
 });
 
 test('auto-generate-weekly preserves the chosen value/research/promo mix across retries', () => {
