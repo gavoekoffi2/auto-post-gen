@@ -27,6 +27,8 @@ export type Database = {
           image_status_url: string | null
           platforms: string[]
           publish_error: string | null
+          publish_attempts: number
+          next_publish_attempt_at: string
           published_at: string | null
           scheduled_for: string | null
           status: string
@@ -54,6 +56,8 @@ export type Database = {
           image_status_url?: string | null
           platforms?: string[]
           publish_error?: string | null
+          publish_attempts?: number
+          next_publish_attempt_at?: string
           published_at?: string | null
           scheduled_for?: string | null
           status?: string
@@ -81,6 +85,8 @@ export type Database = {
           image_status_url?: string | null
           platforms?: string[]
           publish_error?: string | null
+          publish_attempts?: number
+          next_publish_attempt_at?: string
           published_at?: string | null
           scheduled_for?: string | null
           status?: string

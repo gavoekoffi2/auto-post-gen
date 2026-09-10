@@ -23,33 +23,42 @@ npm run dev                       # http://localhost:8080
 Vérifications avant tout commit :
 
 ```bash
-npm test        # 73 tests — DOIVENT tous passer
+npm test        # DOIVENT tous passer
 npm run lint    # 0 erreur (7 warnings shadcn/fast-refresh connus, non bloquants)
 npm run build   # build Vite 7
 ```
 
-La CI (`.github/workflows/ci.yml`) exécute exactement ces trois commandes sur
-chaque PR : si ça passe en local, ça passera en CI.
+La CI (`.github/workflows/ci.yml`) exécute ces commandes plus `npm run
+typecheck` (vite build n'analyse pas les types), `deno check` sur les Edge
+Functions et `npm run test:schema` (migrations sur un vrai Postgres).
 
 ### En production
 
-Il n'y a **ni VPS, ni serveur à administrer, ni n8n**. Tout est géré :
+> **Corrigé le 10/09/2026.** Cette section décrivait un hébergement Netlify et
+> le projet Supabase `ixinojsmymqovekgkbdg`. Les deux sont faux : le frontend
+> a été déplacé sur un VPS et le backend pointe sur `tktoyntaeajgsuplhntd`.
 
 | Quoi | Où | Déclencheur |
 |---|---|---|
-| Frontend (SPA React) | **Netlify** | push sur `main` touchant `src/**` → `.github/workflows/deploy-netlify.yml` |
-| Edge Functions (23) | **Supabase** (projet `ixinojsmymqovekgkbdg`) | push sur `main` touchant `supabase/functions/**` → `.github/workflows/deploy-functions.yml` (déploie TOUT) |
-| Base de données | **Supabase Postgres** | migrations dans `supabase/migrations/` (`supabase db push`) |
-| Tâches planifiées | **Supabase Scheduler** (dashboard) | voir cadences dans `DEPLOYMENT.md` §Cron |
+| Frontend (SPA React) | **VPS** — nginx dans Docker derrière Traefik, `docker-compose.vps.yml` + `nginx.vps.conf`, sur `https://auto-post-gen.76.13.129.252.sslip.io` | **manuel** : `npm run build` puis copier `dist/` sur le VPS et `docker compose -f docker-compose.vps.yml up -d`. `deploy-netlify.yml` ne déploie plus rien (lint/tests/build uniquement, sur déclenchement manuel). |
+| Edge Functions (23) | **Supabase** (projet `tktoyntaeajgsuplhntd`) | push sur `main` touchant `supabase/**` → `.github/workflows/deploy-functions.yml` (déploie TOUT) |
+| Base de données | **Supabase Postgres** | le même workflow ré-applique toutes les migrations datées ≥ `MIGRATION_CUTOFF` (`20260721000000`), puis vérifie que le schéma contient les colonnes/fonctions utilisées par les Edge Functions. Les migrations antérieures au cutoff ne sont **jamais** rejouées : elles sont supposées déjà appliquées. |
+| Tâches planifiées | **Supabase Scheduler** (dashboard) | voir cadences dans `DEPLOYMENT.md` §Cron — **à configurer à la main, rien ne les crée** |
 
-Déployer = merger sur `main`. Rien d'autre.
+Déployer le **backend** = merger sur `main`. Déployer le **frontend** = à la
+main, voir ci-dessus.
+
+Toute nouvelle migration doit être **idempotente** (elle est ré-appliquée à
+chaque déploiement). `npm run test:schema` l'applique à un vrai Postgres,
+vérifie qu'elle est rejouable et rejoue les invariants du produit (RLS,
+quotas, file de publication).
 
 ---
 
 ## 2. Architecture réelle (vérifiée, pas théorique)
 
 ```
-Navigateur ── SPA React/Vite (Netlify, CSP stricte, headers sécurité)
+Navigateur ── SPA React/Vite (VPS nginx/Traefik, CSP stricte, headers sécurité)
     │  supabase-js (anon key + RLS)
     ▼
 Supabase ──┬─ Auth (sessions JWT, localStorage, autoRefresh)
@@ -58,11 +67,12 @@ Supabase ──┬─ Auth (sessions JWT, localStorage, autoRefresh)
            │    generation_usage, ip_rate_events
            ├─ Storage : bucket user-assets (affiches réhébergées)
            └─ 23 Edge Functions (Deno) ── APIs externes :
-                ├─ OpenRouter        → TEXTE IA (gemini-2.5-flash)
+                ├─ OpenRouter        → TEXTE IA (Claude uniquement, chaîne
+                │                       de repli Claude dans _shared/ai.ts)
                 ├─ Graphiste GPT     → AFFICHES IA (exclusif, pas de repli)
-                ├─ Zernio            → publication sociale (voie principale)
-                ├─ Postiz / Ayrshare → publication (voies alternatives)
-                ├─ OAuth direct      → LinkedIn / Meta / Twitter (coût zéro)
+                ├─ Zernio            → publication sociale (SEULE voie active)
+                ├─ Postiz / Ayrshare → CODE MORT : publish-post les ignore
+                ├─ OAuth direct      → CODE MORT : publish-post les ignore
                 ├─ Resend            → emails de validation + formulaire contact
                 └─ RSS/DDG/Wikipedia → recherche web GRATUITE (pas de clé requise)
 ```
@@ -90,7 +100,17 @@ Supabase ──┬─ Auth (sessions JWT, localStorage, autoRefresh)
    tentative avant publication. Un job lancé n'est donc JAMAIS perdu, et une
    reprise ne relance JAMAIS une génération payante (c'est un simple GET).
 
-3. **Publication par nombre de comptes connectés, pas par plateforme.**
+3. **La publication passe UNIQUEMENT par Zernio.** `publish-post` ne lit que
+   les connexions `provider = 'zernio'`. Les fonctions Postiz, Ayrshare et
+   OAuth direct existent encore dans `supabase/functions/` mais **aucune n'est
+   utilisée** : un compte connecté autrement ne publiera jamais. Le dialogue
+   « Gérer vos réseaux sociaux » n'offre donc que les 4 réseaux réellement
+   publiables (LinkedIn, Facebook, Instagram, X) — c'est aussi ce que
+   contraint `posts.platforms` en base. Pour en ajouter un, il faut modifier
+   les trois endroits ensemble : la contrainte CHECK, le sélecteur de réseaux
+   (Onboarding/Profil) et `ZERNIO_PLATFORMS`.
+
+4. **Publication par nombre de comptes connectés, pas par plateforme.**
    Zernio facture par compte social connecté ($1–6/compte/mois selon le volume
    global). Les plans (Starter 2, Pro 3, Enterprise 8 réseaux) sont donc
    dénommés en « nombre de réseaux », ce qui rend l'ajout futur de
@@ -98,7 +118,7 @@ Supabase ──┬─ Auth (sessions JWT, localStorage, autoRefresh)
    direct (Facebook/Instagram/LinkedIn), déjà codé, coûte 0 — c'est le levier
    n°1 de marge documenté dans PRICING.md.
 
-4. **Sécurité en profondeur côté serveur, jamais côté client.**
+5. **Sécurité en profondeur côté serveur, jamais côté client.**
    - RLS sur toutes les tables, `WITH CHECK` sur tous les UPDATE (un
      utilisateur ne peut pas déplacer une ligne vers un autre compte).
    - Colonnes de tokens sociaux **révoquées** pour `anon`/`authenticated`
@@ -113,7 +133,7 @@ Supabase ──┬─ Auth (sessions JWT, localStorage, autoRefresh)
    - `fetchImageBytes` (`_shared/safeFetch.ts`) : anti-SSRF (https only,
      blocage IP privées/métadonnées cloud, taille plafonnée).
 
-5. **Tests = assertions sur les sources + tests comportementaux.** La plupart
+6. **Tests = assertions sur les sources + tests comportementaux.** La plupart
    des tests lisent les fichiers sources et vérifient des invariants de
    POLITIQUE (« pas de repli image », « CORS fail-closed », « quotas
    présents »). C'est voulu : rapide, zéro harnais, et ça épingle les
@@ -121,7 +141,7 @@ Supabase ──┬─ Auth (sessions JWT, localStorage, autoRefresh)
    (import TS réel via type-stripping Node 22). Étendez ce style ; ne
    supprimez pas un test qui casse — il casse parce qu'un invariant est violé.
 
-6. **FCFA d'abord.** Marché cible : Afrique de l'Ouest francophone. Prix
+7. **FCFA d'abord.** Marché cible : Afrique de l'Ouest francophone. Prix
    affichés en FCFA (USD indicatif), paiement Mobile Money prioritaire.
    Toute la justification économique (coûts réels par post/image/vidéo,
    marges par palier Zernio, prix des add-ons) est dans `docs/PRICING.md` —
@@ -139,7 +159,7 @@ Supabase ──┬─ Auth (sessions JWT, localStorage, autoRefresh)
 | Auth edge functions | ✅ | JWT vérifié en fonction (`getUserIdFromAuthHeader`/`auth.getUser`) partout où un utilisateur appelle ; `CRON_SECRET` fail-closed pour les fonctions cron ; state OAuth signé HMAC-SHA256 avec expiration 30 min. |
 | CORS | ✅ (corrigé) | 9 copies locales divergentes unifiées vers `_shared/cors.ts` (fail-closed) le 13/07 ; un test empêche la dérive de revenir. |
 | Dépendances | ✅ 0 vulnérabilité | `npm audit` : 0 (prod ET dev) depuis la migration Vite 7. |
-| Headers front | ✅ | CSP stricte, HSTS, X-Frame-Options DENY, etc. via `netlify.toml`. |
+| Headers front | ✅ | CSP stricte, HSTS, X-Frame-Options DENY, etc. via `nginx.vps.conf`. `netlify.toml` n'est plus utilisé. |
 
 Notes mineures (acceptées, pas des trous) :
 - La comparaison du `CRON_SECRET` est un `!==` simple (pas timing-safe). Avec
@@ -164,9 +184,39 @@ Notes mineures (acceptées, pas des trous) :
 
 ---
 
+## 4 bis. Bugs traités lors de l'audit du 10/09/2026
+
+Passe d'audit avant l'ouverture aux premiers utilisateurs. Chaque point
+ci-dessous était atteignable en usage normal.
+
+| Criticité | Bug | Cause | Correctif |
+|---|---|---|---|
+| **BLOQUANT** | Les publications d'un utilisateur pouvaient ne JAMAIS partir à cause d'un autre utilisateur | `publish-post` remettait en `validated` tout post non publiable (aucun réseau connecté, ou réponse « en file » du fournisseur) alors que son `scheduled_for` était déjà passé. Le cron sélectionne les posts dus **triés du plus ancien au plus récent avec LIMIT 12** : une poignée de posts bloqués occupait donc le lot entier à chaque tick, indéfiniment, et affamait la file de tout le monde. | Colonnes `publish_attempts` / `next_publish_attempt_at` (migration `20260910000000`), backoff entre tentatives, échec définitif après 5 essais → le post apparaît en « échec » dans le dashboard avec son motif et un bouton Réessayer. Reproduit et vérifié sur un vrai Postgres (`npm run test:schema`). |
+| **BLOQUANT** | Aucune nouvelle migration n'atteignait la production | Le workflow de déploiement appliquait **trois fichiers de migration nommés en dur**. Une nouvelle migration n'était appliquée que si quelqu'un pensait à ajouter une quatrième étape — et une Edge Function poussée en même temps référençait alors une colonne inexistante. | Boucle sur toutes les migrations ≥ `MIGRATION_CUTOFF`, + garde-fou qui fait échouer le déploiement si une migration datée sous le cutoff apparaît, + étape qui vérifie que le schéma de production contient toutes les colonnes/fonctions utilisées par les Edge Functions. |
+| **MAJEUR** | Spinner d'affiche infini, à chaque chargement de page | En cas d'échec définitif du job Graphiste, la ligne du post gardait `image_status = 'processing'` et un `image_job_id` mort. Le dashboard relançait donc ce job mort à **chaque** chargement, sans jamais pouvoir aboutir. | Les échecs sont persistés (`image_status = 'failed'`, job effacé) ; le dashboard ne reprend que les jobs réellement en cours. |
+| **MAJEUR** | Une clé Graphiste invalide consommait le quota d'images de l'utilisateur | La réservation horaire était prise avant l'appel au fournisseur et jamais rendue. | La réservation est relâchée (suppression **par id**) quand le fournisseur échoue avant tout rendu payant. |
+| **MAJEUR** | Toute indisponibilité du modèle texte dégradait silencieusement chaque post | Un seul slug de modèle était figé ; à la moindre erreur, `generate-content` renvoyait l'un de ses 3 textes de repli, sans que rien ne le signale. | Chaîne de repli **exclusivement Claude** dans `_shared/ai.ts` ; on n'avance dans la chaîne que sur les statuts signifiant « ce modèle est inutilisable » (jamais sur 401/402). |
+| **MAJEUR** | Deux posts programmés à la seconde près | `preferredDays[i % preferredDays.length]` : avec plus de posts par semaine que de jours choisis, les posts 4 et 5 recevaient le même `scheduled_for` que les posts 1 et 2 et partaient à la suite. | L'index de créneau continue au-delà des posts déjà en file et décale l'heure à chaque repassage sur un même jour. |
+| **MAJEUR** | Les posts générés manuellement ne se publiaient jamais tout seuls | Ils étaient enregistrés avec `scheduled_for = NULL` : absents du calendrier, date vide sur la carte, et invisibles pour le cron (dont la requête filtre sur `scheduled_for`). | Ils reçoivent le prochain créneau préféré de l'utilisateur. |
+| **MAJEUR** | Modifier un post décalait son horaire | Le dashboard envoyait `"AAAA-MM-JJTHH:MM:00"` (sans fuseau) à une colonne `timestamptz`, lue comme de l'UTC, alors que l'affichage était en heure locale. | Conversion explicite heure locale → instant ISO. |
+| **MAJEUR** | Un compte connecté pouvait n'être jamais publiable | Le dialogue de connexion proposait 7 réseaux (YouTube, Pinterest, Threads…) que `posts.platforms` et le sélecteur de profil refusent. | Le dialogue n'offre plus que les 4 réseaux réellement publiables. |
+| **MAJEUR** | En-têtes de sécurité perdus + page blanche après déploiement | `nginx.vps.conf` : un `add_header` dans un `location` **remplace** les en-têtes hérités — les assets perdaient donc CSP et HSTS ; et `index.html` n'avait aucun `Cache-Control`, donc un navigateur gardait l'ancien et demandait des bundles supprimés. | `expires` au lieu de `add_header` : CSP/HSTS conservés partout, `index.html` en `no-cache`. Vérifié avec un vrai nginx servant le build réel. |
+| Moyen | SSRF possible dans la re-publication d'affiche | Le chemin interactif de `generate-image` utilisait un `fetch()` nu sur une URL issue d'une réponse d'API externe (pas de garde, pas de plafond de taille), alors que le chemin cron utilisait bien `fetchImageBytes`. | Même helper protégé des deux côtés. |
+| Moyen | 8 erreurs de types invisibles | `vite build` utilise SWC, qui **supprime** les types sans les vérifier, et Deno n'était pas dans la CI : 5 erreurs edge + 3 erreurs front pouvaient partir en production avec un build vert. | Corrigées, et la CI exécute désormais `tsc --noEmit`, `deno check` et `npm run test:schema`. |
+| Moyen | Régénérer le texte laissait l'ancienne affiche en cours | `image_job_id` / `image_status` n'étaient pas effacés, et `content_category` n'était pas mis à jour. | Les deux sont remis à zéro avec le nouveau texte. |
+| Moyen | Faux témoignages clients en page d'accueil | Quatre clients inventés (noms, rôles, photos de banque d'images, « +300 % d'engagement ») au-dessus de chiffres d'usage inventés, pour un produit sans aucun utilisateur. | Remplacés par des affirmations vérifiables sur ce que le produit fait. Remettez de vrais témoignages quand de vrais clients en auront donné, avec leur accord. |
+| Info | Documentation trompeuse | README/HANDOVER décrivaient un hébergement Netlify automatique et le projet Supabase `ixinojsmymqovekgkbdg`. En réalité : VPS, déploiement frontend **manuel**, projet `tktoyntaeajgsuplhntd`. | Corrigés. |
+
+---
+
 ## 5. Fragilités connues & feuille de route proposée
 
 ### P0 — avant d'encaisser le moindre franc
+
+> Les deux bugs bloquants trouvés le 10/09/2026 (file de publication affamée,
+> migrations qui n'atteignaient jamais la production) sont corrigés — voir
+> §4 bis. Ce qui reste ci-dessous est de la **configuration**, pas du code.
+
 1. **Configurer et prouver `GRAPHISTE_GPT_API_KEY`** (checklist §7, étape 2).
    C'est LE point qui conditionne la promesse produit.
 2. **Brancher le paiement Mobile Money** (CinetPay ou PayDunya) : aujourd'hui
@@ -199,10 +249,20 @@ Notes mineures (acceptées, pas des trous) :
    sur main est bonne à reprendre à cette occasion.
 9. **`src/integrations/supabase/types.ts` est généré** : après toute
    migration, regénérer (`supabase gen types typescript --project-id
-   ixinojsmymqovekgkbdg > src/integrations/supabase/types.ts`).
-10. **`deno check` des edge functions n'est pas dans la CI** (Deno absent du
-    runner CI actuel). L'ajouter éviterait qu'une erreur de type edge ne se
-    découvre qu'au déploiement.
+   tktoyntaeajgsuplhntd > src/integrations/supabase/types.ts`).
+10. ~~**`deno check` des edge functions n'est pas dans la CI**~~ — fait
+    (10/09/2026). La CI a maintenant trois jobs : `check` (lint, `tsc
+    --noEmit`, tests, build), `functions` (`deno check`) et `schema`
+    (migrations appliquées à un vrai Postgres + invariants du produit).
+11. **Le frontend n'a AUCUN déploiement automatique** depuis le passage de
+    Netlify au VPS. C'est aujourd'hui la principale marche manquante : un
+    merge sur `main` met à jour les Edge Functions mais laisse le frontend
+    figé. À automatiser (rsync/scp du `dist/` + `docker compose up -d` depuis
+    une action GitHub avec une clé SSH de déploiement).
+12. **Aucun test ne s'exécute contre les vraies APIs externes** (Graphiste,
+    OpenRouter, Zernio). Les tests vérifient les invariants du code et du
+    schéma ; ils ne prouvent pas qu'une clé est valide. `scripts/diagnose-graphiste.mjs`
+    reste le seul contrôle bout-en-bout, et il est manuel.
 
 ---
 
@@ -210,12 +270,12 @@ Notes mineures (acceptées, pas des trous) :
 
 | Accès | Où le trouver / le mettre |
 |---|---|
-| Secrets des edge functions (OpenRouter, Graphiste, Zernio, Resend, CRON_SECRET…) | **Supabase Dashboard → Project Settings → Edge Functions → Secrets** (projet `ixinojsmymqovekgkbdg`). Liste de référence : DEPLOYMENT.md §2. |
+| Secrets des edge functions (OpenRouter, Graphiste, Zernio, Resend, CRON_SECRET…) | **Supabase Dashboard → Project Settings → Edge Functions → Secrets** (projet `tktoyntaeajgsuplhntd`). Liste de référence : DEPLOYMENT.md §2. |
 | Variables front (VITE_*) | Local : `.env.local` (jamais commité). CI/prod : **GitHub → repo → Settings → Secrets and variables → Actions** (`VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, + `NETLIFY_AUTH_TOKEN`, `NETLIFY_SITE_ID`, `SUPABASE_ACCESS_TOKEN`). |
 | Compte Graphiste GPT (clé + crédits) | Compte Graphiste GPT du propriétaire ; solde vérifiable via `GET /v1/account/credits` ou le script de diagnostic. |
 | Zernio | https://zernio.com/dashboard/api-keys (clé `sk_` + 64 hex). |
 | Resend (email) | https://resend.com → API Keys + Domains (vérification SPF/DKIM). |
-| Netlify | Compte Netlify du propriétaire (site id dans les secrets GitHub). |
+| VPS frontend | Accès SSH au VPS du propriétaire (Traefik + Docker). Le frontend se déploie à la main. |
 | Base de données / SQL | Supabase Dashboard → SQL Editor. Attribution manuelle d'un plan : `UPDATE public.profiles SET plan='pro' WHERE id='<uuid>';` (service role uniquement — depuis le dashboard ça marche). |
 
 ### Runbook email (SPF / DKIM / DMARC) — à faire une fois
@@ -262,7 +322,7 @@ Cochez dans l'ordre. Chaque étape a un résultat observable.
 ### C. Vérifier la configuration de production
 - [ ] 6. Secrets Supabase tous présents (liste DEPLOYMENT.md §2 ; minimum :
       OPENROUTER_API_KEY, GRAPHISTE_GPT_API_KEY, ZERNIO_API_KEY, CRON_SECRET,
-      ALLOWED_ORIGINS=<origine Netlify exacte>, APP_BASE_URL, RESEND_API_KEY,
+      ALLOWED_ORIGINS=https://auto-post-gen.76.13.129.252.sslip.io, APP_BASE_URL, RESEND_API_KEY,
       RESEND_FROM).
 - [ ] 7. Secrets GitHub Actions présents (VITE_*, NETLIFY_*, SUPABASE_ACCESS_TOKEN)
       → les 3 workflows verts dans l'onglet Actions après le merge.

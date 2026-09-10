@@ -35,3 +35,27 @@ jobs:
         with:
           deno-version: v2.x
       - run: deno check supabase/functions/*/index.ts supabase/functions/_shared/*.ts
+
+  # Migrations were never executed anywhere before production. This applies all
+  # of them to a real Postgres, proves the ones the deploy replays on every push
+  # are still idempotent, and checks the invariants the product relies on (RLS
+  # isolation, generation quotas, the publish queue's retry budget).
+  schema:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/test-schema.sh
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432

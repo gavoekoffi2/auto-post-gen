@@ -20,7 +20,7 @@ Le produit aide une petite entreprise à :
 - OpenRouter pour la génération IA de **texte**
 - Graphiste GPT pour les **affiches/images** (moteur exclusif, pas de repli)
 - Zernio / Postiz / Ayrshare / OAuth direct pour la publication sociale
-- Netlify pour le frontend (déployé par GitHub Actions)
+- VPS (nginx dans Docker derrière Traefik) pour le frontend
 
 ## Développement local
 
@@ -44,6 +44,8 @@ Les secrets backend ne doivent jamais être mis dans `.env.local` : ils vont dan
 
 ```bash
 npm run lint
+npm run typecheck     # vite build n'analyse PAS les types (SWC les supprime)
+npm test
 npm run build
 ```
 
@@ -65,9 +67,9 @@ Obligatoires :
 OPENROUTER_API_KEY=...        # texte IA
 GRAPHISTE_GPT_API_KEY=...     # affiches IA — SANS elle : texte OK mais JAMAIS d'image
 CRON_SECRET=...
-ALLOWED_ORIGINS=https://votre-domaine.netlify.app
-APP_BASE_URL=https://votre-domaine.netlify.app
-APP_PUBLIC_URL=https://votre-domaine.netlify.app
+ALLOWED_ORIGINS=https://auto-post-gen.76.13.129.252.sslip.io
+APP_BASE_URL=https://auto-post-gen.76.13.129.252.sslip.io
+APP_PUBLIC_URL=https://auto-post-gen.76.13.129.252.sslip.io
 APP_NAME="Pro Social AI"
 ```
 
@@ -98,20 +100,70 @@ La recherche web fonctionne déjà gratuitement sans Tavily/Brave grâce à Goog
 
 ## Déploiement
 
-Frontend Netlify :
+### Frontend — VPS (PAS de déploiement automatique)
+
+L'hébergement du frontend est passé de Netlify au VPS. `netlify.toml` et
+`.github/workflows/deploy-netlify.yml` ne déploient plus rien : le workflow
+ne fait que lint + tests + build sur déclenchement manuel.
+
+Le frontend se met en ligne à la main :
 
 ```bash
-npm run build
+npm ci
+npm run build                      # produit dist/
+# copier dist/ sur le VPS à côté de docker-compose.vps.yml, puis :
+docker compose -f docker-compose.vps.yml up -d
 ```
 
-Netlify publie le dossier `dist` et redirige toutes les routes React vers `index.html` via `netlify.toml`.
+`nginx.vps.conf` sert la SPA (toutes les routes retombent sur `index.html`),
+ajoute les en-têtes de sécurité (CSP, HSTS, X-Frame-Options) et empêche la
+mise en cache de `index.html` — sans quoi un navigateur garde l'ancien
+`index.html` après un déploiement et demande des bundles supprimés (page
+blanche). Traefik termine le TLS sur
+`https://auto-post-gen.76.13.129.252.sslip.io`.
 
-Edge Functions Supabase — le déploiement normal passe par la CI : tout push
-sur `main` touchant `supabase/functions/**` déploie **toutes** les fonctions
-(`.github/workflows/deploy-functions.yml`). En manuel si besoin :
+**Tant que personne n'automatise cette étape, un merge sur `main` met à jour
+les Edge Functions mais PAS le frontend.**
+
+### Backend — Supabase (automatique)
+
+Projet Supabase : `tktoyntaeajgsuplhntd`.
+
+Tout push sur `main` touchant `supabase/**` déclenche
+`.github/workflows/deploy-functions.yml`, qui :
+
+1. réveille le projet s'il est en pause ;
+2. pousse `ALLOWED_ORIGINS` / `APP_BASE_URL` / `ZERNIO_API_KEY` ;
+3. vérifie que `GRAPHISTE_GPT_API_KEY` et `OPENROUTER_API_KEY` existent ;
+4. **applique toutes les migrations datées ≥ `MIGRATION_CUTOFF`**
+   (`20260721000000`), dans l'ordre, à chaque déploiement ;
+5. vérifie que le schéma de production contient bien toutes les colonnes et
+   fonctions utilisées par les Edge Functions, et échoue avec la liste des
+   manquantes plutôt que de déployer du code qui cassera à l'exécution ;
+6. déploie les 23 Edge Functions.
+
+Deux conséquences importantes :
+
+- Les migrations **antérieures** au cutoff ne sont jamais rejouées (elles ne
+  sont pas idempotentes et échoueraient sur le schéma existant). Elles sont
+  supposées déjà appliquées en production. Si l'étape de vérification du
+  schéma échoue, appliquez la migration manquante une fois à la main dans le
+  SQL Editor de Supabase, puis relancez le workflow.
+- Toute nouvelle migration **doit être idempotente** (`IF NOT EXISTS`,
+  `CREATE OR REPLACE`, `DROP ... IF EXISTS` avant `CREATE`) : elle est
+  ré-appliquée à chaque déploiement.
+
+Vérifiez vos migrations avant de pousser :
 
 ```bash
-supabase functions deploy --project-ref ixinojsmymqovekgkbdg
+docker run --rm -e POSTGRES_PASSWORD=postgres -p 5432:5432 -d postgres:16
+npm run test:schema
+```
+
+En manuel si besoin :
+
+```bash
+supabase functions deploy --project-ref tktoyntaeajgsuplhntd
 ```
 
 ## Cron Supabase à configurer
