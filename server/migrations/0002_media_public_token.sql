@@ -9,7 +9,7 @@
 -- actually being published, and revocable by setting it back to NULL. It
 -- grants exactly one thing: reading that one file.
 --
--- Idempotent, and safe on a database that already carries 0001 and 0002.
+-- Idempotent, and safe on a database that already carries the 0001 schema.
 
 ALTER TABLE media_assets ADD COLUMN IF NOT EXISTS public_token text;
 

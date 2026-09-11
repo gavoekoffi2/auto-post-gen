@@ -55,10 +55,9 @@ test("the retry columns exist and the queue's selection index covers them", () =
   assert.match(schema, /next_publish_attempt_at\s+timestamptz NOT NULL DEFAULT now\(\)/);
   // Without the column in the index the added predicate degrades the queue
   // scan to a sequential scan as posts accumulate.
-  const queueIndex = read("server/migrations/0002_publish_queue_index.sql");
   assert.match(
-    queueIndex,
-    /CREATE INDEX IF NOT EXISTS idx_posts_status_scheduled[\s\S]{0,200}next_publish_attempt_at/,
+    schema,
+    /CREATE INDEX IF NOT EXISTS posts_due_idx[\s\S]{0,200}next_publish_attempt_at/,
   );
   assert.match(schema, /posts_attempts_nonneg CHECK \(publish_attempts >= 0\)/);
 });

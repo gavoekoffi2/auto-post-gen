@@ -323,7 +323,7 @@ test("the queue's selection index exists and is actually used", async () => {
     `SELECT indexname FROM pg_indexes WHERE tablename = 'posts'`,
   );
   assert.ok(
-    indexes.some((i) => i.indexname === "idx_posts_status_scheduled"),
+    indexes.some((i) => i.indexname === "posts_due_idx"),
     `the queue index is missing; plan was:\n${text}`,
   );
 });

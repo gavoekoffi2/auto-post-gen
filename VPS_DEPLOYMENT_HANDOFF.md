@@ -59,8 +59,7 @@ ils sont détaillés en section 14 avec ce qu'ils cassaient.
 ```
 server/package.json, package-lock.json, tsconfig.json, .gitignore
 server/migrations/0001_core_schema.sql
-server/migrations/0002_publish_queue_index.sql
-server/migrations/0003_media_public_token.sql
+server/migrations/0002_media_public_token.sql
 server/src/index.ts                 démarrage, gestion d'erreurs, runners
 server/src/migrate.ts               applicateur de migrations
 server/src/lib/db.ts                pool, query, transaction
@@ -300,7 +299,7 @@ complète sans une requête par table.
 | `sessions` | 7 | Sessions actives. **`token_hash` seulement** — aucune colonne ne peut contenir le jeton en clair. |
 | `one_time_tokens` | 8 | Réinitialisation de mot de passe et validation par lien. Haché, daté, à usage unique. |
 | `posts` | 22 | Publications, leur état, leur programmation, leur budget de retry et leur affiche. |
-| `media_assets` | 8 | Fichiers du volume local, plus le jeton de capacité (0003). |
+| `media_assets` | 8 | Fichiers du volume local, plus le jeton de capacité (0002). |
 | `generation_jobs` | 13 | Rendus d'affiches en cours ou terminés. |
 | `generation_usage` | 5 | Réservations de quota — l'historique est conservé, pas effacé. |
 | `social_connections` | 14 | Comptes sociaux connectés, dont `provider_profile_key` : la frontière de tenant côté fournisseur. |
@@ -325,18 +324,21 @@ Contraintes qui portent une règle produit :
   le brief envoyé au moteur.
 - `idx_media_assets_public_token` (unique, partiel) — deux comptes ne peuvent
   pas partager un jeton de capacité.
+- `posts_due_idx` (partiel, sur `status`, `scheduled_for`,
+  `next_publish_attempt_at`) — la file le parcourt à chaque tick ; sans le
+  prédicat de report dans l'index, la sélection dégénère en parcours
+  séquentiel de toute la table à mesure que les posts s'accumulent.
 
 ---
 
 ## 8. Migrations à appliquer
 
-Trois fichiers, dans l'ordre, **tous idempotents** :
+Deux fichiers, dans l'ordre, **tous deux idempotents** :
 
 | Fichier | Contenu |
 | --- | --- |
 | `0001_core_schema.sql` | Schéma complet : extensions, tables, index, contraintes, fonctions, déclencheurs. |
-| `0002_publish_queue_index.sql` | `idx_posts_status_scheduled` (la file la parcourt à chaque tick) et `idx_posts_profile_created` (le listing du dashboard). |
-| `0003_media_public_token.sql` | `media_assets.public_token` + son index unique partiel. |
+| `0002_media_public_token.sql` | `media_assets.public_token` + son index unique partiel. |
 
 ```bash
 cd /opt/pro-social-ai/server
@@ -350,7 +352,7 @@ modifié. L'idempotence est doublement assurée — le registre saute ce qui est
 appliqué, et chaque fichier converge de toute façon (`CREATE … IF NOT EXISTS`,
 `CREATE OR REPLACE`, `DO $$ … EXCEPTION WHEN duplicate_object`).
 
-**Vérifié dans le bac à sable :** les trois fichiers ont été rejoués
+**Vérifié dans le bac à sable :** les deux fichiers ont été rejoués
 intégralement trois fois de suite sur une base qui les portait déjà, sans une
 seule erreur. La CI le revérifie à chaque exécution.
 
@@ -483,7 +485,7 @@ chmod 600 /opt/pro-social-ai/.env.selfhosted
 cd /opt/pro-social-ai/server
 npm ci
 DATABASE_URL="…" npm run migrate
-#    Sortie attendue : "applied 0001…", "applied 0002…", "applied 0003…"
+#    Sortie attendue : "applied 0001…", "applied 0002…"
 #    ou "skip … (already applied)" sur une base déjà migrée.
 
 # 4. Construire et démarrer l'API
@@ -600,7 +602,7 @@ docker compose build api && docker compose up -d api
 docker compose logs -f api
 ```
 
-Les trois migrations n'effacent ni ne renomment aucune colonne : elles créent
+Les deux migrations n'effacent ni ne renomment aucune colonne : elles créent
 des tables, des index et une colonne nullable. **L'ancien code tourne donc sur
 le nouveau schéma**, ce qui rend ce rollback-là sûr sans toucher à la base.
 
@@ -701,8 +703,8 @@ réintroduire.
 Deux durcissements ont également été ajoutés : les URL d'images fournies par
 l'utilisateur sont validées avant d'être remises à un moteur externe (une
 adresse interne y serait une sonde SSRF exécutée depuis le réseau du
-fournisseur), et l'index que la file parcourt à chaque tick a été ajouté —
-sans lui, la sélection dégénérait en parcours séquentiel de toute la table.
+fournisseur), et le jeton de capacité a reçu un index unique partiel, sans lequel deux
+comptes auraient pu en partager un.
 
 ---
 
@@ -717,7 +719,7 @@ Exécuté réellement, sortie constatée.
 - `npm test` — **162 tests, 162 réussis**.
 - `npm --prefix server test` — **19 tests, 19 réussis**, contre un PostgreSQL 16 réel.
 - `npm run build` — réussi ; le bundle produit ne contient pas le mot « supabase ».
-- Les trois migrations appliquées sur une base vierge, puis **rejouées deux
+- Les deux migrations appliquées sur une base vierge, puis **rejouées deux
   fois de plus** intégralement, sans erreur.
 - L'API démarrée et interrogée au curl :
   - `/api/health` → 200 ;
