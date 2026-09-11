@@ -8,6 +8,17 @@ export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
     port: 8080,
+    // In production nginx serves the SPA and proxies /api to the API
+    // container, so every request the dashboard makes is same-origin. The dev
+    // server has to reproduce that, or local development would need CORS and
+    // cross-site cookies that the deployed app never uses — and the session
+    // cookie, being SameSite, simply would not be sent.
+    proxy: {
+      "/api": {
+        target: process.env.VITE_DEV_API_ORIGIN ?? "http://127.0.0.1:8081",
+        changeOrigin: false,
+      },
+    },
   },
   plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
   resolve: {

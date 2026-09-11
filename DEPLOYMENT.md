@@ -1,226 +1,145 @@
-# Pro Social AI — Production readiness & deployment guide
+# Pro Social AI — variables, nginx et conteneurs
 
-This document captures what the platform actually does today, what is
-missing for a real production launch, and the concrete steps required to
-get from the current state to a first-user release.
+Ce document est la **référence de configuration** du système actuel : un seul
+VPS, aucune dépendance cloud managée.
 
-It is the result of a full code audit performed on the
-`claude/audit-code-quality-BwSCh` branch. Read it before you flip the
-switch.
+La procédure de déploiement pas-à-pas (migrations, sauvegarde, bascule,
+rollback) est dans [`VPS_DEPLOYMENT_HANDOFF.md`](./VPS_DEPLOYMENT_HANDOFF.md).
+
+> **Historique.** Les versions précédentes de ce fichier décrivaient une
+> architecture Supabase (Edge Functions, Auth, Storage, RLS) et des
+> intégrations sociales alternatives (Ayrshare, Postiz, OAuth direct
+> LinkedIn/Meta/X). Rien de tout cela n'est déployé aujourd'hui. Ces notes
+> restent consultables dans l'historique git et dans
+> [`docs/HANDOVER.md`](./docs/HANDOVER.md) ; ce qu'il faudrait reprendre pour
+> les rétablir est listé dans la section « travail non terminé » du handoff.
 
 ---
 
-## 1. What works today
+## 1. Variables d'environnement
 
-- Email/password authentication (Supabase Auth)
-- 7-step onboarding (sector, tone, frequency, description, style example,
-  platforms, preferred days, image-people-type)
-- AI text generation (Google Gemini via Lovable AI Gateway)
-- AI image generation (with custom-image-library fallback)
-- Posts CRUD: create, edit, validate, publish (manual), delete
-- Calendar view with per-day post scheduling
-- Statistics dashboard (totals, weekly chart, platform pie)
-- Custom image library with per-user storage (RLS-enforced)
-- Logo upload (RLS-enforced)
-- Password reset and account deletion (including storage cleanup)
+Seuls les **noms** figurent ici. Les valeurs vivent dans `.env.selfhosted` sur
+le VPS, ne sont jamais commitées, et ne sont jamais exposées au frontend : le
+dashboard n'a aucune variable de build.
 
-## 2. What is wired but needs configuration before launch
+### Obligatoires
 
-The platform is split into edge functions; each one needs the right
-environment variables in the Supabase dashboard before deploying.
-
-### Required Supabase secrets
-
-| Secret | Used by | Purpose |
+| Variable | Rôle | Conséquence si absente |
 | --- | --- | --- |
-| `OPENROUTER_API_KEY` | `generate-content`, `generate-image`, `auto-generate-weekly` | LLM access (OpenAI-compatible API). |
-| `OPENROUTER_TEXT_MODEL` *(optional)* | `generate-content`, `detect-audiences`, `auto-generate-weekly` | Claude override. Defaults to `anthropic/claude-sonnet-5`; non-Claude values are deliberately ignored so editorial writing always remains on Claude. |
-| `GRAPHISTE_GPT_API_KEY` | `generate-image`, `auto-generate-weekly` | **REQUIRED for poster/image generation — without it the app generates post TEXT but never an image** (the "seul le texte se génère" symptom). The poster engine is Graphiste GPT exclusively; there is NO fallback by design. Verify end-to-end with `GRAPHISTE_GPT_API_KEY=... node scripts/diagnose-graphiste.mjs` (checks key validity, credits, and runs a real generation). |
-| `GRAPHISTE_GPT_API_URL` *(optional)* | `generate-image`, `auto-generate-weekly` | Override the Graphiste GPT endpoint. Defaults to the documented v1.1 `posters/generate` URL. |
-| `OPENROUTER_IMAGE_MODEL` *(legacy, unused by the poster flow)* | — | Kept for the deprecated OpenRouter image chain in `_shared/ai.ts`. Poster generation does NOT use OpenRouter. |
-| `APP_NAME` / `APP_PUBLIC_URL` *(optional)* | all AI calls | Sent as `X-Title` and `HTTP-Referer` to OpenRouter so usage shows up cleanly in their dashboard. |
-| `IMAGE_GENERATION_TIMEOUT_MS` *(optional)* | `generate-image` | Per-model timeout for image generation. Defaults to 60000. |
-| `TAVILY_API_KEY` *(optional upgrade)* | `generate-content` | Premium web-search source. The function already uses **free** Google News RSS + DuckDuckGo by default — Tavily just adds higher quality results when configured. Free tier 1k queries/month at https://tavily.com. |
-| `BRAVE_SEARCH_API_KEY` *(optional upgrade)* | `generate-content` | Same idea as Tavily: optional premium search source. Free tier 2k queries/month at https://brave.com/search/api. |
-| `AYRSHARE_API_KEY` *(strongly recommended for MVP)* | `ayrshare-connect`, `ayrshare-status`, `publish-post`, `sync-comments`, `comment-reply` | When set, users see a "Connexion rapide" button that handles all social platforms (IG, FB, LinkedIn, X, TikTok, YouTube, Pinterest, Threads, Bluesky) through one Ayrshare account. No Meta App Review, no LinkedIn approval, no TikTok partnership — Ayrshare has done all that. Free trial (100 posts/month, 1 profile) at https://app.ayrshare.com. Paid tiers from $49/month. **Comment inbox + auto-reply require the Premium plan** (Comments API). |
-| `POSTIZ_API_KEY` *(the reference video's platform)* | `postiz-connect`, `postiz-status`, `publish-post` | When set, users get a "Connexion via Postiz" option (connect/publish/schedule across 30+ networks). Postiz handles the OAuth + publishing plumbing. Get the key in Postiz → Settings → Developers → Public API. **Note:** Postiz's public API does NOT expose comments — the comment inbox/auto-reply run through Ayrshare (or direct OAuth), not Postiz. |
-| `POSTIZ_API_URL` *(optional)* | `postiz-*`, `publish-post` | Override the Postiz base URL when self-hosting, e.g. `https://your-host/public/v1`. Defaults to the cloud API. |
-| `ZERNIO_API_KEY` | `zernio-connect`, `zernio-status`, `publish-post` | When set, users get a "Connexion via Zernio" option that connects LinkedIn, Facebook (and 13 more) and publishes through Zernio. Per-user isolation via Zernio "profiles" (one per app-user). Get the key at https://zernio.com/dashboard/api-keys (format `sk_` + 64 hex). **Set it in Supabase Secrets only — never commit it.** |
-| `ZERNIO_API_URL` *(optional)* | `zernio-*`, `publish-post` | Override the Zernio base URL. Defaults to `https://zernio.com/api/v1`. |
-| `SUPABASE_URL` | all server functions | (auto-provided) |
-| `SUPABASE_SERVICE_ROLE_KEY` | all server functions | (auto-provided) |
-| `CRON_SECRET` | `auto-generate-weekly`, `send-validation-email`, `publish-post` (cron) | Shared secret between Supabase Scheduler and the functions. Also used as the OAuth state HMAC secret if `OAUTH_STATE_SECRET` is unset. |
-| `OAUTH_STATE_SECRET` | all `oauth-*` functions | (Optional) Dedicated HMAC secret for OAuth state tokens; defaults to `CRON_SECRET`. |
-| `ALLOWED_ORIGINS` | all functions | Comma-separated list of origins (e.g. `https://app.example.com`). **Fails closed**: when unset, no `Access-Control-Allow-Origin` is emitted and browsers block cross-origin calls. Set `*` explicitly only for local development. |
-| `RESEND_API_KEY` | `send-validation-email` | Email delivery |
-| `RESEND_FROM` | `send-validation-email` | Verified sender (`Pro Social AI <no-reply@yourdomain.com>`) |
-| `APP_BASE_URL` | `send-validation-email`, validation links | Where to point the validation link (e.g. `https://app.example.com`) — should be the front-end origin, not the Supabase URL. |
-| `OAUTH_LINKEDIN_CLIENT_ID` / `OAUTH_LINKEDIN_CLIENT_SECRET` | `oauth-*-linkedin` | LinkedIn app credentials |
-| `OAUTH_META_APP_ID` / `OAUTH_META_APP_SECRET` | `oauth-*-meta` | Meta (Facebook + Instagram) app credentials |
-| `OAUTH_TWITTER_CLIENT_ID` / `OAUTH_TWITTER_CLIENT_SECRET` | `oauth-*-twitter` | Twitter/X app credentials (PKCE; secret only for confidential clients) |
+| `DATABASE_URL` | Connexion PostgreSQL (conteneur voisin). | L'API ne démarre pas. |
+| `SESSION_COOKIE_SECRET` | Signe le cookie de session et dérive le hachage des jetons à usage unique. Long et aléatoire. | L'API ne démarre pas. En changer **invalide toutes les sessions et tous les liens de réinitialisation en cours**. |
+| `APP_PUBLIC_URL` | URL publique du site. Sert aux liens des emails **et** aux URL d'images remises au publieur. | Les emails pointent nulle part ; publier un post dont l'affiche est stockée localement échoue explicitement. |
+| `MEDIA_ROOT` | Répertoire du volume média (`/app/media`). | L'API ne démarre pas. |
 
-### Frontend env (`.env`)
+### Recommandées
 
-`VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_SUPABASE_PROJECT_ID`
-must be set. Copy `.env.example` to `.env.local` and fill them in (no `.env`
-is committed; in CI/Netlify they come from GitHub Actions secrets).
-
-### Cron jobs (Supabase Scheduler)
-
-Configure these in the Supabase dashboard, sending the header
-`x-cron-secret: $CRON_SECRET` so the functions accept the call:
-
-| Cadence | Endpoint | What it does |
+| Variable | Rôle | Conséquence si absente |
 | --- | --- | --- |
-| Mondays, 06:00 UTC | `POST /functions/v1/auto-generate-weekly` | For every profile with `auto_publish=true`, generates the weekly batch. Posts are inserted as `validated`. |
-| Mondays, 08:00 UTC | `POST /functions/v1/send-validation-email` | Emails any user with `pending` posts so they can validate them. |
-| Every 15 minutes | `POST /functions/v1/publish-post` (no body) | Publishes any `validated` post whose `scheduled_for` is in the past. |
-| Every 15–30 minutes | `POST /functions/v1/sync-comments` (no body) | Pulls new comments on published posts into the inbox and (if the user enabled it) auto-replies with the AI. Requires a comment-capable provider (Ayrshare Premium). |
+| `OPENROUTER_API_KEY` | Génération de texte (chaîne Claude). | Génération de texte et analyse des cibles indisponibles — annoncé, jamais silencieux. |
+| `OPENROUTER_TEXT_MODEL` | Force un modèle. **Une valeur non `anthropic/claude-*` est ignorée**, volontairement : la rédaction reste sur Claude. | Chaîne par défaut. |
+| `GRAPHISTE_GPT_API_KEY` | Génération d'affiches. Moteur exclusif, **aucun repli local par conception**. | Le texte se génère, jamais l'affiche. C'est dit à l'utilisateur ; aucune image fabriquée n'est présentée comme une génération réussie. |
+| `GRAPHISTE_GPT_API_URL` | Surcharge l'endpoint du moteur d'affiches. | Endpoint v1.1 documenté par défaut. |
+| `ZERNIO_API_KEY` | Publication sociale. | La publication est refusée avec un message nommant la variable. |
+| `ZERNIO_API_URL` | Surcharge la base Zernio. | `https://zernio.com/api/v1`. |
+| `APP_NAME` | Nom affiché dans les emails et envoyé à OpenRouter (`X-Title`). | Valeur par défaut. |
+| `CRON_SECRET` | Autorise `POST /api/cron/*`. Comparé en temps constant. | Les routes cron répondent 404 — c'est voulu : une route qui répond 401 confirme son existence. |
 
-## 3. Social network publishing — the truth
+### Optionnelles
 
-**The previous codebase did NOT publish to social networks.** The old
-`SocialMediaConnect.tsx` just stored usernames in a column and showed
-"connected" — nothing was ever sent to Instagram/Facebook/etc. The
-warning at the bottom of that dialog confirmed it ("vous devrez les
-publier manuellement").
-
-### What the audit changed
-
-- New table `social_connections` stores per-user OAuth tokens, refresh
-  tokens, scopes and metadata, isolated by RLS.
-- New edge function `publish-post` implements actual publishing for
-  LinkedIn (UGC API), Facebook Pages, Instagram (via the connected
-  Facebook Page), Twitter/X. TikTok is stubbed because the Content
-  Posting API is in limited access.
-- The `SocialMediaConnect` dialog now opens a real OAuth flow per
-  platform (a placeholder URL — see below).
-
-### What you still need to do
-
-The full OAuth start + callback edge functions are now implemented for
-LinkedIn, Meta (Facebook + Instagram) and Twitter/X. To turn them on:
-
-1. Create a developer app on each platform:
-   - **LinkedIn**: https://www.linkedin.com/developers/apps — enable
-     "Sign In with LinkedIn using OpenID Connect" + "Share on LinkedIn".
-   - **Meta** (Facebook + Instagram): https://developers.facebook.com/apps —
-     add the Pages and Instagram Graph products. Request the
-     `pages_manage_posts`, `instagram_content_publish`, etc. permissions
-     via App Review (mandatory before launch).
-   - **Twitter/X**: https://developer.twitter.com/en/portal — create an
-     OAuth 2.0 app with PKCE, request `tweet.write`.
-2. Set the OAuth redirect URI in each app to the URLs **with the `?apikey=<ANON_KEY>` query parameter** — this is required because Supabase Edge Functions enforce the `apikey` check at the gateway and OAuth providers can't add custom headers when they redirect:
-   - LinkedIn: `https://<project>.supabase.co/functions/v1/oauth-callback-linkedin?apikey=<ANON_KEY>`
-   - Meta: `https://<project>.supabase.co/functions/v1/oauth-callback-meta?apikey=<ANON_KEY>`
-   - Twitter: `https://<project>.supabase.co/functions/v1/oauth-callback-twitter?apikey=<ANON_KEY>`
-   The anon key is the public `VITE_SUPABASE_PUBLISHABLE_KEY` (safe to expose). The start endpoints automatically include it in the `redirect_uri` they send to the provider.
-3. Set the `OAUTH_*` secrets listed in §2 in the Supabase dashboard.
-4. The `SocialMediaConnect` dialog will now open the correct OAuth flow
-   when users click "Connecter".
-
-### Can we use "private" APIs to avoid OAuth?
-
-Yes, technically — projects like `instagrapi`, `tweepy` (scraping),
-`facebook-scraper` interact with the platforms without their official
-APIs. **We strongly recommend against it for a real product**:
-
-- Violates every platform's Terms of Service → user accounts get banned.
-- Requires storing user passwords in plaintext or near-plaintext →
-  GDPR/CNIL violation and reputational disaster.
-- Breaks on every UI/auth change shipped by the platform (sometimes
-  weekly).
-- All serious open-source schedulers (Postiz, Mixpost, Buffer-clone,
-  Postybirb) use the official OAuth APIs.
-
-If you choose to go down that road regardless, isolate the scraping
-worker in a separate service and keep credentials in a dedicated vault
-— do not put them in this codebase.
-
-## 4. Critical issues fixed in this audit
-
-| Severity | Issue | Status |
+| Variable | Rôle | Défaut |
 | --- | --- | --- |
-| Critical | Preferred days saved as English IDs (`monday`) but auto-generator expected French names (`Lundi`) → scheduling always used default | Fixed (migration backfills existing rows; UI now stores French IDs) |
-| Critical | `SettingsDialog` uploaded to `logos/<userid>-...` but storage RLS required `<userid>/...` → 403 on every upload | Fixed |
-| Critical | All edge functions had `verify_jwt = false` and `CORS = *` → anyone could call them and burn AI credits | Fixed (`generate-content` now validates JWT in-function, others gated by `CRON_SECRET`, CORS driven by `ALLOWED_ORIGINS`) |
-| Critical | Account deletion left storage files orphaned | Fixed (best-effort cleanup of `user-assets/<userid>/`) |
-| Critical | `auto-generate-weekly` always inserted `status='pending'`, so even with `auto_publish=true` posts were never published | Fixed (auto-generated posts now go straight to `status='validated'`) |
-| Critical | No validation token endpoint — the "Valider" links in emails went nowhere | Fixed (new `validate-post` function with TTL + single-use) |
-| High | `send-validation-email` never sent emails | Fixed (Resend integration; falls back to dry-run logs if `RESEND_API_KEY` not set) |
-| High | No real publish endpoint | Fixed (`publish-post` function — LinkedIn implemented, Meta/Twitter wired, TikTok stubbed) |
-| High | Duplicate storage policies between migrations would create redundancy | Fixed (new migration cleans up) |
-| Medium | Statistics showed "Publiés" but nothing set `status='published'` | Fixed |
-| Medium | Auto-publish was a one-click toggle with no warning | Fixed (confirmation dialog) |
-| Medium | No rate limiting on AI generation | Fixed (20 req/hour/user via `generation_usage` table) |
-| Medium | Week-number calculations diverged between auto-generator and stats | Fixed (ISO 8601 in auto-generate-weekly) |
-| Medium | Many `error: any` blocks | Cleaned up (`unknown` + `instanceof Error`) |
+| `RESEND_API_KEY` / `RESEND_FROM` | Emails (réinitialisation, validation, contact). | Sans elles, aucun email n'est envoyé — la réinitialisation répond quand même `ok`, pour ne pas révéler quelles adresses ont un compte. |
+| `PUBLISH_TICK_SECONDS` | Cadence de la file de publication. `0` désactive le runner interne. | `60` |
+| `WEEKLY_GENERATION` | `off` désactive la génération hebdomadaire interne. | activée |
+| `PORT` / `HOST` | Écoute de l'API. | `8080` / `0.0.0.0` |
+| `PG_POOL_MAX` | Taille du pool PostgreSQL. Un pool non borné épuise `max_connections` et emmène la base avec lui. | `10` |
 
-## 5. Remaining risks before launch
+Une capacité non configurée est annoncée **au démarrage** et **par la route
+qui en dépend**, dans les mêmes termes : l'utilisateur ne rencontre jamais un
+no-op silencieux, et un opérateur voit ce qui manque dans les logs seuls.
 
-Things you should still address but that are out of scope of a pure
-audit fix:
+---
 
-1. **TikTok**: the Content Posting API is in limited access. Either
-   request a TikTok partnership or remove TikTok from the platform
-   options shown to users.
-2. **Email deliverability**: configure SPF/DKIM/DMARC for the Resend
-   sending domain. Otherwise validation emails will go to spam.
-3. **Image hosting**: when publishing to Instagram, the image URL must
-   be publicly fetchable for hours. Supabase storage signed URLs are
-   short-lived. Ensure custom-image URLs are stored with sufficient
-   expiry, or upload images through the Graph API instead of URL-link
-   posting.
-4. **Bundle size**: the main bundle is 1.16 MB. Consider code-splitting
-   the dashboard from the landing page (`React.lazy`) before serving
-   real traffic.
-5. **Account deletion**: handled by the `delete-account` edge function
-   which uses the admin API to remove the `auth.users` row in addition
-   to all app data and storage objects.
-6. **Audit logging**: no audit table is present. If you need GDPR
-   compliance, add an `audit_logs` table written on every mutation.
-7. **Image moderation**: the AI image generator produces user-facing
-   content. Add a moderation pass (Lovable or external) before posting
-   if your terms of service require it.
+## 2. Tâches planifiées
 
-## 6. Pre-launch checklist
+L'API les exécute elle-même ; il n'y a rien à configurer côté hôte.
 
-- [ ] All Supabase secrets above are set (production project).
-- [ ] `ALLOWED_ORIGINS` is your real domain, not `*`.
-- [ ] `verify_jwt = true` on `generate-content`. The other functions
-      keep `verify_jwt = false` because the gateway will refuse calls
-      without a session token from your client, but they require
-      `CRON_SECRET` for scheduled invocations.
-- [ ] Supabase Scheduler is configured per §2.
-- [ ] At least one of LinkedIn/Meta OAuth is fully implemented (start +
-      callback) and produces a row in `social_connections`.
-- [ ] Resend domain is verified, DKIM/SPF/DMARC set up.
-- [ ] DNS for the app domain points at the hosting solution (Lovable,
-      Vercel, Cloudflare Pages, etc.).
-- [ ] Privacy policy and Terms updated to reflect what you actually
-      collect (OAuth tokens, AI usage) — RGPD requirement.
-- [ ] Backups: confirm the Supabase project has Point-in-Time Recovery
-      or daily backups enabled.
-- [ ] Smoke test: full flow (signup → onboarding → connect at least one
-      OAuth → generate → validate → publish) on staging.
+| Tâche | Cadence | Comportement |
+| --- | --- | --- |
+| File de publication | `PUBLISH_TICK_SECONDS` (60 s) | Débloque d'abord les publications interrompues par un crash, puis publie les posts dus et hors de leur fenêtre de report. Lot borné à 12. |
+| Génération hebdomadaire | vérifiée toutes les heures | Effective au plus une fois par jour et par compte ; sans effet si les sept prochains jours sont déjà pleins. |
 
-## 7. Local development
+Les faire piloter par l'ordonnanceur de l'hôte : mettre
+`PUBLISH_TICK_SECONDS=0` et/ou `WEEKLY_GENERATION=off`, puis appeler
+`POST /api/cron/publish` et `POST /api/cron/weekly` avec l'en-tête
+`x-cron-secret: <CRON_SECRET>`.
 
-```sh
-npm install
-npm run dev
+Faire tourner plusieurs répliques de l'API est sûr : chaque post est réservé
+par un `UPDATE` conditionnel (`validated` → `publishing`), donc deux runners
+en concurrence sur le même post signifient que l'un le prend et que l'autre ne
+voit rien à faire.
+
+---
+
+## 3. nginx
+
+nginx sert la SPA et proxifie `/api` vers le conteneur de l'API. Deux points
+comptent, tous les deux déjà cassés une fois :
+
+- **`index.html` ne doit jamais être mis en cache.** Sinon un navigateur garde
+  l'ancien `index.html` après un déploiement et demande des bundles supprimés :
+  page blanche. Les assets versionnés, eux, se mettent en cache longtemps.
+- **`add_header` dans un `location` remplace les en-têtes hérités du serveur**,
+  il ne s'y ajoute pas. Ajouter un en-tête de cache dans un `location` supprime
+  donc silencieusement CSP, HSTS et `X-Frame-Options` pour ces requêtes. Les
+  directives `expires` n'ont pas ce défaut, et c'est pourquoi elles sont
+  utilisées ici.
+
+```nginx
+# SPA : toutes les routes retombent sur index.html
+location / {
+    try_files $uri $uri/ /index.html;
+}
+
+# L'index ne doit jamais être servi depuis un cache.
+location = /index.html {
+    expires -1;
+}
+
+# Les assets portent un hash dans leur nom : immuables.
+location /assets/ {
+    expires 7d;
+}
+
+# L'API, sur la même origine — c'est ce qui rend le cookie de session
+# SameSite utilisable et supprime tout besoin de CORS.
+location /api/ {
+    proxy_pass http://api:8080;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    # Les affiches et les logos transitent par ici.
+    client_max_body_size 6m;
+}
 ```
 
-Lint and build before pushing:
+L'API lit l'IP cliente via `trustProxy` de Fastify, jamais un en-tête brut :
+sans cela, n'importe quel client fixerait son propre `X-Forwarded-For` et
+contournerait les limitations par IP.
 
-```sh
-npm run lint
-npm run build
-```
+---
 
-To run the Supabase migrations locally, you need the Supabase CLI:
+## 4. Conteneurs et volumes
 
-```sh
-supabase db reset
-supabase functions serve generate-content --env-file .env.local
-```
+| Élément | Nom | Contenu |
+| --- | --- | --- |
+| Base | `pro-social-ai-postgres-1` | PostgreSQL 16 |
+| API | `pro-social-ai-api-1` | Fastify, monte le volume média sur `/app/media` |
+| Frontend | `auto-post-gen-frontend` | nginx, sert `dist/` |
+| Volume | `pro-social-ai_pgdata` | Données PostgreSQL |
+| Volume | `pro-social-ai_media` | Affiches, logos, images de la bibliothèque |
+
+Les deux volumes sont à sauvegarder **ensemble** : une base restaurée sans son
+volume média laisse des lignes `media_assets` pointant vers des fichiers
+absents, et l'inverse laisse des fichiers que plus rien ne référence.

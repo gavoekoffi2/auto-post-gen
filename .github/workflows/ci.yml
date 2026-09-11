@@ -1,6 +1,6 @@
 name: CI
 
-# Runs on every pull request (and pushes to main) so lint, tests and the
+# Runs on every pull request (and pushes to main) so lint, tests, types and the
 # production build are gated BEFORE merge — previously they only ran at deploy
 # time, after code had already landed on main.
 on:
@@ -9,7 +9,9 @@ on:
     branches: [main]
 
 jobs:
-  check:
+  # The dashboard. The test suite imports modules from server/src/shared, so it
+  # needs the repo checked out but not the API's dependencies.
+  frontend:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,22 +27,29 @@ jobs:
       - run: npm test
       - run: npm run build
 
-  # Edge functions are Deno and are never touched by the Node build above, so
-  # a type error in them used to surface only at deploy time.
-  functions:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
-      - run: deno check supabase/functions/*/index.ts supabase/functions/_shared/*.ts
+      # The whole point of the migration off Supabase: the shipped bundle must
+      # carry no cloud backend and must call nothing but its own origin.
+      - name: assert no Supabase dependency survives
+        run: |
+          set -euo pipefail
+          if grep -rn "@supabase/supabase-js\|integrations/supabase\|VITE_SUPABASE" src/ package.json; then
+            echo "::error::a Supabase dependency reappeared in the dashboard"
+            exit 1
+          fi
+          if grep -rnE "supabase\.(auth|from|storage|functions)" src/; then
+            echo "::error::a Supabase client call reappeared in the dashboard"
+            exit 1
+          fi
+          if grep -rn "supabase" dist/ >/dev/null 2>&1; then
+            echo "::error::the built bundle still references Supabase"
+            exit 1
+          fi
 
-  # Migrations were never executed anywhere before production. This applies all
-  # of them to a real Postgres, proves the ones the deploy replays on every push
-  # are still idempotent, and checks the invariants the product relies on (RLS
-  # isolation, generation quotas, the publish queue's retry budget).
-  schema:
+  # The API. Its tests need a real PostgreSQL: the guarantees they cover —
+  # quota atomicity under a lock, the tenant predicate, the publish queue's
+  # backoff, the capability token's unique index — cannot be checked by
+  # reading the code, and a mock would assert only what the mock does.
+  server:
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -54,8 +63,36 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      SESSION_COOKIE_SECRET: ci-secret-that-is-long-enough-for-the-check
+      MEDIA_ROOT: /tmp/psa-ci-media
     steps:
       - uses: actions/checkout@v4
-      - run: ./scripts/test-schema.sh
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+        working-directory: server
+      - run: npm run typecheck
+        working-directory: server
+      - run: npm run migrate
+        working-directory: server
+
+      # Migrations are replayed on every deploy against a database that already
+      # carries the schema, so "idempotent" is a property the deploy depends on,
+      # not a nicety. Applying each file twice more proves it.
+      - name: migrations are idempotent
+        run: |
+          set -euo pipefail
+          for pass in 2 3; do
+            for file in server/migrations/*.sql; do
+              psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$file"
+            done
+            echo "replay pass $pass: ok"
+          done
+
+      - run: npm test
+        working-directory: server

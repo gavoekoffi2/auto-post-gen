@@ -5,40 +5,68 @@ SaaS de génération, planification et publication de posts réseaux sociaux ave
 Le produit aide une petite entreprise à :
 
 - configurer son activité en onboarding ;
+- faire analyser ses cibles de communication, puis les valider à la main ;
 - générer des posts en français adaptés à son métier ;
-- enrichir les posts avec recherche web gratuite (Google News RSS, Wikipedia, DuckDuckGo) ;
-- générer un visuel IA associé ;
+- générer une affiche IA associée ;
 - valider, programmer et publier les posts ;
-- connecter les réseaux sociaux via Zernio / Postiz / Ayrshare selon les secrets configurés ;
+- connecter ses réseaux sociaux ;
 - suivre les statistiques et les commentaires.
 
-## Stack
+## Architecture
 
-- React + Vite + TypeScript
-- Tailwind + shadcn-ui
-- Supabase Auth / Database / Storage / Edge Functions
-- OpenRouter pour la génération IA de **texte**
-- Graphiste GPT pour les **affiches/images** (moteur exclusif, pas de repli)
-- Zernio / Postiz / Ayrshare / OAuth direct pour la publication sociale
-- VPS (nginx dans Docker derrière Traefik) pour le frontend
+Tout tourne sur un seul VPS. **Il n'y a plus aucune dépendance cloud
+managée** : pas de Supabase, pas de fonctions hébergées, pas de base distante.
+
+```
+navigateur
+    │  (même origine, cookie HttpOnly)
+    ▼
+nginx  ──── /            ──▶  dist/  (SPA React)
+       └─── /api/…       ──▶  conteneur API (Fastify)
+                                  │
+                                  ├──▶ PostgreSQL (conteneur voisin)
+                                  ├──▶ volume media (affiches, logos)
+                                  └──▶ OpenRouter / Graphiste GPT / Zernio
+```
+
+Le navigateur n'appelle jamais qu'un chemin relatif `/api/…`, avec
+`credentials: "include"`. Il ne connaît aucune clé de fournisseur, et il
+n'annonce jamais son identité : le serveur la relit du cookie de session à
+chaque requête.
+
+- **Dashboard** — React 18 + Vite + TypeScript + Tailwind + shadcn-ui.
+  Un seul client d'API : [`src/lib/api.ts`](./src/lib/api.ts).
+- **API** — Fastify 5 + TypeScript strict + `pg`, dans [`server/`](./server).
+- **Base** — PostgreSQL 16 auto-hébergé. Migrations versionnées et
+  idempotentes dans [`server/migrations/`](./server/migrations).
+- **Texte IA** — OpenRouter, chaîne Claude uniquement.
+- **Affiches IA** — Graphiste GPT (moteur exclusif, aucun repli local : une
+  affiche absente est signalée, jamais remplacée par une image fabriquée).
+- **Publication sociale** — Zernio.
 
 ## Développement local
 
 ```bash
+# dashboard
 npm install
-cp .env.example .env.local
 npm run dev
 ```
 
-Variables frontend nécessaires dans `.env.local` :
+Le dashboard n'a **aucune variable de build**.
 
 ```bash
-VITE_SUPABASE_PROJECT_ID="..."
-VITE_SUPABASE_PUBLISHABLE_KEY="..."
-VITE_SUPABASE_URL="https://....supabase.co"
+# API
+cd server
+npm install
+cp ../.env.example ../.env    # noms de variables uniquement, à la racine du dépôt
+npm run migrate               # applique les migrations
+PORT=8081 npm start           # 8080 est pris par le serveur de dev Vite
 ```
 
-Les secrets backend ne doivent jamais être mis dans `.env.local` : ils vont dans Supabase → Project Settings → Edge Functions → Secrets.
+Le serveur de dev proxifie `/api` vers `http://127.0.0.1:8081`
+(`VITE_DEV_API_ORIGIN` pour pointer ailleurs), donc le dashboard local parle
+à l'API sur la **même origine** qu'en production — sinon le cookie de
+session, étant SameSite, ne serait tout simplement pas envoyé.
 
 ## Checks avant livraison
 
@@ -47,152 +75,87 @@ npm run lint
 npm run typecheck     # vite build n'analyse PAS les types (SWC les supprime)
 npm test
 npm run build
+
+cd server
+npm run typecheck
+npm run migrate       # nécessite DATABASE_URL
+npm test              # nécessite une vraie base PostgreSQL
 ```
 
-Les Edge Functions peuvent être vérifiées avec Deno :
+Les tests de l'API tournent contre un vrai PostgreSQL, volontairement : ce
+qu'ils couvrent (atomicité des quotas sous verrou, isolation par
+`profile_id`, file de publication, unicité des jetons de média) ne peut pas
+être vérifié en lisant le code, et un mock n'affirmerait que le comportement
+du mock.
 
-```bash
-deno check \
-  supabase/functions/generate-content/index.ts \
-  supabase/functions/generate-image/index.ts \
-  supabase/functions/auto-generate-weekly/index.ts \
-  supabase/functions/publish-post/index.ts
-```
+## Variables d'environnement
 
-## Secrets Supabase minimum pour un premier utilisateur
+Seuls les **noms** figurent ici ; les valeurs vivent dans `.env.selfhosted`
+sur le VPS et ne sont jamais commitées.
 
 Obligatoires :
 
 ```bash
-OPENROUTER_API_KEY=...        # texte IA
-GRAPHISTE_GPT_API_KEY=...     # affiches IA — SANS elle : texte OK mais JAMAIS d'image
-CRON_SECRET=...
-ALLOWED_ORIGINS=https://auto-post-gen.76.13.129.252.sslip.io
-APP_BASE_URL=https://auto-post-gen.76.13.129.252.sslip.io
-APP_PUBLIC_URL=https://auto-post-gen.76.13.129.252.sslip.io
-APP_NAME="Pro Social AI"
+DATABASE_URL                  # postgres://… (conteneur voisin)
+SESSION_COOKIE_SECRET         # secret long et aléatoire
+APP_PUBLIC_URL                # https://…  — requis pour publier une image stockée localement
+MEDIA_ROOT                    # /app/media (volume)
 ```
 
-Pour diagnostiquer la génération d'affiches de bout en bout (clé, crédits,
-vraie génération) :
+Recommandées :
 
 ```bash
-GRAPHISTE_GPT_API_KEY="..." node scripts/diagnose-graphiste.mjs
+OPENROUTER_API_KEY            # texte IA — sans elle, la génération de texte est indisponible
+GRAPHISTE_GPT_API_KEY         # affiches IA — sans elle, texte OK mais jamais d'affiche
+ZERNIO_API_KEY                # publication sociale
+ZERNIO_API_URL
+APP_NAME
+CRON_SECRET                   # uniquement si la file est pilotée de l'extérieur
 ```
 
-Fortement recommandé pour MVP publication sociale :
+Optionnelles :
 
 ```bash
-ZERNIO_API_KEY=...
-ZERNIO_API_URL=https://zernio.com/api/v1
+RESEND_API_KEY                # emails (réinitialisation, validation, contact)
+RESEND_FROM
+OPENROUTER_TEXT_MODEL         # doit rester un modèle anthropic/claude-*
+PUBLISH_TICK_SECONDS          # défaut 60 ; 0 désactive le runner interne
+WEEKLY_GENERATION             # "off" désactive la génération hebdomadaire
+PG_POOL_MAX
 ```
 
-Optionnel :
+Une capacité non configurée est annoncée au démarrage **et** par la route qui
+en dépend, dans les mêmes termes : l'utilisateur ne rencontre jamais un
+no-op silencieux, et un opérateur voit ce qui manque dans les logs seuls.
 
-```bash
-RESEND_API_KEY=...
-RESEND_FROM="Pro Social AI <no-reply@votre-domaine.com>"
-TAVILY_API_KEY=...
-BRAVE_SEARCH_API_KEY=...
+## Tâches planifiées
+
+L'API les exécute elle-même — il n'y a rien à configurer côté hôte :
+
+- **file de publication** : toutes les `PUBLISH_TICK_SECONDS` (60 par défaut) ;
+- **génération hebdomadaire** : vérifiée toutes les heures, effective au plus
+  une fois par jour et par compte, sans effet si la semaine est déjà pleine.
+
+Un hôte qui préfère son propre ordonnanceur peut mettre
+`PUBLISH_TICK_SECONDS=0` / `WEEKLY_GENERATION=off` et appeler :
+
+```txt
+POST /api/cron/publish    en-tête  x-cron-secret: <CRON_SECRET>
+POST /api/cron/weekly     en-tête  x-cron-secret: <CRON_SECRET>
 ```
-
-La recherche web fonctionne déjà gratuitement sans Tavily/Brave grâce à Google News RSS + Wikipedia + DuckDuckGo.
 
 ## Déploiement
 
-### Frontend — VPS (PAS de déploiement automatique)
-
-L'hébergement du frontend est passé de Netlify au VPS. `netlify.toml` et
-`.github/workflows/deploy-netlify.yml` ne déploient plus rien : le workflow
-ne fait que lint + tests + build sur déclenchement manuel.
-
-Le frontend se met en ligne à la main :
-
-```bash
-npm ci
-npm run build                      # produit dist/
-# copier dist/ sur le VPS à côté de docker-compose.vps.yml, puis :
-docker compose -f docker-compose.vps.yml up -d
-```
-
-`nginx.vps.conf` sert la SPA (toutes les routes retombent sur `index.html`),
-ajoute les en-têtes de sécurité (CSP, HSTS, X-Frame-Options) et empêche la
-mise en cache de `index.html` — sans quoi un navigateur garde l'ancien
-`index.html` après un déploiement et demande des bundles supprimés (page
-blanche). Traefik termine le TLS sur
-`https://auto-post-gen.76.13.129.252.sslip.io`.
-
-**Tant que personne n'automatise cette étape, un merge sur `main` met à jour
-les Edge Functions mais PAS le frontend.**
-
-### Backend — Supabase (automatique)
-
-Projet Supabase : `tktoyntaeajgsuplhntd`.
-
-Tout push sur `main` touchant `supabase/**` déclenche
-`.github/workflows/deploy-functions.yml`, qui :
-
-1. réveille le projet s'il est en pause ;
-2. pousse `ALLOWED_ORIGINS` / `APP_BASE_URL` / `ZERNIO_API_KEY` ;
-3. vérifie que `GRAPHISTE_GPT_API_KEY` et `OPENROUTER_API_KEY` existent ;
-4. **applique toutes les migrations datées ≥ `MIGRATION_CUTOFF`**
-   (`20260721000000`), dans l'ordre, à chaque déploiement ;
-5. vérifie que le schéma de production contient bien toutes les colonnes et
-   fonctions utilisées par les Edge Functions, et échoue avec la liste des
-   manquantes plutôt que de déployer du code qui cassera à l'exécution ;
-6. déploie les 23 Edge Functions.
-
-Deux conséquences importantes :
-
-- Les migrations **antérieures** au cutoff ne sont jamais rejouées (elles ne
-  sont pas idempotentes et échoueraient sur le schéma existant). Elles sont
-  supposées déjà appliquées en production. Si l'étape de vérification du
-  schéma échoue, appliquez la migration manquante une fois à la main dans le
-  SQL Editor de Supabase, puis relancez le workflow.
-- Toute nouvelle migration **doit être idempotente** (`IF NOT EXISTS`,
-  `CREATE OR REPLACE`, `DROP ... IF EXISTS` avant `CREATE`) : elle est
-  ré-appliquée à chaque déploiement.
-
-Vérifiez vos migrations avant de pousser :
-
-```bash
-docker run --rm -e POSTGRES_PASSWORD=postgres -p 5432:5432 -d postgres:16
-npm run test:schema
-```
-
-En manuel si besoin :
-
-```bash
-supabase functions deploy --project-ref tktoyntaeajgsuplhntd
-```
-
-## Cron Supabase à configurer
-
-Appeler les endpoints avec le header :
-
-```txt
-x-cron-secret: <CRON_SECRET>
-```
-
-Cadences recommandées :
-
-- `auto-generate-weekly` : lundi 06:00 UTC
-- `send-validation-email` : lundi 08:00 UTC
-- `publish-post` : toutes les 15 minutes
-- `sync-comments` : toutes les 15–30 minutes si commentaires activés
-
-## État actuel vérifié
-
-- `npm run build` : OK
-- `npm run lint` : OK avec warnings shadcn/fast-refresh non bloquants
-- Recherche web mutualisée : `supabase/functions/_shared/research.ts`
-- Génération manuelle et automatique utilisent la recherche web
-- Dashboard affiche un indicateur “Génération enrichie par recherche web”
+La procédure complète — migrations, sauvegarde, bascule, rollback — est dans
+[`VPS_DEPLOYMENT_HANDOFF.md`](./VPS_DEPLOYMENT_HANDOFF.md).
 
 Voir aussi :
 
-- [`docs/HANDOVER.md`](./docs/HANDOVER.md) — **document de transmission** :
-  architecture, audit sécurité, décisions, pièges, checklist de reprise.
-  **Commencez par lui si vous découvrez le projet.**
-- [`DEPLOYMENT.md`](./DEPLOYMENT.md) — secrets et mise en production (référence).
+- [`VPS_DEPLOYMENT_HANDOFF.md`](./VPS_DEPLOYMENT_HANDOFF.md) — **document de
+  reprise** : routes, schéma, migrations, déploiement, sauvegarde, rollback,
+  limites connues. **Commencez par lui.**
+- [`DEPLOYMENT.md`](./DEPLOYMENT.md) — référence des variables et de nginx.
+- [`docs/HANDOVER.md`](./docs/HANDOVER.md) — historique du produit et des
+  décisions. Décrit l'architecture Supabase **précédente** ; conservé pour le
+  contexte, il n'est plus une description du système en place.
 - [`docs/PRICING.md`](./docs/PRICING.md) — modèle économique, coûts et marges.
