@@ -10,6 +10,7 @@ import { destroySession, secretMatches } from "../lib/session.js";
 import { clientIp, requireAdmin, requireTenant } from "../lib/tenant.js";
 import { asEmail, asHeaderSafe, asObject, asString, asUuid } from "../lib/validate.js";
 import { runPublishTick } from "../services/scheduler.js";
+import { generateWeekFor, runWeeklyGeneration } from "../services/weekly.js";
 
 /** Social accounts, comment inbox, admin console, account lifecycle, contact. */
 export async function miscRoutes(app: FastifyInstance): Promise<void> {
@@ -315,6 +316,29 @@ export async function miscRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(404).send({ error: "Ressource introuvable.", code: "not_found" });
     }
     return runPublishTick();
+  });
+
+  app.post("/cron/weekly", async (request, reply) => {
+    if (!env.cronSecret) {
+      throw notConfigured("Le déclenchement externe n'est pas configuré (CRON_SECRET).");
+    }
+    const provided = request.headers["x-cron-secret"];
+    if (!secretMatches(typeof provided === "string" ? provided : undefined, env.cronSecret)) {
+      return reply.code(404).send({ error: "Ressource introuvable.", code: "not_found" });
+    }
+    return { results: await runWeeklyGeneration() };
+  });
+
+  /**
+   * Generates this account's missing posts for the coming week, now.
+   *
+   * The same top-up the daily runner performs, for a user who does not want
+   * to wait for it. It is a no-op when the week is already full, so it cannot
+   * be used to generate an unbounded number of posts.
+   */
+  app.post("/posts/generate-week", async (request, reply) => {
+    const ctx = await requireTenant(request, reply);
+    return generateWeekFor(ctx.profileId);
   });
 
   app.get("/health", async () => ({ ok: true }));

@@ -1,5 +1,6 @@
 import { query } from "../lib/db.js";
 import { publishPost } from "./publish.js";
+import { runWeeklyGeneration } from "./weekly.js";
 
 // The publish queue runner.
 //
@@ -94,4 +95,44 @@ export function startScheduler(intervalMs: number, log: (message: string) => voi
 export function stopScheduler(): void {
   if (timer) clearInterval(timer);
   timer = null;
+}
+
+let weeklyTimer: NodeJS.Timeout | null = null;
+let lastWeeklyRunDay = "";
+
+/**
+ * Runs the weekly top-up once a day.
+ *
+ * Daily rather than weekly on purpose: generateWeekFor tops each account up to
+ * its chosen cadence and returns immediately when the next seven days are
+ * already full, so a daily pass repairs an account that was blocked, newly
+ * onboarded, or hit a provider outage — without ever producing a second batch
+ * for a week that already has one.
+ */
+export async function runWeeklyTick(log: (message: string) => void): Promise<void> {
+  const today = new Date().toISOString().slice(0, 10);
+  if (lastWeeklyRunDay === today) return;
+  lastWeeklyRunDay = today;
+  const results = await runWeeklyGeneration();
+  const total = results.reduce((sum, r) => sum + r.generated, 0);
+  if (total) log(`weekly generation: ${total} post(s) across ${results.length} account(s)`);
+}
+
+export function startWeeklyScheduler(log: (message: string) => void): void {
+  if (weeklyTimer) return;
+  const tick = () => {
+    runWeeklyTick(log).catch((err) =>
+      console.error("[scheduler] weekly tick failed:", (err as Error).message),
+    );
+  };
+  // Checked hourly; runWeeklyTick itself is what makes it at most once a day,
+  // so a restart cannot trigger a second batch.
+  weeklyTimer = setInterval(tick, 60 * 60 * 1000);
+  weeklyTimer.unref();
+  tick();
+}
+
+export function stopWeeklyScheduler(): void {
+  if (weeklyTimer) clearInterval(weeklyTimer);
+  weeklyTimer = null;
 }

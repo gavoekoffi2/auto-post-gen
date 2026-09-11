@@ -428,6 +428,19 @@ export const posts = {
       body: { token },
     }),
 
+  /**
+   * Tops this account's coming week up to its chosen cadence.
+   *
+   * The same work the server's daily runner does, on demand. It is a no-op
+   * when the week is already full, so it cannot be used to generate an
+   * unbounded number of posts.
+   */
+  generateWeek: () =>
+    request<{ profileId: string; generated: number; skipped?: string }>(
+      "/posts/generate-week",
+      { method: "POST", timeoutMs: 180_000 },
+    ),
+
   statistics: () =>
     request<{
       totalPosts: number;

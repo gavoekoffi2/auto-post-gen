@@ -11,7 +11,12 @@ import { postRoutes } from "./routes/posts.js";
 import { mediaRoutes } from "./routes/media.js";
 import { generationRoutes } from "./routes/generations.js";
 import { miscRoutes } from "./routes/misc.js";
-import { startScheduler, stopScheduler } from "./services/scheduler.js";
+import {
+  startScheduler,
+  startWeeklyScheduler,
+  stopScheduler,
+  stopWeeklyScheduler,
+} from "./services/scheduler.js";
 
 const app = Fastify({
   logger: { level: env.isProduction ? "info" : "debug" },
@@ -82,6 +87,7 @@ const shutdown = async (signal: string) => {
   app.log.info(`${signal} received, shutting down`);
   try {
     stopScheduler();
+    stopWeeklyScheduler();
     await app.close();
     await pool.end();
   } finally {
@@ -110,6 +116,17 @@ if (Number.isFinite(tickSeconds) && tickSeconds > 0) {
   app.log.info(`publish queue runner started (every ${tickSeconds}s)`);
 } else {
   app.log.warn("publish queue runner disabled (PUBLISH_TICK_SECONDS=0)");
+}
+
+// Weekly generation is the "auto" in Auto Post Gen: without a runner,
+// post_frequency and the promo/research quotas are settings that change
+// nothing. Checked hourly, effective at most once a day per account, and a
+// no-op for an account whose next seven days are already full.
+if (process.env.WEEKLY_GENERATION !== "off") {
+  startWeeklyScheduler((message) => app.log.info(message));
+  app.log.info("weekly generation runner started");
+} else {
+  app.log.warn("weekly generation runner disabled (WEEKLY_GENERATION=off)");
 }
 
 await app.listen({ port: env.port, host: env.host });
