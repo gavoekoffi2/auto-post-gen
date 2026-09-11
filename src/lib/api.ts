@@ -271,6 +271,8 @@ export interface SocialComment {
   message: string | null;
   status: "new" | "replied" | "ignored" | "hidden";
   reply_text: string | null;
+  /** Whether the stored reply was written by the user or by the auto-replier. */
+  replied_by: "manual" | "auto" | null;
   comment_created_at: string | null;
   created_at: string;
 }
@@ -556,17 +558,17 @@ export interface AdminUser {
 export const admin = {
   /** Whether the CURRENT session is an admin. Authority is the server's. */
   me: () => request<{ user: SessionUser }>("/admin/me"),
-  listUsers: () => request<{ users: AdminUser[] }>("/admin/users"),
-  setBlocked: (userId: string, blocked: boolean) =>
-    request<AdminUser>(`/admin/users/${encodeURIComponent(userId)}/blocked`, {
-      method: "POST",
-      body: { blocked },
-    }),
-  setPlan: (userId: string, plan: string) =>
-    request<AdminUser>(`/admin/users/${encodeURIComponent(userId)}/plan`, {
-      method: "POST",
-      body: { plan },
-    }),
+
+  /**
+   * Small action RPC for the operator console: { action, ...args }.
+   *
+   * The `userId` in an action names the account being ACTED ON, which is a
+   * legitimate argument. It is never an assertion about who is calling: the
+   * server re-derives the caller from the session cookie and refuses the whole
+   * request unless that caller holds an admin role.
+   */
+  action: <T = unknown>(body: Record<string, unknown>) =>
+    request<T>("/admin/actions", { method: "POST", body, timeoutMs: 60_000 }),
 };
 
 export const account = {

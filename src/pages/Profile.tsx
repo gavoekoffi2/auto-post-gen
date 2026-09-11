@@ -9,9 +9,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ArrowLeft, Save, Building2, Settings, ImageIcon } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from '@/integrations/supabase/client';
+import { ApiError, profile as profileApi } from '@/lib/api';
 import { AudienceEditor } from '@/components/AudienceEditor';
-import { AudienceSegment, audiencesToJson, isUsableAudience, normalizeAudienceSegments } from '@/lib/audiences';
+import { AudienceSegment, isUsableAudience, normalizeAudienceSegments } from '@/lib/audiences';
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -83,21 +83,9 @@ export default function Profile() {
 
   const loadProfile = async () => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        navigate('/auth');
-        return;
-      }
-
-      setUserEmail(session.user.email || "");
-
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', session.user.id)
-        .maybeSingle();
-
-      if (error) throw error;
+      // "My profile": the server resolves which row that is from the session.
+      const data = await profileApi.get();
+      setUserEmail(data.email || "");
 
       if (data) {
         setProfile({
@@ -150,15 +138,10 @@ export default function Profile() {
     }
     setAnalyzingAudiences(true);
     try {
-      const { data, error } = await supabase.functions.invoke('detect-audiences', {
-        body: {
-          companyName: profile.company_name,
-          sector: profile.sector,
-          description: profile.description,
-          contentTypes: profile.content_types,
-        },
-      });
-      if (error) throw error;
+      // The server reads the company, sector and description from the saved
+      // profile: sending them up would let the browser ask for an analysis of
+      // a business that is not its own.
+      const data = await profileApi.detectAudiences();
       const audiences = normalizeAudienceSegments(data?.audiences);
       // One usable segment is still worth showing; rejecting anything under two
       // threw away a perfectly good result and showed an error instead.
@@ -196,12 +179,7 @@ export default function Profile() {
     }
     setSaving(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error("Non authentifié");
-
-      const { error } = await supabase
-        .from('profiles')
-        .update({
+      await profileApi.update({
           company_name: profile.company_name,
           logo_url: profile.logo_url,
           poster_footer_text: profile.poster_footer_text.trim() || null,
@@ -226,17 +204,13 @@ export default function Profile() {
           brand_font: profile.brand_font,
           image_style: profile.image_style,
           style_examples: profile.style_examples,
-          audience_suggestions: audiencesToJson(profile.audienceSuggestions),
-          target_audiences: audiencesToJson(
-            profile.audienceSuggestions.filter((audience) =>
-              profile.selectedAudienceIds.includes(audience.id)
-            ),
+          audience_suggestions: profile.audienceSuggestions,
+          target_audiences: profile.audienceSuggestions.filter((audience) =>
+            profile.selectedAudienceIds.includes(audience.id),
           ),
           audiences_confirmed_at: new Date().toISOString(),
-        })
-        .eq('id', session.user.id);
+      });
 
-      if (error) throw error;
       toast.success("Profil mis à jour !");
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Erreur lors de la sauvegarde";

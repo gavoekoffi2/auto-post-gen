@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ArrowLeft, Mail, MessageSquare, Send } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
+import { ApiError, contact } from "@/lib/api";
 
 const SUPPORT_EMAIL = "contact@prosocialai.com";
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -37,25 +37,21 @@ export default function Contact() {
 
     setLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke("send-contact", {
-        body: formData,
-      });
-      // supabase.functions.invoke throws on non-2xx; data.error covers the
-      // "configured but rejected" case.
-      if (error || (data && data.error)) {
-        const code = (data && data.code) || "";
-        if (code === "not_configured") {
-          toast.error(`Messagerie indisponible. Écrivez-nous à ${SUPPORT_EMAIL}.`);
-        } else {
-          toast.error((data && data.error) || "Échec de l'envoi. Réessayez plus tard.");
-        }
-        return;
-      }
-
+      await contact.send(formData);
       toast.success("Message envoyé avec succès ! Nous vous répondrons rapidement.");
       setFormData({ name: "", email: "", subject: "", message: "", company: "" });
-    } catch (_err) {
-      toast.error(`Échec de l'envoi. Écrivez-nous directement à ${SUPPORT_EMAIL}.`);
+    } catch (err) {
+      // When the operator has not configured outbound email, point the visitor
+      // at the support address rather than leaving them with a dead form.
+      if (err instanceof ApiError && err.code === "not_configured") {
+        toast.error(`Messagerie indisponible. Écrivez-nous à ${SUPPORT_EMAIL}.`);
+      } else {
+        toast.error(
+          err instanceof Error
+            ? err.message
+            : `Échec de l'envoi. Écrivez-nous directement à ${SUPPORT_EMAIL}.`,
+        );
+      }
     } finally {
       setLoading(false);
     }

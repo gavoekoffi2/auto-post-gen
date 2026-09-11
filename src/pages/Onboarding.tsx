@@ -9,9 +9,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ArrowRight, ArrowLeft, Sparkles } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
+import { ApiError, profile as profileApi } from "@/lib/api";
 import { AudienceEditor } from "@/components/AudienceEditor";
-import { AudienceSegment, audiencesToJson, isUsableAudience, normalizeAudienceSegments } from "@/lib/audiences";
+import { AudienceSegment, isUsableAudience, normalizeAudienceSegments } from "@/lib/audiences";
 
 export default function Onboarding() {
   const navigate = useNavigate();
@@ -46,17 +46,16 @@ export default function Onboarding() {
 
   useEffect(() => {
     const checkAuth = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        navigate('/auth');
+      // If onboarding was already completed, skip back to the dashboard.
+      let profile;
+      try {
+        profile = await profileApi.get();
+      } catch (err) {
+        if (err instanceof ApiError && err.isUnauthenticated) {
+          navigate('/auth');
+        }
         return;
       }
-      // If onboarding was already completed, skip back to the dashboard.
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('sector, tone, content_types, company_name')
-        .eq('id', session.user.id)
-        .maybeSingle();
       if (
         profile &&
         profile.sector &&
@@ -73,15 +72,16 @@ export default function Onboarding() {
   const analyzeAudiences = async (): Promise<boolean> => {
     setAnalyzingAudiences(true);
     try {
-      const { data, error } = await supabase.functions.invoke('detect-audiences', {
-        body: {
-          companyName: formData.companyName,
-          sector: formData.sector,
-          description: formData.description,
-          contentTypes: [formData.contentType],
-        },
+      // The analysis runs against the profile the server already holds, so the
+      // company being analysed is always the caller's own. The details typed on
+      // the previous steps are saved first, below, for exactly that reason.
+      await profileApi.update({
+        company_name: formData.companyName,
+        sector: formData.sector,
+        description: formData.description,
+        content_types: [formData.contentType],
       });
-      if (error) throw error;
+      const data = await profileApi.detectAudiences();
       const audiences = normalizeAudienceSegments(data?.audiences);
       // One usable segment is still worth showing; rejecting anything under two
       // threw away a perfectly good result and sent the user back to an error.
@@ -123,15 +123,7 @@ export default function Onboarding() {
       // Save profile to database
       setLoading(true);
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session?.user) throw new Error("Non authentifié");
-
-        const { error } = await supabase
-          .from('profiles')
-          .upsert(
-            {
-              id: session.user.id,
-              email: session.user.email,
+        await profileApi.update({
               company_name: formData.companyName,
               poster_footer_text: formData.posterFooterText.trim() || null,
               sector: formData.sector,
@@ -144,18 +136,12 @@ export default function Onboarding() {
               preferred_days: formData.preferredDays,
               auto_publish: false,
               image_people_type: formData.imagePeopleType,
-              audience_suggestions: audiencesToJson(formData.audienceSuggestions),
-              target_audiences: audiencesToJson(
-                formData.audienceSuggestions.filter((audience) =>
-                  formData.selectedAudienceIds.includes(audience.id)
-                ),
+              audience_suggestions: formData.audienceSuggestions,
+              target_audiences: formData.audienceSuggestions.filter((audience) =>
+                formData.selectedAudienceIds.includes(audience.id),
               ),
               audiences_confirmed_at: new Date().toISOString(),
-            },
-            { onConflict: 'id' }
-          );
-
-        if (error) throw error;
+        });
 
         toast.success("Profil configuré ! Redirection vers le dashboard...");
         setTimeout(() => navigate("/dashboard"), 1500);

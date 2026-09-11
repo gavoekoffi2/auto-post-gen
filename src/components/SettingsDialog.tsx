@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
+import { media, profile as profileApi } from "@/lib/api";
 import { Upload, X } from "lucide-react";
 
 type UserProfileLike = {
@@ -70,13 +70,9 @@ export default function SettingsDialog({ isOpen, onOpenChange, userProfile, onPr
   const handleSave = async () => {
     setLoading(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.user) throw new Error("Non authentifié");
-
-      const { error } = await supabase.from('profiles').upsert(
-        {
-          id: session.user.id,
-          email: session.user.email,
+      // The profile is addressed as "mine": the server resolves which row that
+      // is from the session, so no id or email travels up from the browser.
+      await profileApi.update({
           sector: formData.sector,
           // This quick dialog edits one "primary" content type. Merge it with
           // any others already saved (e.g. set on the full Profile page) instead
@@ -99,11 +95,7 @@ export default function SettingsDialog({ isOpen, onOpenChange, userProfile, onPr
           // Never erase the uploaded library when the toggle is off — just stop
           // using it (toggling off previously wiped custom_image_urls).
           custom_image_urls: formData.customImageUrls,
-        },
-        { onConflict: 'id' }
-      );
-
-      if (error) throw error;
+      });
 
       toast.success("Paramètres mis à jour !");
       onProfileUpdate();
@@ -121,9 +113,8 @@ export default function SettingsDialog({ isOpen, onOpenChange, userProfile, onPr
     if (!file) return;
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.user) throw new Error("Non authentifié");
-
+      // Checked here for an immediate message; the API re-checks both, since a
+      // browser-side check is a convenience and never a guarantee.
       if (!file.type.startsWith("image/")) {
         toast.error("Veuillez sélectionner une image");
         return;
@@ -133,21 +124,10 @@ export default function SettingsDialog({ isOpen, onOpenChange, userProfile, onPr
         return;
       }
 
-      const fileExt = file.name.split('.').pop();
-      // RLS requires the first folder segment to equal the user id.
-      const filePath = `${session.user.id}/logo-${Date.now()}.${fileExt}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from('user-assets')
-        .upload(filePath, file, { upsert: true });
-
-      if (uploadError) throw uploadError;
-
-      const { data: { publicUrl } } = supabase.storage
-        .from('user-assets')
-        .getPublicUrl(filePath);
-
-      setFormData({ ...formData, logoUrl: publicUrl });
+      // The API derives the storage path from the session, so the browser
+      // cannot write into another account's media.
+      const asset = await media.upload(file, "logo");
+      setFormData({ ...formData, logoUrl: asset.url });
       toast.success("Logo uploadé !");
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Erreur lors de l'upload du logo";
@@ -160,9 +140,6 @@ export default function SettingsDialog({ isOpen, onOpenChange, userProfile, onPr
     if (!files || files.length === 0) return;
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.user) throw new Error("Non authentifié");
-
       const uploadPromises = Array.from(files).map(async (file) => {
         if (!file.type.startsWith("image/")) {
           throw new Error(`${file.name} n'est pas une image`);
@@ -170,21 +147,8 @@ export default function SettingsDialog({ isOpen, onOpenChange, userProfile, onPr
         if (file.size > 5 * 1024 * 1024) {
           throw new Error(`${file.name} dépasse 5 Mo`);
         }
-        const fileExt = file.name.split('.').pop();
-        // RLS requires the first folder segment to equal the user id.
-        const filePath = `${session.user.id}/custom-${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
-
-        const { error: uploadError } = await supabase.storage
-          .from('user-assets')
-          .upload(filePath, file);
-
-        if (uploadError) throw uploadError;
-
-        const { data: { publicUrl } } = supabase.storage
-          .from('user-assets')
-          .getPublicUrl(filePath);
-
-        return publicUrl;
+        const asset = await media.upload(file, "custom_image");
+        return asset.url;
       });
 
       const uploadedUrls = await Promise.all(uploadPromises);

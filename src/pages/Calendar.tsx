@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
+import { ApiError, posts as postsApi } from "@/lib/api";
 import { useNavigate } from "react-router-dom";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
@@ -38,23 +38,20 @@ export default function CalendarPage() {
 
   const loadPosts = async () => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
+      // Scoped server-side to the session's own account.
+      const { posts: postsData } = await postsApi.list();
+      setPosts(
+        [...postsData].sort((a, b) =>
+          String(a.scheduled_for ?? "").localeCompare(String(b.scheduled_for ?? "")),
+        ),
+      );
+    } catch (error) {
+      if (error instanceof ApiError && error.isUnauthenticated) {
         navigate('/auth');
         return;
       }
-
-      const { data: postsData, error } = await supabase
-        .from('posts')
-        .select('*')
-        .eq('user_id', session.user.id)
-        .order('scheduled_for', { ascending: true });
-
-      if (error) throw error;
-      setPosts(postsData || []);
-    } catch (error) {
       console.error('Error loading posts:', error);
-      toast.error('Erreur lors du chargement des posts');
+      toast.error(error instanceof Error ? error.message : 'Erreur lors du chargement des posts');
     } finally {
       setLoading(false);
     }
@@ -86,20 +83,12 @@ export default function CalendarPage() {
         return;
       }
 
-      const { error } = await supabase
-        .from('posts')
-        .update({
-          scheduled_for: scheduledDateTime.toISOString(),
-          // Rescheduling means "try at this new time": drop any retry backoff
-          // left over from a previous failed attempt, so the new slot is
-          // honoured instead of being held back by the old backoff window.
-          publish_attempts: 0,
-          next_publish_attempt_at: new Date().toISOString(),
-        })
-        .eq('id', selectedPost.id);
-
-      if (error) throw error;
-
+      // Rescheduling means "try at this new time": the server drops any retry
+      // backoff left from a previous failed attempt as part of the update, so
+      // the new slot is honoured rather than held back by the old window.
+      await postsApi.update(selectedPost.id, {
+        scheduled_for: scheduledDateTime.toISOString(),
+      });
       toast.success("Post programmé avec succès !");
       setIsScheduleDialogOpen(false);
       loadPosts();

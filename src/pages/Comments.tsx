@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
-import type { Database } from "@/integrations/supabase/types";
+import {
+  comments as commentsApi,
+  profile as profileApi,
+  type SocialComment,
+} from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
@@ -21,7 +24,7 @@ import {
   X,
 } from "lucide-react";
 
-type CommentRow = Database["public"]["Tables"]["social_comments"]["Row"];
+type CommentRow = SocialComment;
 
 const STATUS_LABEL: Record<string, string> = {
   new: "Nouveau",
@@ -46,34 +49,25 @@ const Comments = () => {
   const isEnterprise = plan === "enterprise";
 
   const loadComments = async () => {
-    const { data: userData } = await supabase.auth.getUser();
-    if (!userData?.user) return;
-    // Scope by user_id explicitly (defense-in-depth on top of RLS).
-    const { data, error } = await supabase
-      .from("social_comments")
-      .select("*")
-      .eq("user_id", userData.user.id)
-      .order("comment_created_at", { ascending: false, nullsFirst: false })
-      .order("created_at", { ascending: false })
-      .limit(200);
-    if (error) {
-      toast.error("Erreur de chargement des commentaires");
-      return;
+    try {
+      // Scoped server-side to the session's own inbox; no user id is sent.
+      const { comments: rows } = await commentsApi.list();
+      setComments(rows);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erreur de chargement des commentaires");
     }
-    setComments((data as CommentRow[]) || []);
   };
 
   const loadSettings = async () => {
-    const { data: userData } = await supabase.auth.getUser();
-    if (!userData?.user) return;
-    const { data } = await supabase
-      .from("profiles")
-      .select("auto_reply_enabled, auto_reply_instructions, plan")
-      .eq("id", userData.user.id)
-      .maybeSingle();
-    setAutoReply(!!data?.auto_reply_enabled);
-    setInstructions(data?.auto_reply_instructions || "");
-    setPlan((data as { plan?: string } | null)?.plan || "starter");
+    try {
+      const data = await profileApi.get();
+      setAutoReply(!!data.auto_reply_enabled);
+      setInstructions(data.auto_reply_instructions || "");
+      setPlan(data.plan || "starter");
+    } catch {
+      // The page still renders without the auto-reply settings; the toggle
+      // simply stays off until the profile can be read.
+    }
   };
 
   useEffect(() => {
@@ -87,15 +81,8 @@ const Comments = () => {
   const handleSync = async () => {
     setSyncing(true);
     try {
-      const { data, error } = await supabase.functions.invoke("sync-comments", {});
-      if (error) throw error;
-      if (data?.notice) toast.info(data.notice);
-      else {
-        toast.success(
-          `Synchronisé : ${data?.inserted ?? 0} nouveau(x) commentaire(s)` +
-            (data?.replied ? `, ${data.replied} réponse(s) auto` : ""),
-        );
-      }
+      const data = await commentsApi.sync();
+      toast.success(`Synchronisé : ${data.inserted ?? 0} nouveau(x) commentaire(s)`);
       await loadComments();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Erreur de synchronisation");
@@ -110,12 +97,8 @@ const Comments = () => {
   const handleSuggest = async (c: CommentRow) => {
     setRowBusy(c.id, true);
     try {
-      const { data, error } = await supabase.functions.invoke("comment-reply", {
-        body: { mode: "draft", commentId: c.id },
-      });
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-      setDrafts((prev) => ({ ...prev, [c.id]: data?.reply || "" }));
+      const data = await commentsApi.draftReply(c.id);
+      setDrafts((prev) => ({ ...prev, [c.id]: data.reply || "" }));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Erreur IA");
     } finally {
@@ -131,11 +114,7 @@ const Comments = () => {
     }
     setRowBusy(c.id, true);
     try {
-      const { data, error } = await supabase.functions.invoke("comment-reply", {
-        body: { mode: "send", commentId: c.id, reply },
-      });
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
+      await commentsApi.reply(c.id, reply);
       toast.success("Réponse envoyée");
       setComments((prev) =>
         prev.map((x) =>
@@ -150,32 +129,27 @@ const Comments = () => {
   };
 
   const handleIgnore = async (c: CommentRow) => {
-    const { error } = await supabase
-      .from("social_comments")
-      .update({ status: "ignored" })
-      .eq("id", c.id);
-    if (error) {
-      toast.error("Erreur");
-      return;
+    try {
+      // Ownership is resolved server-side from the session: a comment id from
+      // another account is simply not found.
+      await commentsApi.setStatus(c.id, "ignored");
+      setComments((prev) =>
+        prev.map((x) => (x.id === c.id ? { ...x, status: "ignored" } : x)),
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erreur");
     }
-    setComments((prev) =>
-      prev.map((x) => (x.id === c.id ? { ...x, status: "ignored" } : x)),
-    );
   };
 
   const handleSaveSettings = async () => {
     setSavingSettings(true);
     try {
-      const { data: userData } = await supabase.auth.getUser();
-      if (!userData?.user) throw new Error("Non authentifié");
-      const { error } = await supabase
-        .from("profiles")
-        .update({
-          auto_reply_enabled: isEnterprise ? autoReply : false,
-          auto_reply_instructions: instructions || null,
-        })
-        .eq("id", userData.user.id);
-      if (error) throw error;
+      // The server re-checks the plan before honouring auto_reply_enabled:
+      // sending `true` from a non-Enterprise account does not grant it.
+      await profileApi.update({
+        auto_reply_enabled: isEnterprise ? autoReply : false,
+        auto_reply_instructions: instructions || null,
+      });
       toast.success("Réglages enregistrés");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Erreur");

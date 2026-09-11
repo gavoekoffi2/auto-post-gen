@@ -23,9 +23,6 @@ export default defineConfig(({ mode }) => ({
           if (id.includes("node_modules/react") || id.includes("node_modules/react-dom") || id.includes("node_modules/react-router-dom")) {
             return "react";
           }
-          if (id.includes("node_modules/@supabase/supabase-js")) {
-            return "supabase";
-          }
           if (id.includes("node_modules/recharts")) {
             return "charts";
           }

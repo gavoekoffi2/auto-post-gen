@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ArrowLeft, TrendingUp, Eye, Heart, Share2, BarChart3, Calendar } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+import { ApiError, posts as postsApi } from "@/lib/api";
 import { toast } from "sonner";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, Legend } from "recharts";
 
@@ -30,18 +30,8 @@ export default function Statistics() {
 
   const loadStats = async () => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        navigate('/auth');
-        return;
-      }
-
-      const { data: posts, error } = await supabase
-        .from('posts')
-        .select('*')
-        .eq('user_id', session.user.id);
-
-      if (error) throw error;
+      // Scoped server-side to the session's own account.
+      const { posts } = await postsApi.list();
 
       const now = new Date();
       const startOfWeek = new Date(now);

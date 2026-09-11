@@ -15,7 +15,8 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Lock, Trash2, Mail, Download } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { account, auth } from "@/lib/api";
+import { useSession } from "@/lib/session";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 
@@ -32,13 +33,17 @@ export function AccountSettings({ userEmail }: AccountSettingsProps) {
   const [deleting, setDeleting] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [confirmText, setConfirmText] = useState("");
+  // The deletion dialog has its own password field: reusing the one from the
+  // "change password" form above would mean typing your password into an
+  // unrelated form to delete your account.
+  const [deletePassword, setDeletePassword] = useState("");
   const CONFIRM_WORD = "SUPPRIMER";
+  const { signOut } = useSession();
 
   const handleExport = async () => {
     setExporting(true);
     try {
-      const { data, error } = await supabase.functions.invoke("export-account-data", {});
-      if (error) throw error;
+      const data = await account.exportData();
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -72,22 +77,12 @@ export function AccountSettings({ userEmail }: AccountSettingsProps) {
 
     setChangingPassword(true);
     try {
-      // Re-authenticate first so a stolen/unlocked session can't silently
-      // change the password and lock out the owner.
-      const { error: reauthError } = await supabase.auth.signInWithPassword({
-        email: userEmail,
-        password: currentPassword,
-      });
-      if (reauthError) {
-        toast.error("Mot de passe actuel incorrect");
-        return;
-      }
-
-      const { error } = await supabase.auth.updateUser({
-        password: newPassword,
-      });
-
-      if (error) throw error;
+      // The current password goes with the change in one call: the server
+      // verifies it before accepting the new one, so an unlocked session alone
+      // cannot change the password and lock the owner out. Verifying in a
+      // separate "log in again" round trip would leave a window between the
+      // check and the change.
+      await auth.changePassword(currentPassword, newPassword);
 
       toast.success("Mot de passe mis à jour !");
       setCurrentPassword("");
@@ -102,17 +97,18 @@ export function AccountSettings({ userEmail }: AccountSettingsProps) {
   };
 
   const handleDeleteAccount = async () => {
+    if (!deletePassword) {
+      toast.error("Saisissez votre mot de passe pour confirmer la suppression");
+      return;
+    }
     setDeleting(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error("Non authentifié");
-
-      // The edge function uses the admin API to wipe storage, app data
-      // AND the auth.users row in a single transaction.
-      const { error } = await supabase.functions.invoke("delete-account", {});
-      if (error) throw error;
-
-      await supabase.auth.signOut();
+      // Deleting an account is irreversible, so the server re-verifies the
+      // password before doing it — a session left open on a shared machine is
+      // not enough on its own. The API wipes media, app data and the account
+      // row together, and clears the session cookie as part of the response.
+      await account.remove(deletePassword);
+      await signOut();
 
       toast.success("Compte supprimé. Au revoir !");
       navigate("/");
@@ -229,7 +225,7 @@ export function AccountSettings({ userEmail }: AccountSettingsProps) {
               <AlertDialogDescription>
                 Cette action est irréversible. Votre compte et toutes vos données
                 seront définitivement supprimés. Pour confirmer, tapez{" "}
-                <strong>{CONFIRM_WORD}</strong> ci-dessous.
+                <strong>{CONFIRM_WORD}</strong> puis votre mot de passe.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <Input
@@ -239,11 +235,19 @@ export function AccountSettings({ userEmail }: AccountSettingsProps) {
               aria-label="Confirmation de suppression"
               className="glass-card"
             />
+            <Input
+              type="password"
+              value={deletePassword}
+              onChange={(e) => setDeletePassword(e.target.value)}
+              placeholder="Votre mot de passe"
+              aria-label="Mot de passe pour confirmer la suppression"
+              className="glass-card"
+            />
             <AlertDialogFooter>
-              <AlertDialogCancel>Annuler</AlertDialogCancel>
+              <AlertDialogCancel onClick={() => setDeletePassword("")}>Annuler</AlertDialogCancel>
               <AlertDialogAction
                 onClick={handleDeleteAccount}
-                disabled={deleting || confirmText !== CONFIRM_WORD}
+                disabled={deleting || confirmText !== CONFIRM_WORD || !deletePassword}
                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               >
                 {deleting ? "Suppression..." : "Supprimer définitivement"}

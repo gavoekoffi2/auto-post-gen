@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { auth, type SessionUser } from "@/lib/api";
 
-// The session used to be a Supabase object the browser held in localStorage.
+// The session used to be a token object the browser held in localStorage.
 // It is now an HttpOnly cookie the browser cannot read, so "who am I" is a
 // question only the server can answer: this context asks once on mount and
 // shares the answer, instead of every route issuing its own /auth/me call.

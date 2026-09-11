@@ -3,7 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { CheckCircle2, XCircle, Loader2, Sparkles } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { posts as postsApi } from "@/lib/api";
 
 type Status = "confirm" | "loading" | "success" | "error";
 
@@ -21,21 +21,12 @@ export default function ValidatePost() {
     if (!token) return;
     setStatus("loading");
     try {
-      const { data, error } = await supabase.functions.invoke("validate-post", {
-        body: { token },
-      });
-      if (error) {
-        setStatus("error");
-        setMessage(error.message || "Erreur de validation.");
-        return;
-      }
-      if (data?.success) {
-        setStatus("success");
-        setMessage("Votre post est validé et sera publié à la date prévue.");
-      } else {
-        setStatus("error");
-        setMessage(data?.error || "Validation refusée.");
-      }
+      // The one-time token is the only authority here: this route carries no
+      // session, and the server is what decides whether the token is valid,
+      // unused and still within its lifetime.
+      await postsApi.validateByToken(token);
+      setStatus("success");
+      setMessage("Votre post est validé et sera publié à la date prévue.");
     } catch (err) {
       setStatus("error");
       setMessage(err instanceof Error ? err.message : "Erreur inattendue.");

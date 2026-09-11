@@ -2,7 +2,7 @@
 //
 // This module is intentionally dependency-free and uses only erasable
 // TypeScript so the exact same file works in three runtimes:
-//   - the Supabase edge function (Deno):  supabase/functions/_shared/platformTextLimits.ts
+//   - the API server (Node):   server/src/shared/platformTextLimits.ts
 //   - the dashboard (Vite / React):       src/lib/platformTextLimits.ts
 //   - the Node test runner (type stripping)
 //

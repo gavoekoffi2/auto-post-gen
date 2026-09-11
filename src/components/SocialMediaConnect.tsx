@@ -9,7 +9,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
+import { social, type SocialAccount } from "@/lib/api";
 import { Check, Link2, RefreshCw, X } from "lucide-react";
 
 type SocialMediaConnectProps = {
@@ -23,12 +23,7 @@ type SocialMediaConnectProps = {
   onUpdate: () => void;
 };
 
-type ZernioAccount = {
-  id?: string;
-  platform?: string;
-  username?: string | null;
-  displayName?: string | null;
-};
+type ZernioAccount = SocialAccount;
 
 type ZernioStatus = {
   provisioned: boolean;
@@ -54,19 +49,6 @@ function normalisePlatform(platform: string) {
   return platform.toLowerCase().trim();
 }
 
-async function functionErrorMessage(error: unknown, fallback: string) {
-  const functionError = error as { context?: Response; message?: string } | null;
-  if (functionError?.context) {
-    try {
-      const payload = await functionError.context.clone().json();
-      if (typeof payload?.error === "string" && payload.error.trim()) return payload.error;
-    } catch {
-      // Keep the SDK message when the response is not JSON.
-    }
-  }
-  return functionError?.message || fallback;
-}
-
 export function SocialMediaConnect({
   isOpen,
   onOpenChange,
@@ -80,14 +62,12 @@ export function SocialMediaConnect({
   const refreshZernio = async () => {
     setRefreshing(true);
     try {
-      const { data, error } = await supabase.functions.invoke("zernio-status", {});
-      if (error) throw error;
-
+      // Scoped server-side to the session's own connected accounts.
+      const data = await social.listAccounts();
       setZernio({
-        provisioned: !!data?.provisioned,
-        platforms: (data?.platforms || []).map(normalisePlatform),
-        accounts: data?.accounts || [],
-        error: data?.error,
+        provisioned: data.provisioned,
+        platforms: data.accounts.map((a) => normalisePlatform(a.platform)),
+        accounts: data.accounts,
       });
       onUpdate();
     } catch (err) {
@@ -96,7 +76,7 @@ export function SocialMediaConnect({
         provisioned: false,
         platforms: [],
         accounts: [],
-        error: await functionErrorMessage(err, "Erreur Zernio"),
+        error: err instanceof Error ? err.message : "Erreur Zernio",
       });
     } finally {
       setRefreshing(false);
@@ -112,14 +92,10 @@ export function SocialMediaConnect({
   const handleZernioConnect = async (platform: string) => {
     setZernioLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke("zernio-connect", {
-        body: { platform },
-      });
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-      if (!data?.connectUrl) throw new Error("Zernio n'a pas retourné de lien de connexion.");
+      const data = await social.connect(platform);
+      if (!data?.connectUrl) throw new Error("Le fournisseur n'a pas retourné de lien de connexion.");
 
-      const popup = window.open(data.connectUrl, "zernio_connect", "width=720,height=820");
+      const popup = window.open(data.connectUrl, "social_connect", "width=720,height=820");
       if (!popup) {
         toast.error("Le navigateur a bloqué la fenêtre. Autorisez les popups pour ce site.");
         return;
@@ -138,7 +114,7 @@ export function SocialMediaConnect({
       }, 500);
       window.setTimeout(() => window.clearInterval(interval), 10 * 60 * 1000);
     } catch (err) {
-      toast.error(await functionErrorMessage(err, "Erreur de connexion Zernio"), {
+      toast.error(err instanceof Error ? err.message : "Erreur de connexion Zernio", {
         duration: 12000,
       });
     } finally {
@@ -147,26 +123,25 @@ export function SocialMediaConnect({
   };
 
   const handleZernioDisconnect = async () => {
-    if (!userProfile?.id) return;
-    if (!confirm("Déconnecter Zernio pour cet utilisateur ? Les publications automatiques ne partiront plus vers les réseaux sociaux.")) {
+    if (!confirm("Déconnecter vos réseaux sociaux ? Les publications automatiques ne partiront plus.")) {
       return;
     }
 
     setZernioLoading(true);
     try {
-      const { error } = await supabase
-        .from("social_connections")
-        .delete()
-        .eq("user_id", userProfile.id)
-        .eq("provider", "zernio");
-      if (error) throw error;
+      // Each account is disconnected by its own id. The browser no longer
+      // deletes rows by user id — the server resolves ownership from the
+      // session, so an id from another account simply is not found.
+      const current = zernio?.accounts ?? [];
+      for (const acc of current) {
+        if (acc.id) await social.disconnect(acc.id);
+      }
 
       setZernio({ provisioned: false, platforms: [], accounts: [] });
-      toast.success("Zernio déconnecté");
+      toast.success("Réseaux sociaux déconnectés");
       onUpdate();
     } catch (err) {
-      console.error(err);
-      toast.error("Erreur lors de la déconnexion Zernio");
+      toast.error(err instanceof Error ? err.message : "Erreur lors de la déconnexion");
     } finally {
       setZernioLoading(false);
     }
@@ -237,7 +212,7 @@ export function SocialMediaConnect({
                         >
                           <Check className="w-3 h-3" />
                           {platform}
-                          {account?.username ? ` · @${account.username}` : account?.displayName ? ` · ${account.displayName}` : ""}
+                          {account?.username ? ` · @${account.username}` : account?.display_name ? ` · ${account.display_name}` : ""}
                         </span>
                       );
                     })}
@@ -277,7 +252,7 @@ export function SocialMediaConnect({
         <div className="mt-6 p-4 bg-muted/50 rounded-lg space-y-2">
           <p className="text-sm">
             <strong>Comment ça marche :</strong>{" "}
-            l'utilisateur autorise ses comptes dans la fenêtre sécurisée Zernio. La plateforme stocke seulement une référence de profil Zernio dans Supabase, puis utilise Zernio pour publier les posts validés.
+            l'utilisateur autorise ses comptes dans la fenêtre sécurisée Zernio. La plateforme conserve uniquement une référence de profil dans sa propre base, puis publie les posts validés via Zernio.
           </p>
           <p className="text-xs text-muted-foreground">
             Les anciennes connexions directes et alternatives ont été retirées de l'interface. La publication garde Zernio comme fournisseur prioritaire.

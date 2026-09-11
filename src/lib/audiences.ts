@@ -21,7 +21,7 @@ export function normalizeAudienceSegments(value: unknown): AudienceSegment[] {
       const item = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
       return {
         id: typeof item.id === "string" && item.id ? item.id : `cible-${index + 1}`,
-        // Same defaulting as the server (supabase/functions/_shared/audience.ts):
+        // Same defaulting as the API server (server/src/shared/audience.ts):
         // a segment the AI returned with a rich description but no name keeps
         // its content instead of being dropped on one side and kept on the
         // other. Whether it is USABLE is decided by isUsableAudience below.
@@ -49,7 +49,7 @@ export function normalizeAudienceSegments(value: unknown): AudienceSegment[] {
 }
 
 /**
- * Mirrors the server's rule in supabase/functions/_shared/audience.ts: a target
+ * Mirrors the API server's rule in server/src/shared/audience.ts: a target
  * is only usable if it has a name AND something for the model to work with.
  * The two used to disagree — the dashboard kept a name-only target, the server
  * dropped it — so a user could select a target, save it, and have every post
@@ -64,14 +64,4 @@ export function isUsableAudience(audience: AudienceSegment): boolean {
         audience.content_topics.length ||
         audience.buying_triggers.length),
   );
-}
-
-// Supabase's generated `Json` type only accepts objects carrying an index
-// signature, which a named interface never has. Audience segments are plain
-// JSON-safe data, so widen them explicitly here — at the persistence boundary —
-// instead of loosening AudienceSegment everywhere it is consumed.
-export function audiencesToJson(
-  segments: AudienceSegment[],
-): Array<{ [key: string]: string | number | string[] | undefined }> {
-  return segments.map((segment) => ({ ...segment }));
 }

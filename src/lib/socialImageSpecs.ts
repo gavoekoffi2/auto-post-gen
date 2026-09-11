@@ -4,7 +4,7 @@
 //
 // This module is intentionally dependency-free and uses only erasable
 // TypeScript so the exact same file works in three runtimes:
-//   - the Supabase edge function (Deno):  supabase/functions/_shared/socialImageSpecs.ts
+//   - the API server (Node):   server/src/shared/socialImageSpecs.ts
 //   - the dashboard (Vite / React):       src/lib/socialImageSpecs.ts
 //   - the Node test runner (type stripping)
 //

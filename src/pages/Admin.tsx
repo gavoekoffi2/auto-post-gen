@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+import { admin } from "@/lib/api";
+import { useSession } from "@/lib/session";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -33,6 +34,7 @@ const defaultCreate = { email: "", password: "", companyName: "", plan: "enterpr
 
 export default function Admin() {
   const navigate = useNavigate();
+  const { signOut: endSession } = useSession();
   const [data, setData] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
@@ -40,12 +42,9 @@ export default function Admin() {
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState(defaultCreate);
 
-  const invoke = async (body: Record<string, unknown>) => {
-    const { data: response, error } = await supabase.functions.invoke("admin-api", { body });
-    if (error) throw error;
-    if (response?.error) throw new Error(response.error);
-    return response;
-  };
+  // The server re-checks the admin role on every one of these calls; the page
+  // rendering is only a convenience.
+  const invoke = async (body: Record<string, unknown>) => admin.action<Overview>(body);
 
   const load = async () => {
     setLoading(true);
@@ -104,7 +103,7 @@ export default function Admin() {
   };
 
   const signOut = async () => {
-    await supabase.auth.signOut();
+    await endSession();
     navigate("/auth");
   };
 
