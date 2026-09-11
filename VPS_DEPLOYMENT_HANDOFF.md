@@ -16,7 +16,16 @@ Document de reprise pour l'ingénieur qui déploiera cette branche sur le VPS.
 
 Branche : `claude/lucid-johnson-14zub1`
 
-SHA : `__FINAL_SHA__`
+Dernier commit de code : `e40c678e7107fc55b9e2f90fbcafc38cea3cbce3`
+
+Ce document ne peut pas contenir le SHA de son propre commit. Le SHA ci-dessus
+est celui du dernier commit de **code** ; la pointe de la branche est le
+commit qui ajoute cette ligne, immédiatement après. Confirmez-la avant de
+déployer :
+
+```bash
+git rev-parse claude/lucid-johnson-14zub1
+```
 
 Base de comparaison (dernier commit commun avec `main`) :
 `af70b9035e96b70db7001b2254099b226bbb641c`
