@@ -11,7 +11,7 @@ import { ArrowLeft, Save, Building2, Settings, ImageIcon } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from '@/integrations/supabase/client';
 import { AudienceEditor } from '@/components/AudienceEditor';
-import { AudienceSegment, audiencesToJson, normalizeAudienceSegments } from '@/lib/audiences';
+import { AudienceSegment, audiencesToJson, isUsableAudience, normalizeAudienceSegments } from '@/lib/audiences';
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -160,7 +160,9 @@ export default function Profile() {
       });
       if (error) throw error;
       const audiences = normalizeAudienceSegments(data?.audiences);
-      if (audiences.length < 2) throw new Error("Analyse incomplète");
+      // One usable segment is still worth showing; rejecting anything under two
+      // threw away a perfectly good result and showed an error instead.
+      if (audiences.length === 0) throw new Error("Aucune cible exploitable n'a été trouvée");
       setProfile((current) => ({
         ...current,
         audienceSuggestions: audiences,
@@ -169,15 +171,27 @@ export default function Profile() {
       toast.success("Nouvelles cibles proposées. Sélectionnez celles à conserver, puis enregistrez.");
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Analyse indisponible";
-      toast.error(`Impossible d'analyser vos cibles : ${message}`);
+      toast.error(
+        `Impossible d'analyser vos cibles automatiquement (${message}). ` +
+          "Vos cibles actuelles sont conservées ; vous pouvez aussi en ajouter une à la main.",
+        { duration: 12000 },
+      );
     } finally {
       setAnalyzingAudiences(false);
     }
   };
 
   const handleSave = async () => {
-    if (profile.audienceSuggestions.length > 0 && profile.selectedAudienceIds.length === 0) {
-      toast.error("Sélectionnez au moins une cible avant d'enregistrer.");
+    // Count only targets the server will keep: saving a selection it is about
+    // to discard used to leave the user believing their targeting was set.
+    const usableSelected = profile.audienceSuggestions.filter(
+      (audience) =>
+        profile.selectedAudienceIds.includes(audience.id) && isUsableAudience(audience),
+    );
+    if (profile.audienceSuggestions.length > 0 && usableSelected.length === 0) {
+      toast.error(
+        "Sélectionnez au moins une cible complète (nom + description) avant d'enregistrer.",
+      );
       return;
     }
     setSaving(true);

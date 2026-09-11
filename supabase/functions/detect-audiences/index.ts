@@ -48,6 +48,10 @@ serve(async (req) => {
   }
 
   const supabase = createClient(supabaseUrl, serviceKey);
+
+  // Assigned once the hourly reservation is actually taken; declared out here
+  // so the catch below can give it back.
+  let releaseQuota: () => Promise<void> = async () => {};
   const { data: userData, error: userError } = await supabase.auth.getUser(jwt);
   if (userError || !userData?.user) {
     return new Response(JSON.stringify({ error: "Invalid token" }), { status: 401, headers: jsonHeaders });
@@ -80,6 +84,29 @@ serve(async (req) => {
     if (!quotaError && allowed === false) {
       return new Response(JSON.stringify({ error: "Limite d'analyses atteinte. Réessayez dans une heure." }), { status: 429, headers: jsonHeaders });
     }
+    const quotaReserved = !quotaError && allowed !== false;
+
+    // An analysis that produced nothing is not an analysis. Give the
+    // reservation back, or a user hitting a provider outage burns their ten
+    // hourly attempts without ever seeing a single target — during onboarding.
+    releaseQuota = async () => {
+      if (!quotaReserved) return;
+      const { data: reservation } = await supabase
+        .from("generation_usage")
+        .select("id")
+        .eq("user_id", userData.user.id)
+        .eq("function_name", "detect-audiences")
+        .eq("status", "reserved")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (!reservation?.id) return;
+      const { error: releaseErr } = await supabase
+        .from("generation_usage")
+        .delete()
+        .eq("id", reservation.id);
+      if (releaseErr) console.error("Could not release audience quota:", releaseErr.message);
+    };
 
     const prompt = `Tu es Claude, stratège senior en segmentation client et en contenu. Analyse l'entreprise ci-dessous et propose 3 à 6 segments de clientèle réellement distincts et exploitables.
 
@@ -125,8 +152,13 @@ Réponds UNIQUEMENT avec un tableau JSON valide. Chaque objet doit respecter exa
     return new Response(JSON.stringify({ audiences, model: getTextModel() }), { headers: jsonHeaders });
   } catch (error) {
     console.error("detect-audiences:", error);
+    await releaseQuota().catch(() => {});
     return new Response(
-      JSON.stringify({ error: "L'analyse des cibles n'a pas abouti. Réessayez dans quelques instants." }),
+      JSON.stringify({
+        error:
+          "L'analyse des cibles n'a pas abouti. Réessayez dans quelques instants, " +
+          "ou décrivez votre cible à la main.",
+      }),
       { status: 502, headers: jsonHeaders },
     );
   }

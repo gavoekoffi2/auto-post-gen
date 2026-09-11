@@ -25,6 +25,7 @@ import {
 import { zernioCreatePost, zernioListAccounts } from "../_shared/zernio.ts";
 import { resumePosterJob } from "../_shared/graphiste.ts";
 import { fetchImageBytes } from "../_shared/safeFetch.ts";
+import { checkTextFits, normalizePlatformId } from "../_shared/platformTextLimits.ts";
 
 
 interface SocialConnection {
@@ -699,10 +700,53 @@ async function publishPost(
     }
   }
 
+  // A caption over the network's limit can only be rejected or silently cut
+  // mid-sentence by the provider — losing the call to action and the hashtags.
+  // Say so, naming the network and the overage, instead of surfacing whatever
+  // opaque error the provider returns.
+  const fit = checkTextFits(post.content, platforms);
+  const overLimitPlatforms = fit.fits
+    ? []
+    : platforms.filter((p) => normalizePlatformId(p) === fit.limit.platform);
+
+  if (!fit.fits && overLimitPlatforms.length === platforms.length) {
+    const message =
+      `Le texte fait ${fit.length} caractères, soit ${fit.overBy} de trop pour ${fit.limit.label} ` +
+      `(maximum ${fit.limit.maxChars}). Raccourcissez le post, ou retirez ce réseau de ses cibles.`;
+    const results = platforms.map((p) => ({
+      platform: normalisePlatform(p),
+      status: "error" as const,
+      message,
+    }));
+    const attempts = (post.publish_attempts ?? 0) + 1;
+    await supabase
+      .from("posts")
+      .update({
+        status: "failed",
+        publish_error: JSON.stringify(results),
+        publish_attempts: attempts,
+        next_publish_attempt_at: new Date().toISOString(),
+      })
+      .eq("id", postId);
+    return { post_id: postId, results };
+  }
+
   if (zernio?.profile_key) {
+    // Mixed targets where only some fit: publish to those, and report the
+    // over-limit network rather than failing the whole post.
+    const publishable = platforms.filter((p) => !overLimitPlatforms.includes(p));
+    for (const p of overLimitPlatforms) {
+      results.push({
+        platform: normalisePlatform(p),
+        status: "error",
+        message:
+          `Le texte fait ${fit.length} caractères, soit ${fit.overBy} de trop pour ${fit.limit.label} ` +
+          `(maximum ${fit.limit.maxChars}). Raccourcissez le post, ou retirez ce réseau de ses cibles.`,
+      });
+    }
     const zr = await publishViaZernio(
       zernio.profile_key,
-      platforms,
+      publishable,
       post.content,
       stableImageUrl,
       post.id,

@@ -21,6 +21,7 @@ import { AIQuotaError, chatCompletionWithFallback, getOpenRouterKey } from "../_
 import { buildAudiencePrompt, normalizeAudiences } from "../_shared/audience.ts";
 import { ensurePostEngagement } from "../_shared/post-engagement.ts";
 import { buildInspirationBlock, researchInspiration } from "../_shared/research.ts";
+import { getTextLimit, tightLengthBrief } from "../_shared/platformTextLimits.ts";
 
 
 // Per-user rate limit
@@ -60,6 +61,7 @@ interface UserPreferences {
   style_examples?: Array<{ label?: string; content: string }>;
   company_name?: string;
   description?: string;
+  platforms?: string[];
   image_people_type?: string;
   use_custom_images?: boolean;
   custom_image_urls?: string[];
@@ -272,6 +274,15 @@ serve(async (req) => {
     const styleExample =
       userPreferences?.styleExample || userPreferences?.style_example || "";
 
+    // One post goes to every selected network, so the tightest caption limit
+    // binds. Without this a post targeting X came back 3-4x over its 280-char
+    // ceiling and could only be rejected or cut mid-sentence at publish time.
+    const platforms = Array.isArray(body.platforms) && body.platforms.length
+      ? body.platforms.map((p: unknown) => String(p))
+      : userPreferences?.platforms || [];
+    const textLimit = getTextLimit(platforms);
+    const lengthBrief = tightLengthBrief(textLimit);
+
     // Style examples library: up to 3 picked at random per call, fed to
     // the LLM as concrete reference posts to imitate in tone/rhythm/
     // structure (but never copy verbatim).
@@ -360,10 +371,10 @@ ${inspiration}
 RÈGLES CRITIQUES:
 - Génère un post UNIQUE et ORIGINAL
 - 100% en FRANÇAIS
-- 2-4 émojis pertinents (PAS en début ni en fin de phrase clé)
+- ${lengthBrief ? "1-2 émojis pertinents" : "2-4 émojis pertinents (PAS en début ni en fin de phrase clé)"}
 - Tonalité: ${tone}
 - Paragraphes courts (1-2 lignes)
-- Longueur: 90-160 mots; privilégie la densité de valeur plutôt que le remplissage
+${lengthBrief ? `- ${lengthBrief}` : "- Longueur: 90-160 mots; privilégie la densité de valeur plutôt que le remplissage"}
 - Adresse-toi naturellement à la cible avec « vous » lorsque cela améliore la clarté
 - Termine le corps du post par une question naturelle qui donne envie de partager un avis ou une expérience EN COMMENTAIRE
 ${postType === "promo" ? "- Garde aussi l'appel à l'action commercial (contacter, réserver, écrire), distinct de l'invitation à commenter" : ""}
@@ -380,6 +391,9 @@ Réponds UNIQUEMENT avec le texte du post, sans titre ni explication, sans guill
       category: postType,
       sector,
       companyName,
+      // Final guard: the engagement line and hashtag line are appended AFTER
+      // the model has written, so they can push a tight post over on their own.
+      maxChars: textLimit.maxChars,
     });
 
     const fallbackContent = (reason: string) => ({
@@ -443,6 +457,7 @@ Réponds UNIQUEMENT avec le texte du post, sans titre ni explication, sans guill
         angle: angle.name,
         postType,
         usedWebInspiration: webResults.length > 0,
+        textLimit: { platform: textLimit.platform, label: textLimit.label, maxChars: textLimit.maxChars },
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );

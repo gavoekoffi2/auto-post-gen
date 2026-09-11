@@ -33,13 +33,28 @@ serve(async (req) => {
 
   try {
     // 1. Best-effort: wipe storage objects under the user's folder.
+    // Paginated: a single list(limit: 1000) left every object past the first
+    // thousand behind, and an active account can mint 200 posters a month, so
+    // a deletion could silently keep years of the user's images.
     try {
-      const { data: files } = await admin.storage
-        .from("user-assets")
-        .list(userId, { limit: 1000 });
-      if (files && files.length > 0) {
+      const PAGE = 1000;
+      // Always read the first page: each pass deletes what it read, so the next
+      // page shifts down into the same window. Bounded so a removal that
+      // silently no-ops ends the loop instead of spinning forever.
+      const MAX_PASSES = 50;
+      for (let pass = 0; pass < MAX_PASSES; pass++) {
+        const { data: files, error: listErr } = await admin.storage
+          .from("user-assets")
+          .list(userId, { limit: PAGE });
+        if (listErr) throw listErr;
+        if (!files || files.length === 0) break;
         const paths = files.map((f) => `${userId}/${f.name}`);
-        await admin.storage.from("user-assets").remove(paths);
+        const { error: removeErr } = await admin.storage.from("user-assets").remove(paths);
+        if (removeErr) throw removeErr;
+        if (files.length < PAGE) break;
+        if (pass === MAX_PASSES - 1) {
+          console.error(`Storage cleanup for ${userId} hit the pass limit; objects may remain.`);
+        }
       }
     } catch (storageError) {
       console.error("Storage cleanup failed for", userId, storageError);
@@ -49,6 +64,15 @@ serve(async (req) => {
     // reference it, but we run explicit deletes first so the order is
     // deterministic. We check each step's error and ABORT before deleting the
     // auth user, so we never leave orphaned rows the user can no longer reach.
+    // Read the Zernio profile key before the row is deleted (see 2b below).
+    const { data: zernioRow } = await admin
+      .from("social_connections")
+      .select("profile_key")
+      .eq("user_id", userId)
+      .eq("provider", "zernio")
+      .maybeSingle();
+    const zernioProfileKey: string | null = zernioRow?.profile_key ?? null;
+
     const deletions: Array<{ table: string; run: PromiseLike<{ error: unknown }> }> = [
       { table: "social_comments", run: admin.from("social_comments").delete().eq("user_id", userId) },
       { table: "social_connections", run: admin.from("social_connections").delete().eq("user_id", userId) },
@@ -59,6 +83,18 @@ serve(async (req) => {
     for (const { table, run } of deletions) {
       const { error } = await run;
       if (error) throw new Error(`Failed to delete ${table}: ${(error as { message?: string }).message ?? String(error)}`);
+    }
+
+    // 2b. The user's Zernio profile is NOT removed here: the Zernio API this
+    // integration uses exposes no profile-deletion endpoint. The profile (and
+    // any social account still connected under it) therefore survives the
+    // deletion and keeps counting against the operator's Zernio plan. Remove it
+    // by hand in the Zernio dashboard, or wire it up here if Zernio adds the
+    // endpoint. Log the key so an operator can find it after the row is gone.
+    if (zernioProfileKey) {
+      console.warn(
+        `delete-account: Zernio profile ${zernioProfileKey} (user ${userId}) must be removed manually — the API exposes no delete endpoint.`,
+      );
     }
 
     // 3. Finally remove the auth.users row.

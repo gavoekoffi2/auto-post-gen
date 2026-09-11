@@ -10,6 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { getSocialImageSpec } from "@/lib/socialImageSpecs";
+import { checkTextFits } from "@/lib/platformTextLimits";
 import { useNavigate } from "react-router-dom";
 import SettingsDialog from "@/components/SettingsDialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -998,6 +999,22 @@ export default function Dashboard() {
                          Détail publication : {formatPublishError(post.publish_error)}
                        </p>
                      )}
+                     {(() => {
+                       // Warn on the card too, so an over-long post is visible
+                       // without opening it — it cannot publish as it stands.
+                       if (post.status === "published") return null;
+                       const fit = checkTextFits(
+                         post.content || "",
+                         post.platforms || (post.platform ? [post.platform] : []),
+                       );
+                       if (fit.fits) return null;
+                       return (
+                         <p className="text-xs text-destructive mb-3 break-words">
+                           Trop long pour {fit.limit.label} : {fit.length} caractères sur{" "}
+                           {fit.limit.maxChars} autorisés. Modifiez le post pour le raccourcir.
+                         </p>
+                       );
+                     })()}
                      <p className="text-sm text-muted-foreground mb-4 line-clamp-2">{post.content}</p>
                      <div className="flex gap-2 flex-wrap">
                       <Button 
@@ -1266,9 +1283,24 @@ export default function Dashboard() {
                       onChange={(e) => setEditingPost({ ...editingPost, content: e.target.value })}
                       className="glass-card min-h-[320px] text-base leading-relaxed text-foreground placeholder:text-muted-foreground"
                     />
-                    <p className="text-xs text-muted-foreground mt-2">
-                      Zone agrandie : vous pouvez scroller et relire tout le texte avant validation.
-                    </p>
+                    {(() => {
+                      // A caption over the tightest selected network's limit can
+                      // only be rejected or cut mid-sentence at publish time.
+                      // Show it here, while the text can still be shortened.
+                      const fit = checkTextFits(
+                        editingPost.content || "",
+                        editingPost.platforms || (editingPost.platform ? [editingPost.platform] : []),
+                      );
+                      return (
+                        <p
+                          className={`text-xs mt-2 ${fit.fits ? "text-muted-foreground" : "text-destructive font-medium"}`}
+                        >
+                          {fit.fits
+                            ? `${fit.length} / ${fit.limit.maxChars} caractères (limite ${fit.limit.label}). Vous pouvez scroller et relire tout le texte avant validation.`
+                            : `${fit.length} / ${fit.limit.maxChars} caractères — ${fit.overBy} de trop pour ${fit.limit.label}. Raccourcissez le texte, ou retirez ce réseau des cibles du post, sinon la publication échouera.`}
+                        </p>
+                      );
+                    })()}
                   </div>
                   <div className="grid sm:grid-cols-2 gap-3">
                     <Button

@@ -46,7 +46,22 @@ export function normalizeAudiences(value: unknown): AudienceSegment[] {
         ? Math.min(5, Math.max(1, Number(item.priority)))
         : index + 1,
     };
-  }).filter((item) => item.name && item.description);
+  })
+    // Keep a segment that carries ANY usable substance, not only one with a
+    // description. The dashboard's own normalizer (src/lib/audiences.ts) only
+    // requires a name, so requiring a description here silently discarded a
+    // target the user had selected and saved — their posts then fell back to
+    // "write for everyone" with nothing in the UI saying so.
+    .filter((item) =>
+      Boolean(
+        item.name &&
+          (item.description ||
+            item.pain_points.length ||
+            item.goals.length ||
+            item.content_topics.length ||
+            item.buying_triggers.length),
+      )
+    );
 }
 
 export function buildAudiencePrompt(audiences: unknown, preferredIndex = 0): string {

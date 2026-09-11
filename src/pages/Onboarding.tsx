@@ -11,7 +11,7 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { AudienceEditor } from "@/components/AudienceEditor";
-import { AudienceSegment, audiencesToJson, normalizeAudienceSegments } from "@/lib/audiences";
+import { AudienceSegment, audiencesToJson, isUsableAudience, normalizeAudienceSegments } from "@/lib/audiences";
 
 export default function Onboarding() {
   const navigate = useNavigate();
@@ -83,7 +83,9 @@ export default function Onboarding() {
       });
       if (error) throw error;
       const audiences = normalizeAudienceSegments(data?.audiences);
-      if (audiences.length < 2) throw new Error("Analyse incomplète");
+      // One usable segment is still worth showing; rejecting anything under two
+      // threw away a perfectly good result and sent the user back to an error.
+      if (audiences.length === 0) throw new Error("Aucune cible exploitable n'a été trouvée");
       setFormData((current) => ({
         ...current,
         audienceSuggestions: audiences,
@@ -93,7 +95,12 @@ export default function Onboarding() {
       return true;
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Analyse indisponible";
-      toast.error(`Impossible d'analyser vos cibles : ${message}`);
+      toast.error(
+        `Impossible d'analyser vos cibles automatiquement (${message}). ` +
+          "Ajoutez votre cible à la main avec « Ajouter une cible personnalisée », " +
+          "ou relancez l'analyse.",
+        { duration: 12000 },
+      );
       return false;
     } finally {
       setAnalyzingAudiences(false);
@@ -103,8 +110,11 @@ export default function Onboarding() {
   const handleNext = async () => {
     if (step === 3) {
       if (formData.audienceSuggestions.length === 0) {
-        const analyzed = await analyzeAudiences();
-        if (!analyzed) return;
+        // Analysis is a convenience, never a gate. It used to `return` on
+        // failure, which trapped the user on step 3 forever whenever the AI
+        // provider was down — and the "add a target manually" control lives on
+        // step 4, which they could then never reach. Move on either way.
+        await analyzeAudiences();
       }
       setStep(4);
     } else if (step < 8) {
@@ -171,7 +181,12 @@ export default function Onboarding() {
       case 3:
         return formData.description.length > 10;
       case 4:
-        return formData.selectedAudienceIds.length > 0;
+        // Only targets the server will keep count towards progress, so the
+        // user cannot advance with a selection that is about to be discarded.
+        return formData.audienceSuggestions.some(
+          (audience) =>
+            formData.selectedAudienceIds.includes(audience.id) && isUsableAudience(audience),
+        );
       case 5:
         return true; // Style example is optional
       case 6:

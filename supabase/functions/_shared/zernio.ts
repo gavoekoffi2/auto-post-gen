@@ -65,8 +65,18 @@ export async function zernioConnectUrl(platform: string, profileId: string): Pro
 }
 
 export async function zernioListAccounts(profileId?: string | null): Promise<ZernioAccount[]> {
+  // The Zernio profile is this product's tenant boundary. Omitting profileId
+  // makes the API return EVERY account across EVERY profile — i.e. other
+  // users' connected social accounts. Callers previously passed a possibly
+  // null profile_key straight through, so a row missing its key silently
+  // listed (and could publish to) the whole operator account. Refuse instead.
+  if (!profileId) {
+    throw new Error(
+      "Profil Zernio manquant pour ce compte : impossible de lister les comptes sans isolation par profil.",
+    );
+  }
   const url = new URL(`${ZERNIO_BASE}/accounts`);
-  if (profileId) url.searchParams.set("profileId", profileId);
+  url.searchParams.set("profileId", profileId);
   const r = await fetch(url.toString(), { headers: headers() });
   if (!r.ok) throw new Error(`Zernio accounts ${r.status}: ${(await r.text()).slice(0, 200)}`);
   const d = await r.json();

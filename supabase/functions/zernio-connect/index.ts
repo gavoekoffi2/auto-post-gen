@@ -11,7 +11,6 @@ import {
   getZernioKey,
   zernioConnectUrl,
   zernioCreateProfile,
-  zernioListProfiles,
 } from "../_shared/zernio.ts";
 
 const SUPPORTED = [
@@ -68,12 +67,27 @@ serve(async (req) => {
         .eq("id", userId)
         .maybeSingle();
       const name = (prof?.company_name || prof?.email || `user-${userId.slice(0, 8)}`).slice(0, 60);
-      // Try a dedicated profile; if the plan limit is reached, fall back to
-      // the operator's default profile so connection still works.
+      // A Zernio profile is this product's tenant boundary: publish-post reads
+      // the accounts connected under it, so two users sharing a profile means
+      // one user's posts go to the other user's social accounts.
+      //
+      // This used to fall back to the operator's DEFAULT profile when creation
+      // failed (plan limit), "so connection still works". It did — by putting
+      // the user inside a profile shared with everyone else who hit the same
+      // limit. Refusing is the only safe answer; the error says exactly what to
+      // do about it.
       profileId = await zernioCreateProfile(name);
       if (!profileId) {
-        const profiles = await zernioListProfiles();
-        profileId = profiles.find((p) => p.isDefault)?._id || profiles[0]?._id || null;
+        return jsonResponse(
+          {
+            error:
+              "Impossible de créer un profil Zernio dédié pour ce compte (limite de profils du plan Zernio atteinte). " +
+              "Augmentez la limite de profils dans Zernio, puis réessayez. " +
+              "Aucun compte n'est connecté à un profil partagé : cela permettrait de publier sur les réseaux d'un autre utilisateur.",
+            code: "ZERNIO_PROFILE_LIMIT",
+          },
+          { status: 402, cors },
+        );
       }
     }
 

@@ -2,8 +2,8 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { AudienceSegment } from "@/lib/audiences";
-import { Plus, RefreshCw, Target } from "lucide-react";
+import { AudienceSegment, isUsableAudience } from "@/lib/audiences";
+import { AlertCircle, Plus, RefreshCw, Target } from "lucide-react";
 
 interface AudienceEditorProps {
   audiences: AudienceSegment[];
@@ -36,8 +36,11 @@ export function AudienceEditor({
       ...audiences,
       {
         id,
-        name: "Nouvelle cible",
-        description: "Décrivez précisément les personnes que vous souhaitez toucher.",
+        // Deliberately empty: pre-filling these with placeholder prose meant a
+        // user who added a target and did not edit it sent "Nouvelle cible /
+        // Décrivez précisément…" to the model as a real audience brief.
+        name: "",
+        description: "",
         pain_points: [],
         goals: [],
         content_topics: [],
@@ -46,8 +49,15 @@ export function AudienceEditor({
         priority: audiences.length + 1,
       },
     ]);
-    onSelectedIdsChange([...selectedIds, id]);
+    // Not pre-selected: it has nothing in it yet, and selecting an unusable
+    // target is exactly what the server would silently discard.
   };
+
+  // Count what actually counts: a selected target the user later emptied is
+  // discarded server-side, so showing it as selected would overstate the setup.
+  const usableSelectedCount = audiences.filter(
+    (audience) => selectedIds.includes(audience.id) && isUsableAudience(audience),
+  ).length;
 
   return (
     <div className="space-y-4">
@@ -64,6 +74,7 @@ export function AudienceEditor({
       <div className="space-y-3">
         {audiences.map((audience, index) => {
           const selected = selectedIds.includes(audience.id);
+          const usable = isUsableAudience(audience);
           return (
             <div
               key={audience.id}
@@ -72,7 +83,8 @@ export function AudienceEditor({
               <div className="flex items-start gap-3">
                 <Checkbox
                   id={`audience-${audience.id}`}
-                  checked={selected}
+                  checked={selected && usable}
+                  disabled={!usable}
                   onCheckedChange={(checked) => toggle(audience.id, !!checked)}
                   className="mt-2"
                 />
@@ -86,13 +98,22 @@ export function AudienceEditor({
                     value={audience.name}
                     onChange={(event) => update(index, { name: event.target.value })}
                     className="font-semibold"
+                    placeholder="Nom de la cible (ex. Restaurateurs du Plateau)"
                   />
                   <Textarea
                     aria-label={`Description de la cible ${index + 1}`}
                     value={audience.description}
                     onChange={(event) => update(index, { description: event.target.value })}
                     className="min-h-[76px]"
+                    placeholder="Qui est cette cible, dans quelle situation, et ce qu'elle cherche."
                   />
+                  {!usable && (
+                    <p className="flex items-start gap-1.5 text-xs text-amber-600">
+                      <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                      Donnez un nom et une description à cette cible pour pouvoir la
+                      sélectionner — sans description, elle ne guiderait aucune publication.
+                    </p>
+                  )}
                   {(audience.pain_points.length > 0 || audience.goals.length > 0) && (
                     <div className="grid gap-3 text-xs text-muted-foreground md:grid-cols-2">
                       <div>
@@ -121,7 +142,7 @@ export function AudienceEditor({
         Ajouter une cible personnalisée
       </Button>
       <p className="text-xs text-muted-foreground">
-        {selectedIds.length} cible{selectedIds.length > 1 ? "s" : ""} sélectionnée{selectedIds.length > 1 ? "s" : ""}. Seules les cibles validées guideront vos publications.
+        {usableSelectedCount} cible{usableSelectedCount > 1 ? "s" : ""} sélectionnée{usableSelectedCount > 1 ? "s" : ""}. Seules les cibles validées guideront vos publications.
       </p>
     </div>
   );

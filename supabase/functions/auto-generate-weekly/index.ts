@@ -7,6 +7,7 @@ import { buildAudiencePrompt, normalizeAudiences } from "../_shared/audience.ts"
 import { ensurePostEngagement } from "../_shared/post-engagement.ts";
 import { buildInspirationBlock, researchInspiration } from "../_shared/research.ts";
 import { rehostToUserAssets, startPosterJob } from "../_shared/graphiste.ts";
+import { getTextLimit, tightLengthBrief } from "../_shared/platformTextLimits.ts";
 
 
 // ISO 8601 week number (1..53)
@@ -173,6 +174,15 @@ serve(async (req) => {
           ? profile.platforms
           : ["Instagram"];
 
+        // One post goes to every selected network, so the tightest caption
+        // limit binds. Without it an automatic post for a profile including X
+        // was several times over 280 characters and could never publish there.
+        const textLimit = getTextLimit(platforms);
+        const lengthBrief = tightLengthBrief(textLimit);
+        const lengthRule = lengthBrief
+          ? `- ${lengthBrief}`
+          : "- 100% en français, 90-160 mots, 2-3 émojis pertinents";
+
         // Time of day the user picked for automatic posts (defaults to 10:00).
         //
         // KNOWN LIMITATION: getDay()/setHours() below run in the edge runtime's
@@ -277,8 +287,7 @@ OBJECTIF DE CE POST: présenter ce que propose ${companyName} et donner envie de
 
 RÈGLES:
 - 100% en français
-- 90-160 mots, denses et sans remplissage
-- 2-3 émojis pertinents
+${lengthRule}
 - Écris pour UNE CIBLE PRIORITAIRE, jamais pour « tout le monde »
 - Nomme au moins une situation, douleur ou ambition concrète de cette cible
 - Commence par un bénéfice concret pour le client (jamais par "Nous sommes...")
@@ -300,7 +309,7 @@ ${audienceBlock}
 OBJECTIF ACTUALITÉ/RECHERCHE: informer l'audience sur une nouveauté, une évolution, une étude ou une tendance récente réellement pertinente pour ce métier.
 ${inspirationBlock}
 RÈGLES:
-- 100% en français, 100-180 mots, 2-3 émojis pertinents
+${lengthBrief ? `- ${lengthBrief}` : "- 100% en français, 100-180 mots, 2-3 émojis pertinents"}
 - Écris pour UNE CIBLE PRIORITAIRE et relie chaque fait à ses DOULEURS ou OBJECTIFS
 - Appuie le post sur les faits trouvés dans la matière web; n'invente jamais de chiffre, date, étude ou nouveauté
 - Explique concrètement ce que cette information change pour l'audience
@@ -320,7 +329,7 @@ ${audienceBlock}
 ANGLE IMPOSÉ: ${AUTO_ANGLES[(i + weekNumber) % AUTO_ANGLES.length]}
 
 RÈGLES:
-- 100% en français, 90-160 mots, 2-3 émojis pertinents
+${lengthRule}
 - Écris pour UNE CIBLE PRIORITAIRE et montre que tu comprends ses DOULEURS et OBJECTIFS
 - Apporte une valeur CONCRÈTE et SPÉCIFIQUE à ce métier : conseil, méthode, checklist, explication ou erreur à éviter
 - Inclus au moins une étape, un critère, un exemple ou une méthode immédiatement applicable
@@ -359,6 +368,9 @@ Génère uniquement le texte du post, sans titre ni explication.`;
             category: contentCategory,
             sector,
             companyName,
+            // Final guard: the engagement + hashtag lines are appended after
+            // the model has written and can push a tight post over on their own.
+            maxChars: textLimit.maxChars,
           });
           // Track for intra-run de-duplication.
           generatedThisRun.push(generatedContent.trim());

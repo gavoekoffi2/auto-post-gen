@@ -28,7 +28,9 @@ serve(async (req) => {
       .eq("provider", "zernio")
       .maybeSingle();
 
-    if (!existing) {
+    // A row without a profile_key is not a provisioned tenant: treat it as
+    // not connected rather than asking Zernio for "all accounts".
+    if (!existing?.profile_key) {
       return jsonResponse({ provisioned: false, platforms: [] }, { cors });
     }
 
