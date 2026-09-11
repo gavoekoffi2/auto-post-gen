@@ -8,7 +8,17 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
+import {
+  ApiError,
+  generations,
+  posts as postsApi,
+  profile as profileApi,
+  social,
+  type GenerationJob,
+  type Post as ApiPost,
+  type Profile as ApiProfile,
+} from "@/lib/api";
+import { useSession } from "@/lib/session";
 import { getSocialImageSpec } from "@/lib/socialImageSpecs";
 import { checkTextFits } from "@/lib/platformTextLimits";
 import { useNavigate } from "react-router-dom";
@@ -115,74 +125,73 @@ function nextPreferredSlot(profile: UserProfile | null): string {
   return fallback.toISOString();
 }
 
-// Client-side ceiling on a single generate-image invoke. The edge function
-// bounds itself well under this; the race is a last-resort guard so a hung
-// gateway/network call can never freeze the dashboard spinner forever.
-const IMAGE_GENERATION_TIMEOUT_MS = 90_000;
+// Poster generation is asynchronous and resumable.
+//
+// A premium 2K poster can take minutes, so the API answers the initial request
+// with `processing` and a job id instead of holding the connection open. The
+// client then polls that job. Polling is a pure status read — it never starts,
+// and never bills, a second generation — which is what makes it safe to resume
+// a job after a reload, a client timeout, or a closed tab.
+const POSTER_POLL_INTERVAL_MS = 5_000;
+const POSTER_POLL_BUDGET_MS = 6 * 60_000;
 
-type GenerateImageInvoke = { data: Record<string, unknown> | null; error: unknown };
-
-async function invokeGenerateImageWithTimeout(
-  body: Record<string, unknown>,
-): Promise<GenerateImageInvoke | "timeout"> {
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<"timeout">((resolve) => {
-    timeoutId = setTimeout(() => resolve("timeout"), IMAGE_GENERATION_TIMEOUT_MS);
-  });
-  try {
-    return await Promise.race([
-      supabase.functions.invoke("generate-image", { body }) as Promise<GenerateImageInvoke>,
-      timeout,
-    ]);
-  } finally {
-    clearTimeout(timeoutId);
-  }
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Image generation is resumable: the edge function does a short bounded poll and
-// hands back a job id when a premium poster is still rendering. We re-call it
-// with that job id until the poster is ready, an error is returned, or we hit a
-// generous overall budget — so slow 2K posters finish without any single call
-// running near Supabase's request timeout.
-async function generatePosterImage(
-  initialBody: Record<string, unknown>,
-): Promise<{ imageUrl?: string; error?: string; detail?: string }> {
-  let body: Record<string, unknown> = initialBody;
-  // Up to ~7 calls; each call internally polls ~40-45s → several minutes total.
-  for (let attempt = 0; attempt < 7; attempt++) {
-    const raced = await invokeGenerateImageWithTimeout(body);
-    if (raced === "timeout") {
-      // The edge call went unresponsive. If we were resuming an existing job
-      // (jobId present) retrying is free — it is only a status poll. But if
-      // this was the INITIAL call, a paid job may already have started server
-      // side; the edge function persists it on the post row, so we stop here
-      // instead of racing a second paid generation. The dashboard resumes the
-      // persisted job on the next load.
-      if (body.jobId || body.statusUrl) continue;
-      break;
+/** Polls an already-started job until it resolves or the budget runs out. */
+async function awaitPosterJob(
+  jobId: string,
+): Promise<{ imageUrl?: string; error?: string; stillProcessing?: boolean }> {
+  const deadline = Date.now() + POSTER_POLL_BUDGET_MS;
+  while (Date.now() < deadline) {
+    await sleep(POSTER_POLL_INTERVAL_MS);
+    let job: GenerationJob;
+    try {
+      job = await generations.status(jobId);
+    } catch (err) {
+      // A transient read failure is not a failed job: keep polling. Only the
+      // server saying "failed" is terminal.
+      if (err instanceof ApiError && err.status >= 500) continue;
+      throw err;
     }
-    const { data, error } = raced;
-    if (error) throw error;
-    if (data?.error) return { error: data.error as string, detail: data.detail as string | undefined };
-    if (data?.imageUrl) return { imageUrl: data.imageUrl as string };
-    if (data?.status === "processing" && (data.jobId || data.statusUrl)) {
-      body = {
-        postId: initialBody.postId,
-        platforms: initialBody.platforms,
-        jobId: data.jobId,
-        statusUrl: data.statusUrl,
-      };
-      continue;
+    if (job.status === "completed" && job.url) return { imageUrl: job.url };
+    if (job.status === "failed") {
+      // The provider's real reason, surfaced as-is. There is no local
+      // placeholder image: a failed generation is reported, never faked.
+      return { error: job.error || "La génération de l'affiche a échoué." };
     }
-    break;
   }
   return {
-    error: "La génération de l'affiche prend plus de temps que prévu. Cliquez sur « Régénérer l'affiche » pour réessayer.",
+    stillProcessing: true,
+    error:
+      "La génération de l'affiche prend plus de temps que prévu. Elle se poursuit côté serveur : " +
+      "rechargez la page dans quelques minutes pour la récupérer.",
   };
+}
+
+/** Starts a poster for a post, then waits for it. */
+async function generatePosterImage(input: {
+  postId: string;
+  platforms: string[];
+  contentCategory?: "value" | "research" | "promo";
+}): Promise<{ imageUrl?: string; error?: string }> {
+  let job: GenerationJob;
+  try {
+    job = await generations.image(input);
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Erreur de génération d'image" };
+  }
+  if (job.status === "completed" && job.url) return { imageUrl: job.url };
+  if (job.status === "failed") {
+    return { error: job.error || "La génération de l'affiche a échoué." };
+  }
+  return await awaitPosterJob(job.jobId);
 }
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const { signOut } = useSession();
   const [posts, setPosts] = useState<Post[]>([]);
   const [editingPost, setEditingPost] = useState<Post | null>(null);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
@@ -206,57 +215,18 @@ export default function Dashboard() {
 
   const checkAuthAndLoadData = async () => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        navigate('/auth');
-        return;
-      }
+      // Every request below is scoped by the server to the session's own
+      // account: no user id is sent, so there is nothing here to tamper with.
+      const [profile, accounts, postList] = await Promise.all([
+        profileApi.get(),
+        social.listAccounts().catch(() => ({ accounts: [], provisioned: false })),
+        postsApi.list(),
+      ]);
 
-      // Load user profile
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', session.user.id)
-        .maybeSingle();
-      
-      setUserProfile(profile);
+      setUserProfile(profile as unknown as UserProfile);
+      setHasConnection(accounts.accounts.length > 0);
 
-      // Does the user have a social account connected? Drives the
-      // "connect a network" first-run nudge. Only non-secret columns are
-      // readable here (tokens are locked down at the DB level).
-      const { count: connCount } = await supabase
-        .from('social_connections')
-        .select('id', { count: 'exact', head: true })
-        .eq('user_id', session.user.id)
-        .eq('provider', 'zernio');
-      setHasConnection((connCount ?? 0) > 0);
-
-      // Load posts
-      const { data: postsData, error } = await supabase
-        .from('posts')
-        .select('*')
-        .eq('user_id', session.user.id)
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      
-      const transformedPosts: Post[] = (postsData || []).map((post) => {
-        const status: PostStatus =
-          post.status === "validated" ||
-          post.status === "published" ||
-          post.status === "failed"
-            ? (post.status as PostStatus)
-            : "pending";
-        return {
-          ...post,
-          platform: post.platforms?.[0] || 'Instagram',
-          date: post.scheduled_for ? new Date(post.scheduled_for).toISOString().split('T')[0] : '',
-          time: post.scheduled_for
-            ? new Date(post.scheduled_for).toTimeString().substring(0, 5)
-            : '',
-          status,
-        };
-      });
+      const transformedPosts: Post[] = (postList.posts || []).map(toViewPost);
 
       setPosts(transformedPosts);
 
@@ -266,32 +236,47 @@ export default function Dashboard() {
       // poster back up here instead of losing it. Bounded to avoid a thundering
       // herd if many posts are mid-generation.
       const pendingImagePosts = transformedPosts
-        .filter((p) => !p.image_url && p.image_status === "processing" && (p.image_job_id || p.image_status_url))
+        .filter((p) => !p.image_url && p.image_status === "processing" && p.image_job_id)
         .slice(0, 4);
       for (const p of pendingImagePosts) {
         void resumePendingImage(p);
       }
     } catch (error) {
+      if (error instanceof ApiError && error.isUnauthenticated) {
+        navigate('/auth');
+        return;
+      }
       console.error('Error loading data:', error);
-      toast.error('Erreur lors du chargement des données');
+      const message = error instanceof Error ? error.message : 'Erreur lors du chargement des données';
+      toast.error(message);
     } finally {
       setLoading(false);
     }
   };
 
+  /** Maps an API post onto the shape this page renders. */
+  const toViewPost = (post: ApiPost): Post => ({
+    ...post,
+    platform: post.platforms?.[0] || 'Instagram',
+    date: post.scheduled_for ? new Date(post.scheduled_for).toISOString().split('T')[0] : '',
+    time: post.scheduled_for ? new Date(post.scheduled_for).toTimeString().substring(0, 5) : '',
+    status: (post.status === "validated" || post.status === "published" || post.status === "failed"
+      ? post.status
+      : "pending") as PostStatus,
+    image_url: post.image_url ?? undefined,
+  });
+
   // Re-poll a poster job that is already in flight (persisted on the post row)
   // and attach the finished image when it lands. Used on page load so slow
   // posters appear automatically alongside the text, without a manual retry.
   const resumePendingImage = async (post: Post) => {
+    if (!post.image_job_id) return;
     if (generatingImageIds.has(post.id)) return;
     setGeneratingImageIds((prev) => new Set(prev).add(post.id));
     try {
-      const res = await generatePosterImage({
-        postId: post.id,
-        platforms: post.platforms || (post.platform ? [post.platform] : []),
-        jobId: post.image_job_id || undefined,
-        statusUrl: post.image_status_url || undefined,
-      });
+      // Poll the EXISTING job rather than asking for a new poster: resuming
+      // must never trigger (or bill) a second generation.
+      const res = await awaitPosterJob(post.image_job_id);
       if (res.imageUrl) {
         const url = res.imageUrl;
         setPosts((prev) =>
@@ -312,33 +297,25 @@ export default function Dashboard() {
   };
 
   const handleSignOut = async () => {
-    await supabase.auth.signOut();
+    await signOut();
     toast.success("Déconnexion réussie");
     navigate("/");
   };
 
   const handleValidate = async (postId: string) => {
     try {
-      const { error } = await supabase
-        .from('posts')
-        .update({
-          status: 'validated',
-          // A post the user just approved starts with a clean publish record:
-          // no inherited retry count and no backoff window holding it back.
-          publish_attempts: 0,
-          next_publish_attempt_at: new Date().toISOString(),
-          publish_error: null,
-        })
-        .eq('id', postId);
-
-      if (error) throw error;
+      // The server clears the retry counter and backoff window as part of
+      // validating, so a post the user just approved starts clean. Doing it
+      // server-side keeps the publish budget out of the browser's reach.
+      await postsApi.validate(postId);
 
       setPosts((prev) => prev.map(post =>
-        post.id === postId ? { ...post, status: "validated" as const } : post
+        post.id === postId ? { ...post, status: "validated" as const, publish_error: null } : post
       ));
       toast.success("Post validé !");
-    } catch (_error) {
-      toast.error('Erreur lors de la validation');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Erreur lors de la validation";
+      toast.error(message);
     }
   };
 
@@ -351,37 +328,20 @@ export default function Dashboard() {
     setPublishingId(post.id);
     const loadingToast = toast.loading("Publication en cours...");
     try {
-      const { data, error } = await supabase.functions.invoke('publish-post', {
-        body: { postId: post.id },
-      });
+      // The API returns the per-platform outcome AND the post as it now
+      // stands, so there is no second read to keep in sync with it.
+      const { results, post: updated } = await postsApi.publish(post.id);
       toast.dismiss(loadingToast);
-      if (error) throw error;
-      const results = (data?.results || []) as Array<{ status: string; platform: string; message?: string; externalUrl?: string }>;
       const anyOk = results.some((r) => r.status === "ok");
       const anyPending = results.some((r) => r.status === "pending");
       const allErrors = results.length > 0 && results.every((r) => r.status === "error");
-      // Refresh from the DB so the displayed status matches whatever
-      // publish-post settled on (published, failed or rolled back to
-      // validated when nothing was attempted).
-      const { data: refreshed } = await supabase
-        .from("posts")
-        .select("status,publish_error,provider_post_id,external_post_ids")
-        .eq("id", post.id)
-        .maybeSingle();
-      if (refreshed) {
-        const status = (refreshed.status as PostStatus) || post.status;
-        setPosts((prev) =>
-          prev.map((p) =>
-            p.id === post.id
-              ? {
-                  ...p,
-                  status,
-                  publish_error: refreshed.publish_error ?? null,
-                }
-              : p,
-          ),
-        );
-      }
+      setPosts((prev) =>
+        prev.map((p) =>
+          p.id === post.id
+            ? { ...p, status: updated.status as PostStatus, publish_error: updated.publish_error }
+            : p,
+        ),
+      );
       if (anyOk) {
         const urls = results.filter((r) => r.status === "ok" && r.externalUrl).map((r) => r.externalUrl);
         toast.success(urls.length ? `Post publié ! Lien: ${urls[0]}` : "Post publié !");
@@ -419,16 +379,9 @@ export default function Dashboard() {
     // Flip back to 'validated' first so handlePublish's pre-check
     // accepts it, then publish.
     try {
-      const { error } = await supabase
-        .from('posts')
-        .update({
-          status: 'validated',
-          publish_error: null,
-          publish_attempts: 0,
-          next_publish_attempt_at: new Date().toISOString(),
-        })
-        .eq('id', post.id);
-      if (error) throw error;
+      // Same server-side reset as validating: the retry budget is the
+      // server's to grant, never a value the browser sets.
+      await postsApi.validate(post.id);
       const revived: Post = { ...post, status: 'validated' };
       setPosts((prev) => prev.map((p) => (p.id === post.id ? revived : p)));
       await handlePublish(revived);
@@ -446,17 +399,12 @@ export default function Dashboard() {
   const handleSaveEdit = async () => {
     if (!editingPost) return;
     try {
-      const { error } = await supabase
-        .from('posts')
-        .update({
-          title: editingPost.title,
-          content: editingPost.content,
-          platforms: editingPost.platforms || ['Instagram'],
-          scheduled_for: localDateTimeToIso(editingPost.date || "", editingPost.time || ""),
-        })
-        .eq('id', editingPost.id);
-
-      if (error) throw error;
+      await postsApi.update(editingPost.id, {
+        title: editingPost.title,
+        content: editingPost.content,
+        platforms: editingPost.platforms || ['Instagram'],
+        scheduled_for: localDateTimeToIso(editingPost.date || "", editingPost.time || ""),
+      });
 
       setPosts((prev) => prev.map(post =>
         post.id === editingPost.id ? editingPost : post
@@ -464,8 +412,9 @@ export default function Dashboard() {
       setIsEditDialogOpen(false);
       setEditingPost(null);
       toast.success("Post modifié !");
-    } catch (_error) {
-      toast.error('Erreur lors de la modification');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Erreur lors de la modification";
+      toast.error(message);
     }
   };
 
@@ -478,66 +427,33 @@ export default function Dashboard() {
         userProfile?.platforms && userProfile.platforms.length > 0
           ? userProfile.platforms
           : ['Instagram'];
-      const { data, error } = await supabase.functions.invoke('generate-content', {
-        body: {
-          prompt: "Génère un post engageant pour mes réseaux sociaux",
-          userPreferences: userProfile,
-          // Explicit targets so the generator can apply the tightest network's
-          // caption limit (a post addressed to X only has 280 characters).
-          platforms: generationPlatforms,
-        },
+      // The server reads the business profile from the session; the browser
+      // only says which networks this post targets, because that is a property
+      // of the post and not a claim about who the caller is.
+      const data = await generations.text({
+        prompt: "Génère un post engageant pour mes réseaux sociaux",
+        platforms: generationPlatforms,
       });
 
       toast.dismiss(loadingToast);
 
-      if (error) {
-        console.error('Edge function error:', error);
-        throw error;
-      }
-      if (!data || !data.content) {
+      if (!data?.content) {
         throw new Error('Aucun contenu reçu de la génération');
       }
-
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error("Non authentifié");
 
       const defaultPlatforms = generationPlatforms;
 
       // 1. Save the post immediately with text only so the user sees
       //    the result without waiting for the slow image generation.
-      const newPost = {
-        user_id: session.user.id,
+      const savedPost = await postsApi.create({
         title: "Nouveau contenu IA",
         content: data.content,
-        content_category: data.postType,
-        image_url: null,
-        status: 'pending' as const,
+        contentCategory: data.postType,
         platforms: defaultPlatforms,
-        scheduled_for: nextPreferredSlot(userProfile),
-      };
+        scheduledFor: nextPreferredSlot(userProfile),
+      });
 
-      const { data: savedPost, error: saveError } = await supabase
-        .from('posts')
-        .insert(newPost)
-        .select()
-        .single();
-
-      if (saveError) throw saveError;
-
-      const status: PostStatus =
-        savedPost.status === "validated" ||
-        savedPost.status === "published" ||
-        savedPost.status === "failed"
-          ? (savedPost.status as PostStatus)
-          : "pending";
-
-      const transformedPost: Post = {
-        ...savedPost,
-        platform: savedPost.platforms?.[0] || 'Instagram',
-        date: savedPost.scheduled_for ? new Date(savedPost.scheduled_for).toISOString().split('T')[0] : '',
-        time: savedPost.scheduled_for ? new Date(savedPost.scheduled_for).toTimeString().substring(0, 5) : '',
-        status,
-      };
+      const transformedPost: Post = toViewPost(savedPost);
 
       setPosts((prev) => [transformedPost, ...prev]);
       // generate-content answers with `fallback: true` when the AI provider was
@@ -566,14 +482,13 @@ export default function Dashboard() {
         try {
           const imageSpec = getSocialImageSpec(defaultPlatforms);
           const res = await generatePosterImage({
-            postContent: data.content,
-            contentCategory: data.postType,
-            peopleType: userProfile?.image_people_type || 'african',
             postId: savedPost.id,
             platforms: defaultPlatforms,
+            contentCategory: data.postType,
           });
           if (res.error) {
-            if (res.detail) console.warn("Image error detail:", res.detail);
+            // The provider's real reason, shown as-is: a poster that was not
+            // produced is reported as such, never replaced by a placeholder.
             toast.error(res.error);
           } else if (res.imageUrl) {
             const url = res.imageUrl;
@@ -613,15 +528,14 @@ export default function Dashboard() {
       const regenPlatforms = post.platforms || (post.platform ? [post.platform] : []);
       const imageSpec = getSocialImageSpec(regenPlatforms);
       const res = await generatePosterImage({
-        postContent: post.content,
-        contentCategory: post.content_category || "value",
-        peopleType: userProfile?.image_people_type || 'african',
         postId: post.id,
         platforms: regenPlatforms,
+        contentCategory: (post.content_category as "value" | "research" | "promo") || "value",
       });
       toast.dismiss(loadingToast);
       if (res.error) {
-        if (res.detail) console.warn("Image error detail:", res.detail);
+        // The provider's real reason, shown as-is. Nothing local stands in for
+        // a poster that was not produced.
         toast.error(res.error);
       } else if (res.imageUrl) {
         const url = res.imageUrl;
@@ -653,16 +567,13 @@ export default function Dashboard() {
     setRegeneratingContentIds((prev) => new Set(prev).add(post.id));
     const loadingToast = toast.loading("Régénération du contenu...");
     try {
-      const { data, error } = await supabase.functions.invoke('generate-content', {
-        body: {
-          prompt: `Régénère une nouvelle version professionnelle de ce post, claire, vendeuse et prête à publier. Garde le même objectif mais propose une formulation différente. Ancien post:\n${post.content}`,
-          userPreferences: userProfile,
-          // This post's own targets, which can differ from the profile's:
-          // regenerating a post addressed to X must respect X's 280 characters.
-          platforms: post.platforms || (post.platform ? [post.platform] : []),
-        },
+      const data = await generations.text({
+        prompt: `Régénère une nouvelle version professionnelle de ce post, claire, vendeuse et prête à publier. Garde le même objectif mais propose une formulation différente. Ancien post:\n${post.content}`,
+        // This post's own targets, which can differ from the profile's:
+        // regenerating a post addressed to X must respect X's 280 characters.
+        platforms: post.platforms || (post.platform ? [post.platform] : []),
+        postId: post.id,
       });
-      if (error) throw error;
       if (!data?.content) throw new Error("Aucun contenu reçu");
 
       const category = data.postType || post.content_category || "value";
@@ -677,24 +588,15 @@ export default function Dashboard() {
         image_status_url: null,
       };
 
-      const { error: updateError } = await supabase
-        .from('posts')
-        .update({
-          title: updatedPost.title,
-          content: updatedPost.content,
-          // Keep the persisted category in step with the regenerated text, or
-          // the new poster gets built for the previous post's editorial intent.
-          content_category: category,
-          image_url: null,
-          // Drop the poster job that belonged to the OLD text; leaving it set
-          // meant the next page load resumed a job whose image no longer
-          // matches what the post says.
-          image_status: null,
-          image_job_id: null,
-          image_status_url: null,
-        })
-        .eq('id', post.id);
-      if (updateError) throw updateError;
+      // The server persists the new text, keeps content_category in step with
+      // it, and drops the poster job that belonged to the OLD text — leaving
+      // that job attached meant the next load resumed a render whose image no
+      // longer matches what the post says.
+      await postsApi.update(post.id, {
+        title: updatedPost.title,
+        content: updatedPost.content,
+        image_url: null,
+      });
 
       setPosts((prev) => prev.map((p) => (p.id === post.id ? updatedPost : p)));
       if (editingPost?.id === post.id) {
@@ -748,17 +650,13 @@ export default function Dashboard() {
     if (deletingIds.has(postId)) return;
     setDeletingIds((prev) => new Set(prev).add(postId));
     try {
-      const { error } = await supabase
-        .from('posts')
-        .delete()
-        .eq('id', postId);
-
-      if (error) throw error;
+      await postsApi.remove(postId);
 
       setPosts((prev) => prev.filter(post => post.id !== postId));
       toast.success("Post supprimé !");
-    } catch (_error) {
-      toast.error('Erreur lors de la suppression');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Erreur lors de la suppression";
+      toast.error(message);
     } finally {
       setDeletingIds((prev) => {
         const next = new Set(prev);
