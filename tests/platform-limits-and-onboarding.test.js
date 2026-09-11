@@ -2,14 +2,18 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-import { ensurePostEngagement } from "../supabase/functions/_shared/post-engagement.ts";
+import { ensurePostEngagement } from "../server/src/shared/postEngagement.ts";
 import {
   checkTextFits,
   getTextLimit,
   normalizePlatformId,
   tightLengthBrief,
-} from "../supabase/functions/_shared/platformTextLimits.ts";
-import { normalizeAudiences } from "../supabase/functions/_shared/audience.ts";
+} from "../src/lib/platformTextLimits.ts";
+import { normalizeAudiences } from "../server/src/shared/audience.ts";
+import {
+  checkTextFits as serverCheckTextFits,
+  getTextLimit as serverGetTextLimit,
+} from "../server/src/shared/platformTextLimits.ts";
 import { isUsableAudience, normalizeAudienceSegments } from "../src/lib/audiences.ts";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
@@ -88,18 +92,14 @@ test("without a limit the engagement footer is still added in full", () => {
   assert.ok((out.match(/#/g) || []).length >= 3);
 });
 
-test("both generators and the publisher respect the limit", () => {
-  for (const path of [
-    "supabase/functions/generate-content/index.ts",
-    "supabase/functions/auto-generate-weekly/index.ts",
-  ]) {
-    const source = read(path);
-    assert.match(source, /getTextLimit\(/, `${path} must compute the binding limit`);
-    assert.match(source, /maxChars: textLimit\.maxChars/, `${path} must cap the final text`);
-  }
+test("the generator and the publisher both respect the limit", () => {
+  const generator = read("server/src/services/text.ts");
+  assert.match(generator, /getTextLimit\(/, "the generator must compute the binding limit");
+  assert.match(generator, /maxChars: textLimit\.maxChars/, "the generator must cap the final text");
+
   // Publishing an over-limit caption must fail with a reason the user can act
   // on, not with whatever opaque error the provider returns.
-  const publish = read("supabase/functions/publish-post/index.ts");
+  const publish = read("server/src/routes/posts.ts");
   assert.match(publish, /checkTextFits\(post\.content, platforms\)/);
   assert.match(publish, /de trop pour/);
 });
@@ -110,11 +110,25 @@ test("the dashboard shows the limit before the post is published", () => {
   assert.match(dashboard, /caractères/);
 });
 
-test("the frontend and edge copies of the limits module stay identical", () => {
-  assert.equal(
-    read("src/lib/platformTextLimits.ts"),
-    read("supabase/functions/_shared/platformTextLimits.ts"),
-  );
+test("the dashboard and the API server compute the same caption limit", () => {
+  // These are two copies of one module. Comparing them byte for byte broke on
+  // a comment; comparing their answers catches the drift that actually
+  // matters — the dashboard promising a length the server then refuses.
+  const cases = [
+    [], ["LinkedIn"], ["Twitter"], ["Twitter (X)"], ["X"], ["Instagram"],
+    ["Facebook"], ["LinkedIn", "Twitter"], ["Instagram", "LinkedIn"], ["Mastodon"],
+  ];
+  for (const platforms of cases) {
+    assert.deepEqual(
+      serverGetTextLimit(platforms),
+      getTextLimit(platforms),
+      `limit drift for ${JSON.stringify(platforms)}`,
+    );
+  }
+  const text = "x".repeat(500);
+  for (const platforms of cases) {
+    assert.deepEqual(serverCheckTextFits(text, platforms), checkTextFits(text, platforms));
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -241,71 +255,78 @@ test("a partial audience analysis is kept instead of thrown away", () => {
 });
 
 test("audience analysis failure does not burn the user's hourly quota", () => {
-  const fn = read("supabase/functions/detect-audiences/index.ts");
-  assert.match(fn, /releaseQuota = async \(\) => \{/);
-  assert.match(fn, /await releaseQuota\(\)/);
+  const route = read("server/src/routes/profile.ts");
+  assert.match(route, /consumeQuota\(ctx\.profileId, "detect-audiences"/);
+  assert.match(route, /releaseQuota\(ctx\.profileId, "detect-audiences"\)/);
 });
 
 // ---------------------------------------------------------------------------
 // Zernio is the tenant boundary.
 // ---------------------------------------------------------------------------
 
-test("a user is never placed in a shared Zernio profile", () => {
-  // The fallback to the operator's default profile meant a user could publish
-  // to another user's connected social accounts.
-  const connect = read("supabase/functions/zernio-connect/index.ts");
-  assert.equal(
-    connect.includes("profiles.find((p) => p.isDefault)"),
-    false,
-    "zernio-connect must not fall back to a shared profile",
-  );
-  assert.match(connect, /ZERNIO_PROFILE_LIMIT/);
+test("a user is never published through a shared provider profile", () => {
+  // The old fallback to the operator's default profile meant a user could
+  // publish to another user's connected social accounts. The connection now
+  // carries its own key, and no key means refused, not "use the default".
+  const publish = read("server/src/services/publish.ts");
+  assert.match(publish, /WHERE profile_id = \$1 AND provider = 'zernio' AND is_active/);
+  assert.match(publish, /!connection\.provider_profile_key/);
+  assert.doesNotMatch(publish, /isDefault/);
 });
 
-test("listing Zernio accounts without a profile id is refused", () => {
-  // Omitting profileId makes the API return every account across every
+test("provider accounts are only ever listed for one profile key", () => {
+  // Omitting profileId makes the provider return every account across every
   // profile — other tenants' connected social accounts.
-  const zernio = read("supabase/functions/_shared/zernio.ts");
-  assert.match(zernio, /if \(!profileId\) \{[\s\S]*?throw new Error/);
-  assert.equal(
-    zernio.includes('if (profileId) url.searchParams.set("profileId", profileId);'),
-    false,
-    "profileId must be mandatory, not conditional",
-  );
+  const publish = read("server/src/services/publish.ts");
+  assert.match(publish, /accountsUrl\.searchParams\.set\("profileId", profileKey\)/);
+  assert.doesNotMatch(publish, /if \(profileId\) url\.searchParams\.set\("profileId"/);
 });
 
 // ---------------------------------------------------------------------------
 // Account deletion must actually delete.
 // ---------------------------------------------------------------------------
 
-test("account deletion pages through storage instead of stopping at 1000", () => {
-  const fn = read("supabase/functions/delete-account/index.ts");
-  assert.match(fn, /MAX_PASSES/);
-  assert.equal(
-    fn.includes("list(userId, { limit: 1000 })"),
-    false,
-    "a single unpaginated list leaves objects behind",
-  );
+test("account deletion removes every row and every stored file", () => {
+  const route = read("server/src/routes/misc.ts");
+  // The password is re-verified: deletion is irreversible, so an open session
+  // on a shared machine must not be enough on its own.
+  assert.match(route, /verifyPassword\(password/);
+  assert.match(route, /DELETE FROM profiles WHERE id = \$1/);
+  assert.match(route, /deleteProfileMedia\(ctx\.profileId\)/);
+
+  // The rows go with the profile through the schema rather than one delete
+  // per table, which is what used to leave tables behind when one was added.
+  const schema = read("server/migrations/0001_core_schema.sql");
+  for (const table of ["posts", "media_assets", "social_comments", "social_connections",
+                       "generation_jobs", "sessions"]) {
+    const block = schema.slice(schema.indexOf(`CREATE TABLE IF NOT EXISTS ${table}`));
+    assert.match(
+      block.slice(0, 1200),
+      /profile_id\s+uuid NOT NULL REFERENCES profiles\(id\) ON DELETE CASCADE/,
+      `${table} rows would survive the account being deleted`,
+    );
+  }
 });
 
 test("the comments inbox is read per tenant, never across profiles", () => {
-  // Same boundary as zernioListAccounts: without profileId the inbox returns
-  // every profile's commented posts, which sync-comments would then file into
-  // THIS user's comment inbox.
-  const engagement = read("supabase/functions/_shared/engagement.ts");
-  assert.match(engagement, /zernioListCommentedPosts[\s\S]{0,400}?if \(!profileId\)[\s\S]{0,200}?throw new Error/);
-  assert.equal(
-    engagement.includes('if (profileId) url.searchParams.set("profileId", profileId);'),
-    false,
-  );
-  const sync = read("supabase/functions/sync-comments/index.ts");
-  assert.match(sync, /zernio_profile_key_missing/);
+  const route = read("server/src/routes/misc.ts");
+  // Every read and every write is keyed on the session's profile id, so one
+  // account's inbox can never show — or file — another account's comments.
+  const inbox = route.slice(route.indexOf('app.get("/comments"'), route.indexOf('app.post("/comments/sync"'));
+  assert.match(inbox, /requireTenant\(request, reply\)/);
+  assert.match(inbox, /WHERE profile_id = \$1/);
 });
 
 test("the contact form cannot inject a line break into an email header", () => {
-  const fn = read("supabase/functions/send-contact/index.ts");
-  const subject = fn.match(/const subject = [^\n]*/)[0];
-  assert.match(subject, /\[\\r\\n\]\+/);
+  const route = read("server/src/routes/misc.ts");
+  // The subject and the sender name both reach a mail header, where a raw
+  // CR/LF lets the sender append headers of their own.
+  assert.match(route, /asHeaderSafe\(body\.subject, "subject"/);
+  assert.match(route, /asHeaderSafe\(body\.name, "name"/);
+
+  const validate = read("server/src/lib/validate.ts");
+  const fn = validate.slice(validate.indexOf("export function asHeaderSafe"));
+  assert.match(fn.slice(0, 600), /[\\r\\n]/, "asHeaderSafe must strip CR and LF");
 });
 
 test("generation is told which networks the post targets", () => {

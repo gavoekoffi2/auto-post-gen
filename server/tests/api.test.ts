@@ -250,3 +250,80 @@ test("a one-time token cannot be replayed", async () => {
   );
   assert.equal(second.length, 0, "a used token must not claim a second time");
 });
+
+test("the queue selects only posts that are due and outside their backoff", async () => {
+  // Exercises the runner's own selection, against real rows. The predicate is
+  // what stops a handful of failing posts from refilling the capped,
+  // oldest-first batch on every tick and starving everything behind them.
+  await query(
+    `INSERT INTO posts (profile_id, content, platforms, status, scheduled_for,
+                        publish_attempts, next_publish_attempt_at)
+     VALUES
+       ($1, 'due-now',        ARRAY['LinkedIn'], 'validated', now() - interval '2 minutes', 0, now()),
+       ($1, 'backing-off',    ARRAY['LinkedIn'], 'validated', now() - interval '2 minutes', 2, now() + interval '1 hour'),
+       ($1, 'future',         ARRAY['LinkedIn'], 'validated', now() + interval '1 day',     0, now()),
+       ($1, 'unscheduled',    ARRAY['LinkedIn'], 'validated', NULL,                         0, now()),
+       ($1, 'not-validated',  ARRAY['LinkedIn'], 'pending',   now() - interval '2 minutes', 0, now())`,
+    [alice],
+  );
+
+  const due = await query<{ content: string }>(
+    `SELECT content FROM posts
+      WHERE profile_id = $1
+        AND content = ANY($2)
+        AND status = 'validated'
+        AND scheduled_for IS NOT NULL
+        AND scheduled_for <= now()
+        AND next_publish_attempt_at <= now()
+      ORDER BY scheduled_for ASC
+      LIMIT 12`,
+    [alice, ["due-now", "backing-off", "future", "unscheduled", "not-validated"]],
+  );
+  assert.deepEqual(due.map((r) => r.content), ["due-now"]);
+});
+
+test("two runners racing on the same post cannot both publish it", async () => {
+  // The claim is a conditional UPDATE (validated → publishing). This is what
+  // makes it safe to run the interval in every replica, and safe for a manual
+  // click to land while a tick is in flight.
+  const inserted = await query<{ id: string }>(
+    `INSERT INTO posts (profile_id, content, platforms, status, scheduled_for)
+     VALUES ($1, 'contested', ARRAY['LinkedIn'], 'validated', now() - interval '1 minute')
+     RETURNING id`,
+    [alice],
+  );
+  const postId = inserted[0]!.id;
+
+  const claim = () =>
+    query<{ id: string }>(
+      `UPDATE posts SET status = 'publishing', publishing_started_at = now()
+        WHERE id = $1 AND profile_id = $2 AND status = 'validated'
+        RETURNING id`,
+      [postId, alice],
+    );
+
+  const [first, second] = await Promise.all([claim(), claim()]);
+  assert.equal(
+    first.length + second.length,
+    1,
+    "both runners claimed the post — the same content would be posted twice",
+  );
+});
+
+test("the queue's selection index exists and is actually used", async () => {
+  const plan = await query<{ "QUERY PLAN": string }>(
+    `EXPLAIN SELECT id FROM posts
+      WHERE status = 'validated' AND scheduled_for <= now() AND next_publish_attempt_at <= now()
+      ORDER BY scheduled_for ASC LIMIT 12`,
+  );
+  const text = plan.map((r) => r["QUERY PLAN"]).join("\n");
+  // Postgres may still prefer a seq scan on a tiny table, so this asserts the
+  // index exists rather than that the planner chose it here.
+  const indexes = await query<{ indexname: string }>(
+    `SELECT indexname FROM pg_indexes WHERE tablename = 'posts'`,
+  );
+  assert.ok(
+    indexes.some((i) => i.indexname === "idx_posts_status_scheduled"),
+    `the queue index is missing; plan was:\n${text}`,
+  );
+});

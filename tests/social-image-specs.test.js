@@ -1,22 +1,43 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 // Behavioural tests run against the real frontend module (Node strips the TS
-// types at import time). The edge function ships a byte-identical copy, so the
-// dimensions proven here also hold inside the Supabase function.
+// types at import time). The API server ships its own copy of the same module,
+// so the parity test below proves the dimensions hold on both sides.
 import { getSocialImageSpec, normalizePlatform } from '../src/lib/socialImageSpecs.ts';
+import {
+  getSocialImageSpec as serverGetSocialImageSpec,
+  normalizePlatform as serverNormalizePlatform,
+} from '../server/src/shared/socialImageSpecs.ts';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const frontendPath = join(__dirname, '..', 'src/lib/socialImageSpecs.ts');
-const edgePath = join(__dirname, '..', 'supabase/functions/_shared/socialImageSpecs.ts');
+// The two copies used to be compared byte for byte. That broke the moment one
+// side needed a comment or a non-null assertion the other did not, and it never
+// proved the thing that matters: that both return the same canvas. Comparing
+// behaviour over the whole input matrix does.
+const PARITY_INPUTS = [
+  [], ['LinkedIn'], ['Instagram'], ['Facebook'], ['Twitter'], ['Twitter (X)'],
+  ['TikTok'], ['YouTube Shorts'], ['Instagram Story'], ['Reels'],
+  ['LinkedIn', 'Instagram'], ['LinkedIn', 'Facebook', 'Twitter'],
+  ['LinkedIn', 'Instagram', 'TikTok'], ['Instagram', 'instagram', 'INSTAGRAM'],
+  ['totally-unknown'],
+];
 
-test('the frontend and edge copies of the spec module stay identical', () => {
-  const frontend = readFileSync(frontendPath, 'utf8');
-  const edge = readFileSync(edgePath, 'utf8');
-  assert.equal(frontend, edge, 'src/lib/socialImageSpecs.ts must equal the _shared copy');
+test('the dashboard and the API server agree on every canvas', () => {
+  for (const input of PARITY_INPUTS) {
+    assert.deepEqual(
+      serverGetSocialImageSpec(input),
+      getSocialImageSpec(input),
+      `spec drift for ${JSON.stringify(input)}: the poster would be rendered at one size and framed at another`,
+    );
+  }
+});
+
+test('the dashboard and the API server normalise platform names identically', () => {
+  for (const name of ['IG', 'insta', 'FB', 'X', 'twitter', 'YouTube Shorts',
+                      'Instagram Reels', 'Instagram Story', 'LinkedIn', 'Tik Tok',
+                      'something else']) {
+    assert.equal(serverNormalizePlatform(name), normalizePlatform(name), `alias drift for ${name}`);
+  }
 });
 
 test('single LinkedIn post gets a LinkedIn landscape format', () => {

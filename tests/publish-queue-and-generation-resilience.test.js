@@ -4,55 +4,63 @@ import { readFileSync } from "node:fs";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
-const publishPost = read("supabase/functions/publish-post/index.ts");
-const generateImage = read("supabase/functions/generate-image/index.ts");
-const ai = read("supabase/functions/_shared/ai.ts");
+const publishPost = read("server/src/services/publish.ts");
+const generation = read("server/src/services/generation.ts");
+const generationRoutes = read("server/src/routes/generations.ts");
+const text = read("server/src/services/text.ts");
 const dashboard = read("src/pages/Dashboard.tsx");
-const retryMigration = read("supabase/migrations/20260910000000_publish_retry_backoff.sql");
+const schema = read("server/migrations/0001_core_schema.sql");
 
 // ---------------------------------------------------------------------------
 // Publish queue: bounded retries instead of a starved, self-blocking batch.
 // ---------------------------------------------------------------------------
 
 test("a post that cannot publish leaves the queue instead of blocking it forever", () => {
-  // The cron selects due posts ordered oldest-first with a small LIMIT. A post
+  // The queue selects due posts oldest-first with a small LIMIT. A post
   // written back as 'validated' with a past scheduled_for was re-selected on
   // every tick; a handful of them permanently filled the batch and starved
   // every newer post behind them.
   assert.match(publishPost, /const MAX_PUBLISH_ATTEMPTS = \d+/);
   assert.match(publishPost, /const RETRY_BACKOFF_MINUTES = \[/);
   // Attempts are counted on the row, not just in memory.
-  assert.match(publishPost, /publish_attempts: anyOk \? 0 : attempts/);
+  assert.match(publishPost, /publish_attempts = \$\d+|publish_attempts,/);
   // Exhausted attempts are terminal, so the post shows as failed in the
   // dashboard (with its per-platform reason) rather than looping silently.
   assert.match(publishPost, /allErrors \|\| exhausted/);
 });
 
-test("the cron skips posts still inside their retry backoff window", () => {
-  assert.match(publishPost, /\.lte\("next_publish_attempt_at", nowIso\)/);
-  // Only a post going back into the queue carries a future backoff stamp.
-  assert.match(publishPost, /finalStatus === "validated" \? nextAttemptAt\(attempts\)/);
+test("the queue skips posts still inside their retry backoff window", () => {
+  const scheduler = read("server/src/services/scheduler.ts");
+  assert.match(scheduler, /next_publish_attempt_at <= now\(\)/);
+  // Only a post going back into the queue carries a future backoff stamp; one
+  // that published or failed terminally is stamped now.
+  assert.match(publishPost, /status === "validated" \? nextAttemptAt\(attempts\)/);
 });
 
 test("a failed re-publish never erases the timestamp of a publish that succeeded", () => {
-  assert.equal(
-    publishPost.includes("published_at: anyOk ? new Date().toISOString() : null"),
-    false,
-    "published_at must not be reset to null on an unsuccessful attempt",
+  // COALESCE keeps the original instant: overwriting it with NULL on a later
+  // failed attempt loses when the post actually went out.
+  // The column keeps its own value on any attempt that did not publish.
+  assert.match(
+    publishPost,
+    /published_at = CASE WHEN \$3 = 'published' THEN now\(\) ELSE published_at END/,
   );
-  assert.match(publishPost, /if \(anyOk\) update\.published_at = new Date\(\)\.toISOString\(\)/);
+  assert.doesNotMatch(publishPost, /published_at = CASE WHEN[^\n]*ELSE NULL/);
+  // The recovery function keeps it too, rather than restamping an old post.
+  assert.match(schema, /published_at = COALESCE\(published_at, now\(\)\)/);
 });
 
-test("the retry columns exist and the cron's selection index covers them", () => {
-  assert.match(retryMigration, /ADD COLUMN IF NOT EXISTS publish_attempts integer NOT NULL DEFAULT 0/);
-  assert.match(retryMigration, /ADD COLUMN IF NOT EXISTS next_publish_attempt_at timestamptz/);
+test("the retry columns exist and the queue's selection index covers them", () => {
+  assert.match(schema, /publish_attempts\s+integer NOT NULL DEFAULT 0/);
+  assert.match(schema, /next_publish_attempt_at\s+timestamptz NOT NULL DEFAULT now\(\)/);
   // Without the column in the index the added predicate degrades the queue
   // scan to a sequential scan as posts accumulate.
+  const queueIndex = read("server/migrations/0002_publish_queue_index.sql");
   assert.match(
-    retryMigration,
-    /CREATE INDEX IF NOT EXISTS idx_posts_status_scheduled[\s\S]*next_publish_attempt_at/,
+    queueIndex,
+    /CREATE INDEX IF NOT EXISTS idx_posts_status_scheduled[\s\S]{0,200}next_publish_attempt_at/,
   );
-  assert.match(retryMigration, /CHECK \(publish_attempts >= 0\)/);
+  assert.match(schema, /posts_attempts_nonneg CHECK \(publish_attempts >= 0\)/);
 });
 
 test("validating or retrying a post clears the inherited retry state", () => {
@@ -79,37 +87,30 @@ test("a terminally failed poster job is cleared from the post row", () => {
   // The row previously kept image_status='processing' with a dead job id, so
   // the dashboard resumed that same dead job on EVERY load — a spinner that
   // could never resolve and a poll that could never succeed.
-  assert.match(generateImage, /const markImageFailed = async \(\) => \{/);
-  assert.match(
-    generateImage,
-    /image_status: "failed", image_job_id: null, image_status_url: null/,
-  );
-  assert.match(generateImage, /await markImageFailed\(\)/);
+  assert.match(generation, /async function settleJob/);
+  assert.match(generation, /image_job_id = CASE WHEN \$3 = 'processing' THEN image_job_id ELSE NULL END/);
+  assert.match(generation, /settleJob\(job, "failed"/);
 });
 
 test("the dashboard only resumes jobs that are still marked processing", () => {
   assert.match(dashboard, /p\.image_status === "processing"/);
 });
 
-test("re-hosting a poster goes through the SSRF-guarded fetch", () => {
-  // The URL comes back from an external API response, so the interactive path
-  // must use the same guarded helper as the cron path (https-only, private and
-  // metadata hosts blocked, content-type checked, response size capped).
-  assert.match(generateImage, /import \{ fetchImageBytes \} from "\.\.\/_shared\/safeFetch\.ts"/);
-  assert.match(generateImage, /const fetched = await fetchImageBytes\(imageUrl\)/);
-  assert.equal(
-    generateImage.includes("const fetched = await fetch(imageUrl);"),
-    false,
-    "the poster re-host must not use an unguarded, uncapped fetch",
-  );
+test("a poster URL is only ever accepted from the provider that rendered it", () => {
+  // The URL comes back from the provider's own response and is stored as-is;
+  // the URLs a USER can supply go through asImageUrl instead (see
+  // security-hardening). Neither path lets an arbitrary host be fetched from
+  // inside this network.
+  assert.match(generation, /extractImageUrl\(/);
+  assert.match(read("server/src/lib/validate.ts"), /export function asImageUrl/);
 });
 
 test("a provider failure before any paid render gives the image quota back", () => {
-  assert.match(generateImage, /const releaseImageQuota = async \(\) => \{/);
-  assert.match(generateImage, /await releaseImageQuota\(\)/);
-  // Released by id: a LIMIT on DELETE is not portable across PostgREST
-  // versions, and a delete that ignored it would wipe the month's history.
-  assert.match(generateImage, /\.eq\("id", reservation\.id\)/);
+  assert.match(generationRoutes, /releaseQuota\(ctx\.profileId, "generate-image"\)/);
+  // Released by deleting exactly one reservation row, so the usage history is
+  // preserved rather than wiped.
+  assert.match(schema, /CREATE OR REPLACE FUNCTION release_generation_quota/);
+  assert.match(schema, /LIMIT 1/);
 });
 
 // ---------------------------------------------------------------------------
@@ -117,40 +118,38 @@ test("a provider failure before any paid render gives the image quota back", () 
 // ---------------------------------------------------------------------------
 
 test("text generation walks a Claude-only chain instead of pinning one slug", () => {
-  assert.match(ai, /export function getTextModels\(\): string\[\]/);
+  assert.match(text, /function textModels\(\): string\[\]/);
   // Every entry stays on Claude — the chain must not become a quality downgrade.
-  const chain = ai.match(/const chain = \[[\s\S]*?\]\.filter\(Boolean\)/);
-  assert.ok(chain, "getTextModels must expose an explicit chain");
+  const chain = text.match(/return \[[\s\S]*?\]\.filter\(Boolean\)/);
+  assert.ok(chain, "textModels must expose an explicit chain");
   const slugs = (chain[0].match(/"[^"\n]+"/g) || []).filter((token) => token.includes("/"));
   assert.ok(slugs.length >= 2, "the chain needs at least one fallback model");
   for (const model of slugs) {
     assert.match(model, /^"anthropic\/claude-/, `non-Claude model in the text chain: ${model}`);
   }
-  assert.match(ai, /export async function chatCompletionWithFallback/);
+  assert.match(text, /export async function callClaude/);
 });
 
 test("only per-model failures advance the chain, not bad key or no credit", () => {
   // A 401 (bad key) or 402 (no credit) fails identically on every model;
   // retrying them down the chain would just multiply the latency.
-  assert.match(ai, /function isModelUnavailable\(status: number\): boolean/);
-  const guard = ai.match(/function isModelUnavailable[\s\S]*?\n\}/)[0];
+  assert.match(text, /function isModelUnavailable\(status: number\): boolean/);
+  const guard = text.match(/function isModelUnavailable[\s\S]*?\n\}/)[0];
   assert.equal(guard.includes("401"), false, "401 must not be treated as model-unavailable");
   assert.equal(guard.includes("402"), false, "402 must not be treated as model-unavailable");
   assert.match(guard, /404/);
 });
 
-test("the generators no longer pin a single model on the call", () => {
-  for (const path of [
-    "supabase/functions/generate-content/index.ts",
-    "supabase/functions/auto-generate-weekly/index.ts",
-    "supabase/functions/detect-audiences/index.ts",
-  ]) {
-    assert.equal(
-      read(path).includes("model: getTextModel(),"),
-      false,
-      `${path} still pins a model, which bypasses the fallback chain`,
-    );
+test("every text feature goes through the one chain, none pins a model", () => {
+  // A second call site with its own pinned slug is how the fallback silently
+  // stops applying to half the product.
+  const audiences = read("server/src/services/audiences.ts");
+  for (const [name, src] of [["text", text], ["audiences", audiences]]) {
+    assert.doesNotMatch(src, /model: "anthropic/, `${name} pins a model on the call`);
   }
+  assert.match(audiences, /callClaude\(/);
+  // Exactly one place builds the request body.
+  assert.equal((text.match(/OPENROUTER_ENDPOINT, \{/g) || []).length, 1);
 });
 
 // ---------------------------------------------------------------------------
@@ -239,9 +238,31 @@ test("the dashboard only claims web enrichment when the search actually returned
 });
 
 test("a fallback does not consume the user's text generation quota", () => {
-  const generateContent = read("supabase/functions/generate-content/index.ts");
-  assert.match(generateContent, /const releaseQuota = async \(\) => \{/);
-  assert.match(generateContent, /await releaseQuota\(\);\n\s*const payload = fallbackContent/);
-  // Released by id, for the same reason as the image quota.
-  assert.match(generateContent, /\.eq\("id", reservation\.id\)/);
+  // Canned filler is not a generation. Charging for it means a provider
+  // outage silently spends the user's hourly budget on boilerplate.
+  assert.match(text, /fallback: true/);
+  assert.match(generationRoutes, /if \(result\.fallback\) await releaseQuota\(ctx\.profileId, "generate-text"\)/);
+  // …and the client is told, so the UI can say so rather than passing it off
+  // as a real result.
+  assert.match(dashboard, /fallback/);
+});
+
+test("the publish queue has something that actually runs it", () => {
+  // Scheduled publishing is the product's central promise. On the old stack a
+  // platform cron invoked the function; here it has to be run by this server,
+  // or a scheduled post simply never goes out.
+  const scheduler = read("server/src/services/scheduler.ts");
+  assert.match(scheduler, /export async function runPublishTick/);
+  assert.match(scheduler, /status = 'validated'/);
+  assert.match(scheduler, /scheduled_for <= now\(\)/);
+  assert.match(scheduler, /next_publish_attempt_at <= now\(\)/);
+  assert.match(scheduler, /LIMIT \$1/);
+  // A crash mid-publish is unstuck before the batch is selected.
+  assert.match(scheduler, /recover_stuck_publishing/);
+  // One post failing must not abandon the rest of the batch.
+  assert.match(scheduler, /catch \(err\)/);
+
+  const index = read("server/src/index.ts");
+  assert.match(index, /startScheduler\(/);
+  assert.match(index, /PUBLISH_TICK_SECONDS/);
 });

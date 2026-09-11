@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { ensurePostEngagement } from '../supabase/functions/_shared/post-engagement.ts';
+import { ensurePostEngagement } from '../server/src/shared/postEngagement.ts';
 
 const hashtags = (text) => text.match(/#[\p{L}\p{N}_]+/gu) || [];
 
@@ -47,13 +47,13 @@ test('existing engagement wording and hashtags are preserved without duplication
   assert.ok(result.endsWith('#Innovation #Tendances #Afrique'));
 });
 
-test('automatic and manual generation both pass final content through the engagement guard', async () => {
+test('generated content passes through the engagement guard before it is stored', async () => {
   const { readFile } = await import('node:fs/promises');
-  const manual = await readFile(new URL('../supabase/functions/generate-content/index.ts', import.meta.url), 'utf8');
-  const weekly = await readFile(new URL('../supabase/functions/auto-generate-weekly/index.ts', import.meta.url), 'utf8');
+  const source = await readFile(new URL('../server/src/services/text.ts', import.meta.url), 'utf8');
 
-  assert.match(manual, /ensurePostEngagement\(/);
-  assert.match(weekly, /ensurePostEngagement\(/);
-  assert.match(manual, /3-5 hashtags/i);
-  assert.match(weekly, /3-5 hashtags/i);
+  // The guard is what puts the comment invitation and the hashtag line on a
+  // post. A generation path that skipped it would ship a post the product
+  // promises never to ship.
+  assert.match(source, /ensurePostEngagement\(/);
+  assert.match(source, /3-5 hashtags/i);
 });
