@@ -6,9 +6,10 @@ import { mailEnabled, sendMail } from "../lib/mail.js";
 import { deleteProfileMedia } from "../lib/media.js";
 import { hitRateLimit } from "../lib/rateLimit.js";
 import { verifyPassword } from "../lib/password.js";
-import { destroySession } from "../lib/session.js";
+import { destroySession, secretMatches } from "../lib/session.js";
 import { clientIp, requireAdmin, requireTenant } from "../lib/tenant.js";
 import { asEmail, asHeaderSafe, asObject, asString, asUuid } from "../lib/validate.js";
+import { runPublishTick } from "../services/scheduler.js";
 
 /** Social accounts, comment inbox, admin console, account lifecycle, contact. */
 export async function miscRoutes(app: FastifyInstance): Promise<void> {
@@ -295,6 +296,25 @@ export async function miscRoutes(app: FastifyInstance): Promise<void> {
     });
 
     return { ok: true };
+  });
+
+  /**
+   * Drives the publish queue from outside the process.
+   *
+   * Authorised by a shared secret compared in constant time — never by a
+   * session, because there is no user here. Provided for a host that prefers
+   * its own scheduler; the in-process runner covers the default deployment.
+   */
+  app.post("/cron/publish", async (request, reply) => {
+    if (!env.cronSecret) {
+      throw notConfigured("Le déclenchement externe n'est pas configuré (CRON_SECRET).");
+    }
+    const provided = request.headers["x-cron-secret"];
+    if (!secretMatches(typeof provided === "string" ? provided : undefined, env.cronSecret)) {
+      // Deliberately a 404: an endpoint that answers 401 confirms it exists.
+      return reply.code(404).send({ error: "Ressource introuvable.", code: "not_found" });
+    }
+    return runPublishTick();
   });
 
   app.get("/health", async () => ({ ok: true }));

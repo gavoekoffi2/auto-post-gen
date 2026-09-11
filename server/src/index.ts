@@ -11,6 +11,7 @@ import { postRoutes } from "./routes/posts.js";
 import { mediaRoutes } from "./routes/media.js";
 import { generationRoutes } from "./routes/generations.js";
 import { miscRoutes } from "./routes/misc.js";
+import { startScheduler, stopScheduler } from "./services/scheduler.js";
 
 const app = Fastify({
   logger: { level: env.isProduction ? "info" : "debug" },
@@ -80,6 +81,7 @@ await app.register(
 const shutdown = async (signal: string) => {
   app.log.info(`${signal} received, shutting down`);
   try {
+    stopScheduler();
     await app.close();
     await pool.end();
   } finally {
@@ -94,6 +96,20 @@ process.on("SIGINT", () => void shutdown("SIGINT"));
 // no-op and an operator can see what is missing from the logs alone.
 for (const missing of missingCapabilities()) {
   app.log.warn(`capability unavailable: ${missing}`);
+}
+
+// Scheduled publishing needs something to run it. An interval in this
+// process is enough for a single-container deployment, and safe with more
+// than one: each post is claimed with a conditional UPDATE, so runners racing
+// on the same post cannot both publish it. Set PUBLISH_TICK_SECONDS=0 to turn
+// it off and drive the queue from the host's own scheduler instead, via
+// POST /api/cron/publish with CRON_SECRET.
+const tickSeconds = Number(process.env.PUBLISH_TICK_SECONDS ?? 60);
+if (Number.isFinite(tickSeconds) && tickSeconds > 0) {
+  startScheduler(tickSeconds * 1000, (message) => app.log.info(message));
+  app.log.info(`publish queue runner started (every ${tickSeconds}s)`);
+} else {
+  app.log.warn("publish queue runner disabled (PUBLISH_TICK_SECONDS=0)");
 }
 
 await app.listen({ port: env.port, host: env.host });
