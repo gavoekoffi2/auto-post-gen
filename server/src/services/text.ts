@@ -44,6 +44,58 @@ function isModelUnavailable(status: number): boolean {
   return status === 400 || status === 403 || status === 404 || status === 502 || status === 503;
 }
 
+/**
+ * One editorial call to OpenRouter, walking the Claude chain.
+ *
+ * Shared by every text feature (post generation, audience analysis) so they
+ * cannot drift into different vendors or different retry behaviour. Throws
+ * when no model in the chain produced text — the caller decides what a failed
+ * generation means for its own feature.
+ */
+export async function callClaude(input: {
+  messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
+  temperature?: number;
+  topP?: number;
+  timeoutMs?: number;
+}): Promise<string> {
+  let lastError = "no model attempted";
+  for (const model of textModels()) {
+    try {
+      const response = await fetch(OPENROUTER_ENDPOINT, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${env.openRouterKey}`,
+          "Content-Type": "application/json",
+          ...(env.appPublicUrl ? { "HTTP-Referer": env.appPublicUrl } : {}),
+          "X-Title": env.appName,
+        },
+        body: JSON.stringify({
+          model,
+          messages: input.messages,
+          temperature: input.temperature ?? 0.65,
+          top_p: input.topP ?? 0.9,
+        }),
+        signal: AbortSignal.timeout(input.timeoutMs ?? 90_000),
+      });
+
+      if (!response.ok) {
+        lastError = `${model} → ${response.status}`;
+        if (isModelUnavailable(response.status)) continue;
+        break;
+      }
+      const data = (await response.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+      const text = data.choices?.[0]?.message?.content?.trim() ?? "";
+      if (text) return text;
+      lastError = `${model} returned empty content`;
+    } catch (err) {
+      lastError = `${model} threw: ${(err as Error).message}`;
+    }
+  }
+  throw new Error(lastError);
+}
+
 const ANGLES = [
   { name: "astuce_pratique", brief: "Astuce concrète et applicable immédiatement" },
   { name: "erreur_courante", brief: "Erreur courante à éviter dans le secteur" },
@@ -163,47 +215,22 @@ Réponds UNIQUEMENT avec le texte du post.`;
 
   let generated = "";
   let lastError = "";
-  for (const model of textModels()) {
-    try {
-      const response = await fetch(OPENROUTER_ENDPOINT, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${env.openRouterKey}`,
-          "Content-Type": "application/json",
-          ...(env.appPublicUrl ? { "HTTP-Referer": env.appPublicUrl } : {}),
-          "X-Title": env.appName,
+  try {
+    generated = await callClaude({
+      messages: [
+        { role: "system", content: systemPrompt },
+        {
+          role: "user",
+          content:
+            input.prompt ||
+            `Génère un post pertinent avec l'angle "${angle.name}" pour mon audience.`,
         },
-        body: JSON.stringify({
-          model,
-          messages: [
-            { role: "system", content: systemPrompt },
-            {
-              role: "user",
-              content:
-                input.prompt ||
-                `Génère un post pertinent avec l'angle "${angle.name}" pour mon audience.`,
-            },
-          ],
-          temperature: 0.65,
-          top_p: 0.9,
-        }),
-        signal: AbortSignal.timeout(90_000),
-      });
-
-      if (!response.ok) {
-        lastError = `${model} → ${response.status}`;
-        if (isModelUnavailable(response.status)) continue;
-        break;
-      }
-      const data = (await response.json()) as {
-        choices?: Array<{ message?: { content?: string } }>;
-      };
-      generated = data.choices?.[0]?.message?.content?.trim() ?? "";
-      if (generated) break;
-      lastError = `${model} returned empty content`;
-    } catch (err) {
-      lastError = `${model} threw: ${(err as Error).message}`;
-    }
+      ],
+      temperature: 0.65,
+      topP: 0.9,
+    });
+  } catch (err) {
+    lastError = (err as Error).message;
   }
 
   const limit = { platform: textLimit.platform, label: textLimit.label, maxChars: textLimit.maxChars };

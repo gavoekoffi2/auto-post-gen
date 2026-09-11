@@ -1,9 +1,13 @@
 import type { FastifyInstance } from "fastify";
 import { query, queryOne } from "../lib/db.js";
-import { badRequest, notFound } from "../lib/errors.js";
 import { requireTenant } from "../lib/tenant.js";
+import { badRequest, notConfigured, notFound, rateLimited } from "../lib/errors.js";
+import { env } from "../lib/env.js";
+import { consumeQuota, releaseQuota } from "../services/quota.js";
+import { AudienceProfileIncomplete, detectAudiences } from "../services/audiences.js";
 import {
   asBoolean,
+  asImageUrl,
   asInteger,
   asObject,
   asString,
@@ -56,13 +60,17 @@ const WRITABLE = {
   image_people_type: (v: unknown) => asString(v, "image_people_type", { max: 40, optional: true }),
   image_style: (v: unknown) => asString(v, "image_style", { max: 80, optional: true }) || null,
   use_custom_images: (v: unknown) => asBoolean(v, "use_custom_images", false),
+  // Every one of these is handed to the poster renderer, which fetches it
+  // from its own network — so each is validated, not just length-capped.
   custom_image_urls: (v: unknown) =>
-    asStringArray(v, "custom_image_urls", { maxItems: 60, maxLength: 500 }),
+    asStringArray(v, "custom_image_urls", { maxItems: 60, maxLength: 500 })
+      .map((url) => asImageUrl(url, "custom_image_urls[]"))
+      .filter((url): url is string => Boolean(url)),
   brand_primary_color: (v: unknown) => asHexColor(v, "brand_primary_color"),
   brand_secondary_color: (v: unknown) => asHexColor(v, "brand_secondary_color"),
   brand_accent_color: (v: unknown) => asHexColor(v, "brand_accent_color"),
   brand_font: (v: unknown) => asString(v, "brand_font", { max: 80, optional: true }) || null,
-  logo_url: (v: unknown) => asString(v, "logo_url", { max: 500, optional: true }) || null,
+  logo_url: (v: unknown) => asImageUrl(v, "logo_url"),
   poster_footer_text: (v: unknown) =>
     asString(v, "poster_footer_text", { max: 120, optional: true }) || null,
   audience_suggestions: (v: unknown) => JSON.stringify(normalizeAudiences(v)),
@@ -105,6 +113,8 @@ export async function loadProfile(profileId: string) {
   if (!row) throw notFound("Profil introuvable.");
   return row;
 }
+
+const AUDIENCE_HOURLY_MAX = 10;
 
 export async function profileRoutes(app: FastifyInstance): Promise<void> {
   app.get("/profile", async (request, reply) => {
@@ -159,5 +169,52 @@ export async function profileRoutes(app: FastifyInstance): Promise<void> {
       [ctx.profileId, granted ? new Date().toISOString() : null],
     );
     return loadProfile(ctx.profileId);
+  });
+
+  /**
+   * Proposes audience segments for THIS account.
+   *
+   * The body is ignored on purpose: the analysis is built from the caller's own
+   * profile row, resolved from the session. Accepting a company description
+   * from the browser would let any account pay for — and read — an analysis of
+   * a business it does not own.
+   */
+  app.post("/profile/audiences/detect", async (request, reply) => {
+    const ctx = await requireTenant(request, reply);
+
+    if (!env.openRouterKey) {
+      throw notConfigured(
+        "L'analyse des cibles n'est pas configurée sur ce serveur (OPENROUTER_API_KEY).",
+      );
+    }
+
+    const reserved = await consumeQuota(ctx.profileId, "detect-audiences", AUDIENCE_HOURLY_MAX, 3600);
+    if (!reserved) {
+      throw rateLimited("Limite d'analyses atteinte. Réessayez dans une heure.");
+    }
+
+    try {
+      const audiences = await detectAudiences(ctx.profileId);
+      // Only a suggestion is stored. target_audiences stays untouched: a
+      // proposal becomes a target when a human selects it, never because the
+      // analysis ran.
+      await query(`UPDATE profiles SET audience_suggestions = $2::jsonb WHERE id = $1`, [
+        ctx.profileId,
+        JSON.stringify(audiences),
+      ]);
+      return { audiences };
+    } catch (err) {
+      // An analysis that produced nothing is not an analysis. Give the
+      // reservation back, or a user hitting a provider outage burns their
+      // hourly allowance without ever seeing a single target — during
+      // onboarding, where there is nothing else to do.
+      await releaseQuota(ctx.profileId, "detect-audiences");
+      if (err instanceof AudienceProfileIncomplete) throw badRequest(err.message);
+      request.log.error({ err }, "audience detection failed");
+      throw notConfigured(
+        "L'analyse des cibles n'a pas abouti. Réessayez dans quelques instants, " +
+          "ou décrivez votre cible à la main.",
+      );
+    }
   });
 }
