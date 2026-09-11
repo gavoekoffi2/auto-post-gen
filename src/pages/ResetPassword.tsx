@@ -1,11 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { Sparkles, Lock, CheckCircle } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+import { auth } from "@/lib/api";
 import { toast } from "sonner";
 
 export default function ResetPassword() {
@@ -14,40 +14,12 @@ export default function ResetPassword() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [success, setSuccess] = useState(false);
-  const [isRecovery, setIsRecovery] = useState(false);
-
-  useEffect(() => {
-    let active = true;
-
-    // supabase-js (detectSessionInUrl + PKCE) automatically exchanges the
-    // recovery link — either the legacy implicit hash (#type=recovery) or
-    // the modern PKCE query (?code=...) — into a session on load. That can
-    // happen before this component mounts, so the PASSWORD_RECOVERY event
-    // is easy to miss. We therefore also treat an existing session on this
-    // page as recovery-eligible: a normal visitor never lands here logged in.
-    const detectRecovery = async () => {
-      const hashType = new URLSearchParams(window.location.hash.substring(1)).get("type");
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!active) return;
-      if (session || hashType === "recovery") {
-        setIsRecovery(true);
-      }
-    };
-    detectRecovery();
-
-    // Listen for the recovery / sign-in events too (covers the race where
-    // the URL is processed just after mount).
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === "PASSWORD_RECOVERY" || event === "SIGNED_IN") {
-        setIsRecovery(true);
-      }
-    });
-
-    return () => {
-      active = false;
-      subscription.unsubscribe();
-    };
-  }, []);
+  // The reset token arrives as ?token=... in the emailed link. It is a
+  // one-time, server-issued value: this page only carries it back, and the API
+  // decides whether it is still valid — there is no client-side session to
+  // detect any more.
+  const token = new URLSearchParams(window.location.search).get("token") ?? "";
+  const isRecovery = token.length > 0;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -64,9 +36,7 @@ export default function ResetPassword() {
 
     setLoading(true);
     try {
-      const { error } = await supabase.auth.updateUser({ password });
-
-      if (error) throw error;
+      await auth.resetPassword(token, password);
 
       setSuccess(true);
       toast.success("Mot de passe mis à jour avec succès !");

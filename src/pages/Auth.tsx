@@ -4,47 +4,31 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CheckCircle2, MailCheck, Sparkles } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import { Link } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { profile as profileApi } from "@/lib/api";
+import { useSession } from "@/lib/session";
 
 export default function Auth() {
   const navigate = useNavigate();
+  const { signIn, signUp } = useSession();
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [confirmationEmail, setConfirmationEmail] = useState("");
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
     try {
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          emailRedirectTo: `${window.location.origin}/onboarding`,
-        },
-      });
-
-      if (error) throw error;
-
-      if (data.session) {
-        // Email confirmation is disabled: the user is signed in right away.
-        toast.success("Compte créé !");
-        navigate("/onboarding");
-      } else {
-        // Email confirmation is enabled: there is no session yet, so we
-        // must NOT navigate to a protected route (it would bounce back to
-        // /auth). Show a real confirmation screen instead of leaving the
-        // user on the same form with only a temporary toast.
-        setConfirmationEmail(email);
-        setPassword("");
-        toast.success("Compte créé ! Confirmez votre email pour continuer.");
-      }
+      // The API creates the account and sets the session cookie in the same
+      // response, so a new user lands straight in onboarding. There is no
+      // email-confirmation round trip to wait on.
+      await signUp(email, password);
+      toast.success("Compte créé !");
+      navigate("/onboarding");
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Erreur lors de l'inscription";
       toast.error(message);
@@ -58,31 +42,30 @@ export default function Auth() {
     setLoading(true);
 
     try {
-      const { data: authData, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+      const user = await signIn(email, password);
 
-      if (error) throw error;
+      // Send an admin to the control plane, everyone else to their dashboard —
+      // and to onboarding first if their profile is not set up yet. The role
+      // comes from the server's session, not from a hard-coded email as before.
+      if (user.role === "admin" || user.role === "super_admin") {
+        toast.success("Connexion réussie !");
+        navigate("/admin");
+        return;
+      }
 
-      // Check if user has completed onboarding
-      if (authData.user) {
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('sector, description')
-          .eq('id', authData.user.id)
-          .maybeSingle();
-
-        // If profile doesn't exist or is incomplete, redirect to onboarding
-        if (!profile || !profile.sector) {
+      try {
+        const profile = await profileApi.get();
+        if (!profile.sector) {
           toast.success("Connexion réussie ! Veuillez compléter votre profil.");
           navigate("/onboarding");
           return;
         }
+      } catch {
+        // Profile unreadable for now: the dashboard's own guard will sort it.
       }
 
       toast.success("Connexion réussie !");
-      navigate(authData.user?.email?.toLowerCase() === "c1domefa@gmail.com" ? "/admin" : "/dashboard");
+      navigate("/dashboard");
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Erreur lors de la connexion";
       toast.error(message);
@@ -104,40 +87,6 @@ export default function Auth() {
           <span className="font-bold text-2xl">Pro Social AI</span>
         </Link>
 
-        {confirmationEmail ? (
-          <Card className="glass-card p-8 text-center">
-            <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-r from-primary to-secondary">
-              <MailCheck className="h-9 w-9 text-white" />
-            </div>
-            <h1 className="text-2xl font-bold mb-3">Confirmez votre email</h1>
-            <p className="text-muted-foreground mb-4">
-              Votre compte a bien été créé. Nous avons envoyé un lien de confirmation à :
-            </p>
-            <p className="rounded-lg border border-border/60 bg-muted/40 px-4 py-3 font-medium break-all mb-5">
-              {confirmationEmail}
-            </p>
-            <div className="space-y-3 text-left text-sm text-muted-foreground mb-6">
-              <p className="flex gap-2">
-                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                Ouvrez votre boîte mail et cliquez sur le lien de confirmation.
-              </p>
-              <p className="flex gap-2">
-                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                Après confirmation, revenez ici et connectez-vous.
-              </p>
-              <p className="flex gap-2">
-                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                Pensez aussi à vérifier vos spams ou promotions.
-              </p>
-            </div>
-            <Button
-              className="w-full bg-gradient-to-r from-primary to-secondary hover:opacity-90"
-              onClick={() => setConfirmationEmail("")}
-            >
-              J’ai confirmé mon email — me connecter
-            </Button>
-          </Card>
-        ) : (
         <Card className="glass-card p-8">
           <Tabs defaultValue="signin" className="w-full">
             <TabsList className="grid w-full grid-cols-2 mb-8">
@@ -233,7 +182,6 @@ export default function Auth() {
             </Link>
           </div>
         </Card>
-        )}
 
         <p className="text-center mt-8 text-sm text-muted-foreground">
           <Link to="/" className="hover:text-primary transition-colors">

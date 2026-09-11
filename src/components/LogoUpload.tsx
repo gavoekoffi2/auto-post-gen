@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Upload, X, Loader2 } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { media } from "@/lib/api";
 import { toast } from "sonner";
 
 interface LogoUploadProps {
@@ -31,27 +31,15 @@ export const LogoUpload = ({ currentLogoUrl, onUpload, onRemove }: LogoUploadPro
 
     setUploading(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error("Non authentifié");
-
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${session.user.id}/logo-${Date.now()}.${fileExt}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from('user-assets')
-        .upload(fileName, file, { upsert: true });
-
-      if (uploadError) throw uploadError;
-
-      const { data: { publicUrl } } = supabase.storage
-        .from('user-assets')
-        .getPublicUrl(fileName);
-
-      onUpload(publicUrl);
+      // The API owns the storage path and re-validates type and size itself.
+      // The browser never names the destination, so it cannot write outside
+      // its own account's media.
+      const asset = await media.upload(file, "logo");
+      onUpload(asset.url);
       toast.success("Logo téléchargé avec succès");
     } catch (error) {
-      console.error('Upload error:', error);
-      toast.error("Erreur lors du téléchargement");
+      const message = error instanceof Error ? error.message : "Erreur lors du téléchargement";
+      toast.error(message);
     } finally {
       setUploading(false);
     }

@@ -5,7 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { Sparkles, ArrowLeft, Mail } from "lucide-react";
 import { Link } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+import { auth } from "@/lib/api";
 import { toast } from "sonner";
 
 export default function ForgotPassword() {
@@ -18,14 +18,12 @@ export default function ForgotPassword() {
     setLoading(true);
 
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/reset-password`,
-      });
-
-      if (error) throw error;
+      // The API answers the same way whether or not the address has an
+      // account, so this form cannot be used to discover who is registered.
+      await auth.requestPasswordReset(email);
 
       setSent(true);
-      toast.success("Email de réinitialisation envoyé !");
+      toast.success("Si un compte existe pour cet email, un lien vient d'être envoyé.");
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Erreur lors de l'envoi";
       toast.error(message);

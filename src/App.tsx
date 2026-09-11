@@ -5,6 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
+import { SessionProvider } from "@/lib/session";
 import { ProtectedAdminRoute } from "@/components/ProtectedAdminRoute";
 import Index from "./pages/Index";
 
@@ -40,6 +41,9 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
+        {/* The session is an HttpOnly cookie, so "who am I" is asked of the
+            server once here and shared, instead of on every guarded route. */}
+        <SessionProvider>
         <Suspense fallback={<PageLoader />}>
           <Routes>
             {/* Public routes */}
@@ -117,6 +121,7 @@ const App = () => (
             <Route path="*" element={<NotFound />} />
           </Routes>
         </Suspense>
+        </SessionProvider>
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>

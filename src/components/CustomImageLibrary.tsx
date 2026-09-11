@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Upload, X, ImagePlus, Trash2 } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { media } from "@/lib/api";
 import { toast } from "sonner";
 
 interface CustomImageLibraryProps {
@@ -31,34 +31,22 @@ export function CustomImageLibrary({
     const newUrls: string[] = [];
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error("Non authentifié");
-
       for (const file of Array.from(files)) {
+        // Checked here for an immediate message; the API re-checks both, since
+        // a browser-side check is a convenience and never a guarantee.
         if (!file.type.startsWith("image/")) {
           toast.error(`${file.name} n'est pas une image`);
           continue;
         }
-
         if (file.size > 5 * 1024 * 1024) {
-          toast.error(`${file.name} dépasse 5MB`);
+          toast.error(`${file.name} dépasse 5 Mo`);
           continue;
         }
 
-        const fileExt = file.name.split(".").pop();
-        const fileName = `${session.user.id}/${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
-
-        const { error: uploadError } = await supabase.storage
-          .from("user-assets")
-          .upload(fileName, file);
-
-        if (uploadError) throw uploadError;
-
-        const { data: { publicUrl } } = supabase.storage
-          .from("user-assets")
-          .getPublicUrl(fileName);
-
-        newUrls.push(publicUrl);
+        // The API decides the storage path from the session, so the browser
+        // cannot write into another account's media.
+        const asset = await media.upload(file, "custom_image");
+        newUrls.push(asset.url);
       }
 
       if (newUrls.length > 0) {
@@ -75,17 +63,19 @@ export function CustomImageLibrary({
 
   const handleRemove = async (urlToRemove: string) => {
     try {
-      // Extract file path from URL
-      const urlParts = urlToRemove.split("/user-assets/");
-      if (urlParts.length > 1) {
-        const filePath = urlParts[1];
-        await supabase.storage.from("user-assets").remove([filePath]);
-      }
-      
+      // Media is addressed by id, not by path: resolve this URL to the asset
+      // that belongs to THIS account. An id the browser could guess would let
+      // it ask the API to delete someone else's file, so the lookup is scoped
+      // to the session's own media by construction.
+      const { media: owned } = await media.list("custom_image");
+      const asset = owned.find((item) => item.url === urlToRemove);
+      if (asset) await media.remove(asset.id);
+
       onImagesChange(images.filter((url) => url !== urlToRemove));
       toast.success("Image supprimée");
-    } catch (_error) {
-      toast.error("Erreur lors de la suppression");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Erreur lors de la suppression";
+      toast.error(message);
     }
   };
 

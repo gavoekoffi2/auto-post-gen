@@ -1,32 +1,51 @@
 import { useEffect, useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+import { admin } from "@/lib/api";
+import { useSession } from "@/lib/session";
 
+/**
+ * Gate for the admin control plane.
+ *
+ * The role is asked of the SERVER (`GET /api/admin/me`) rather than read from
+ * anything the browser holds: the session cookie is opaque to the client, and
+ * the admin routes re-authorise every request anyway. Rendering the page
+ * without the role grants nothing — this only avoids showing a shell that
+ * would fail on every call.
+ */
 export function ProtectedAdminRoute({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<"loading" | "allowed" | "denied" | "signed-out">("loading");
+  const { user, loading } = useSession();
+  const [state, setState] = useState<"loading" | "allowed" | "denied">("loading");
   const location = useLocation();
 
   useEffect(() => {
     let active = true;
+    if (loading) return;
+    if (!user) {
+      setState("denied");
+      return;
+    }
     (async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!active) return;
-      if (!session) {
-        setState("signed-out");
-        return;
+      try {
+        const { user: me } = await admin.me();
+        if (!active) return;
+        setState(me.role === "admin" || me.role === "super_admin" ? "allowed" : "denied");
+      } catch {
+        if (active) setState("denied");
       }
-      const { data, error } = await supabase.functions.invoke("admin-api", { body: { action: "me" } });
-      if (!active) return;
-      const role = data?.user?.role;
-      setState(!error && (role === "admin" || role === "super_admin") ? "allowed" : "denied");
     })();
-    return () => { active = false; };
-  }, []);
+    return () => {
+      active = false;
+    };
+  }, [loading, user]);
 
-  if (state === "loading") {
-    return <div className="min-h-screen grid place-items-center text-muted-foreground animate-pulse">Ouverture du centre de contrôle…</div>;
+  if (loading || state === "loading") {
+    return (
+      <div className="min-h-screen grid place-items-center text-muted-foreground animate-pulse">
+        Ouverture du centre de contrôle…
+      </div>
+    );
   }
-  if (state === "signed-out") return <Navigate to="/auth" state={{ from: location }} replace />;
+  if (!user) return <Navigate to="/auth" state={{ from: location }} replace />;
   if (state === "denied") return <Navigate to="/dashboard" replace />;
   return <>{children}</>;
 }
