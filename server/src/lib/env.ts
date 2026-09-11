@@ -65,8 +65,9 @@ export const env = {
   resendFrom: optional("RESEND_FROM"),
   contactTo: optional("CONTACT_TO"),
   cronSecret: optional("CRON_SECRET"),
-  tavilyKey: optional("TAVILY_API_KEY"),
-  braveKey: optional("BRAVE_SEARCH_API_KEY"),
+  // TAVILY_API_KEY / BRAVE_SEARCH_API_KEY are deliberately absent: web
+  // research is not implemented on this stack (see the handoff). Declaring
+  // them would advertise a capability nothing reads.
 } as const;
 
 /**
@@ -82,6 +83,12 @@ export function missingCapabilities(): string[] {
   if (!env.zernioKey) missing.push("ZERNIO_API_KEY — social publishing is unavailable");
   if (!env.resendKey || !env.resendFrom) {
     missing.push("RESEND_API_KEY / RESEND_FROM — outbound email is unavailable");
+  }
+  // Not a secret, but the same class of problem: without it a post whose
+  // poster is stored locally cannot be published, because there is no
+  // absolute URL to hand the provider.
+  if (!env.appPublicUrl) {
+    missing.push("APP_PUBLIC_URL — email links and locally stored post images are unavailable");
   }
   return missing;
 }
