@@ -127,7 +127,56 @@ EXCEPTION WHEN check_violation THEN
   RAISE NOTICE 'ok  - posts.platforms rejects a network the product cannot publish to';
 END $$;
 
--- 6. Row level security ------------------------------------------------------
+-- 6. Storage isolation -------------------------------------------------------
+-- Logos and custom images live in user-assets/<user id>/. The bucket is
+-- public-read by design, but a user must never be able to write into another
+-- user's folder — neither by uploading there nor by renaming one of their own
+-- objects into it. (The UPDATE policy declares only USING; Postgres reuses it
+-- as the WITH CHECK, which is what makes the rename safe. Locked here so an
+-- explicit, permissive WITH CHECK cannot be added later without failing.)
+INSERT INTO storage.objects (bucket_id, name, owner) VALUES
+  ('user-assets', '11111111-1111-1111-1111-111111111111/logo.png', '11111111-1111-1111-1111-111111111111'),
+  ('user-assets', '22222222-2222-2222-2222-222222222222/logo.png', '22222222-2222-2222-2222-222222222222');
+GRANT USAGE ON SCHEMA storage TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON storage.objects TO authenticated;
+
+SET ROLE authenticated;
+SET request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+SET request.jwt.claim.role = 'authenticated';
+
+DO $$
+BEGIN
+  INSERT INTO storage.objects (bucket_id, name, owner)
+  VALUES ('user-assets', '22222222-2222-2222-2222-222222222222/evil.png',
+          '11111111-1111-1111-1111-111111111111');
+  RAISE EXCEPTION 'FAILED - a user uploaded into another user''s storage folder';
+EXCEPTION WHEN insufficient_privilege THEN
+  RAISE NOTICE 'ok  - a user cannot upload into another user''s storage folder';
+END $$;
+
+DO $$
+BEGIN
+  UPDATE storage.objects
+     SET name = '22222222-2222-2222-2222-222222222222/stolen.png'
+   WHERE name = '11111111-1111-1111-1111-111111111111/logo.png';
+  RAISE EXCEPTION 'FAILED - a user renamed an object into another user''s folder';
+EXCEPTION WHEN insufficient_privilege THEN
+  RAISE NOTICE 'ok  - a user cannot rename an object into another user''s folder';
+END $$;
+
+DO $$
+BEGIN
+  DELETE FROM storage.objects
+   WHERE name = '22222222-2222-2222-2222-222222222222/logo.png';
+  IF FOUND THEN
+    RAISE EXCEPTION 'FAILED - a user deleted another user''s stored file';
+  END IF;
+  RAISE NOTICE 'ok  - a user cannot delete another user''s stored file';
+END $$;
+
+RESET ROLE;
+
+-- 7. Row level security ------------------------------------------------------
 GRANT USAGE ON SCHEMA public TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO authenticated;
 

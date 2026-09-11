@@ -209,6 +209,25 @@ ci-dessous était atteignable en usage normal.
 
 ---
 
+## 4 ter. Bugs traités lors de la seconde passe (11/09/2026)
+
+Relecture complète des chemins non couverts par la première passe.
+
+| Criticité | Bug | Cause | Correctif |
+|---|---|---|---|
+| **BLOQUANT** | Un nouvel utilisateur pouvait ne JAMAIS terminer son inscription | À l'étape 3 de l'onboarding, `handleNext` faisait `return` quand `detect-audiences` échouait. Le bouton « Ajouter une cible personnalisée » se trouve à l'étape **4** : pendant une panne du fournisseur IA, l'utilisateur était donc bloqué définitivement, sans aucune issue. | L'analyse est une commodité, jamais un verrou : on passe à l'étape 4 dans tous les cas, avec un message expliquant comment saisir la cible à la main. **Vérifié dans un vrai navigateur** en simulant la panne (`detect-audiences` renvoie 502). |
+| **SÉCURITÉ (multi-locataire)** | Un utilisateur pouvait publier sur les réseaux sociaux d'un AUTRE utilisateur | `zernio-connect` retombait sur le profil Zernio **par défaut de l'opérateur** quand la création d'un profil dédié échouait (limite du plan), « pour que la connexion fonctionne quand même ». Or `publish-post` publie vers les comptes rattachés au profil : deux utilisateurs dans le même profil = publications croisées. | Refus explicite avec le motif et la marche à suivre. Un profil partagé n'est jamais attribué. |
+| **SÉCURITÉ (multi-locataire)** | Les comptes et commentaires de tous les locataires pouvaient fuiter | `zernioListAccounts(null)` et `zernioListCommentedPosts(null)` omettaient `profileId`, ce qui fait renvoyer par l'API **tous** les comptes / toutes les publications commentées, tous profils confondus. `zernio-status` et `sync-comments` transmettaient un `profile_key` potentiellement NULL tel quel. | Les deux helpers refusent désormais un `profileId` absent ; les appelants ignorent une ligne sans clé de profil. |
+| **MAJEUR** | Un post ciblant X/Twitter ne pouvait pas être publié | Aucune limite de longueur n'était appliquée dans le chemin réel — le seul `slice(0, 280)` se trouvait dans le publieur Twitter direct, qui est du code mort. Les posts générés font 600-1100 caractères : tout post adressé à X dépassait plusieurs fois les 280 autorisés et ne pouvait être que refusé ou coupé en plein milieu par le fournisseur (perdant l'appel à l'action et les hashtags). | Nouveau module `platformTextLimits` (miroir front/edge, identité vérifiée par test). Le réseau le plus contraignant sélectionné impose la limite : les deux générateurs briefent le modèle en conséquence, `ensurePostEngagement` reçoit un plafond dur, le dashboard affiche un compteur en direct et alerte sur la carte, et `publish-post` échoue en nommant le réseau et le dépassement — tout en publiant vers les réseaux qui, eux, passent. |
+| **MAJEUR** | Le texte des posts était corrompu | `ensurePostEngagement` retirait **tous** les hashtags du corps : « suivez le hashtag #Marketing pour… » devenait « suivez le hashtag  pour… », et « le #1 des conseils » perdait son « #1 » (récupéré comme hashtag). | Seul un bloc de hashtags **final** est déplacé ; un hashtag dans la phrase y reste et est exclu de la ligne finale pour ne pas apparaître deux fois. |
+| **MAJEUR** | Le ciblage d'audience était silencieusement perdu | Le dashboard gardait une cible sans description, le serveur la supprimait. Un utilisateur pouvait sélectionner une cible, l'enregistrer, et voir tous ses posts rédigés « pour tout le monde » sans aucune explication. | Même règle des deux côtés ; l'éditeur refuse de cocher une cible que le serveur écarterait, et dit pourquoi. Une cible ajoutée à la main démarre **vide** au lieu d'être pré-remplie d'un texte de substitution envoyé au modèle comme un vrai brief. |
+| Moyen | Une analyse d'audience ratée consommait un essai | Le quota était réservé avant l'appel et jamais rendu — l'utilisateur brûlait ses 10 essais horaires pendant une panne, en plein onboarding. | Réservation relâchée en cas d'échec. |
+| Moyen | Injection d'en-tête possible via le formulaire de contact | `name` et `subject` étaient recopiés dans des champs d'en-tête d'e-mail sans filtrer les retours à la ligne. | CR/LF supprimés. |
+| Moyen | La suppression de compte ne supprimait pas tout | Le nettoyage du stockage s'arrêtait aux 1000 premiers objets ; un compte actif peut générer 200 affiches par mois. | Pagination bornée. Le profil Zernio, lui, survit (l'API n'expose aucun endpoint de suppression) : c'est désormais journalisé explicitement pour que l'opérateur le retire à la main — sinon il continue d'être facturé. |
+| Info | Isolation du stockage : **vérifiée, rien à corriger** | La politique UPDATE de `storage.objects` ne déclare qu'un `USING` sans `WITH CHECK`. Postgres réutilise alors le `USING` comme `WITH CHECK` : un utilisateur ne peut donc pas renommer son fichier vers le dossier d'un autre. Comportement prouvé sur un vrai Postgres et verrouillé par trois tests (`npm run test:schema`). |
+
+---
+
 ## 5. Fragilités connues & feuille de route proposée
 
 ### P0 — avant d'encaisser le moindre franc
