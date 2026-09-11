@@ -16,7 +16,7 @@ Document de reprise pour l'ingénieur qui déploiera cette branche sur le VPS.
 
 Branche : `claude/lucid-johnson-14zub1`
 
-Dernier commit de code : `e40c678e7107fc55b9e2f90fbcafc38cea3cbce3`
+Dernier commit de code : `dd00433` (`git rev-parse dd00433` pour le SHA complet)
 
 Ce document ne peut pas contenir le SHA de son propre commit. Le SHA ci-dessus
 est celui du dernier commit de **code** ; la pointe de la branche est le
@@ -431,6 +431,24 @@ cours, puisqu'elle sert aussi à dériver le hachage des jetons à usage unique.
 
 ## 10. Commandes exactes
 
+### Prérequis : Node >= 22.18
+
+Le dépôt le déclare (`engines`) et l'impose (`engine-strict=true` dans
+`.npmrc`), pour les deux paquets. Sur une version antérieure, `npm ci`
+s'arrête avec `EBADENGINE` et affiche la version attendue et la version
+installée.
+
+C'est volontaire : la suite de tests importe directement des modules `.ts` et
+s'appuie sur le retrait des types par Node, disponible à partir de 22.18. Sans
+ce garde-fou, l'installation réussissait et l'échec n'apparaissait qu'au
+premier test, sous la forme d'un `ERR_UNKNOWN_FILE_EXTENSION` qui ressemble à
+un dépôt cassé plutôt qu'à une mauvaise version de Node.
+
+```bash
+node --version         # doit afficher v22.18 ou plus
+nvm use                # .nvmrc est fourni à la racine et dans server/
+```
+
 ### Le dashboard
 
 ```bash
@@ -464,6 +482,10 @@ npm run build      OK
 server typecheck   0 erreur
 server test        19 tests, 19 réussis, 0 échec (PostgreSQL 16 local)
 git diff --check   propre
+
+npm ci             réussit sur Node 22.22 (dashboard et API), depuis un clone neuf
+npm ci             échoue en EBADENGINE quand la plage requise dépasse la version
+                   installée — le garde-fou a été vérifié dans les deux sens
 ```
 
 ---
