@@ -1,5 +1,13 @@
 # Tarification — analyse de coûts & marges (marché africain / FCFA)
 
+> **Coûts d'hébergement caducs.** Ce document chiffre l'ancienne architecture,
+> dont un abonnement Supabase Pro à $25/mois. La plateforme tourne désormais
+> sur un VPS unique : cette ligne de coût n'existe plus, et les totaux qui
+> l'incluent sont à recalculer. Les coûts par génération (modèles) restent
+> valables ; la répartition entre fournisseurs est décrite dans
+> [`VPS_DEPLOYMENT_HANDOFF.md`](../VPS_DEPLOYMENT_HANDOFF.md).
+
+
 > Devise de facturation : **FCFA (XOF)**. L'équivalent **USD** est affiché à titre
 > indicatif (taux ~575–600 FCFA/USD, juin 2026). Marché cible prioritaire :
 > Afrique de l'Ouest francophone (zone FCFA), paiement par **Mobile Money** en priorité.

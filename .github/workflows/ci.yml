@@ -44,6 +44,13 @@ jobs:
             echo "::error::the built bundle still references Supabase"
             exit 1
           fi
+          # The API too. This check used to cover only src/, which is how a
+          # hardcoded *.supabase.co poster endpoint survived the migration in
+          # server/src: the dashboard was clean, the backend was not.
+          if grep -rnE "https?://[^\"'\`[:space:]]*supabase\.(co|in)" server/src/ nginx.vps.conf; then
+            echo "::error::a Supabase host reappeared in the API or the nginx policy"
+            exit 1
+          fi
 
   # The API. Its tests need a real PostgreSQL: the guarantees they cover —
   # quota atomicity under a lock, the tenant predicate, the publish queue's

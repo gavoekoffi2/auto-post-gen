@@ -5,8 +5,10 @@ import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  // supabase/functions is Deno code, lint with Deno tooling instead.
-  { ignores: ["dist", "supabase/functions/**"] },
+  // Build output only. The Deno edge functions that used to be excluded here
+  // are gone with the move off Supabase; server/src is real source and IS
+  // linted, by this same config.
+  { ignores: ["dist", "server/dist"] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ["**/*.{ts,tsx}"],

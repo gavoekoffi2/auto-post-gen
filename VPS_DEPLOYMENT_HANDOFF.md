@@ -395,8 +395,9 @@ MEDIA_ROOT            défaut /app/media
 ```
 OPENROUTER_API_KEY
 OPENROUTER_TEXT_MODEL       ignorée si elle ne vaut pas anthropic/claude-*
-GRAPHISTE_GPT_API_KEY
-GRAPHISTE_GPT_API_URL
+GRAPHISTE_GPT_API_KEY       requiert aussi GRAPHISTE_GPT_API_URL
+GRAPHISTE_GPT_API_URL       aucun défaut : sans elle, les affiches sont
+                            désactivées (et non envoyées à un tiers)
 ZERNIO_API_KEY
 ZERNIO_API_URL
 RESEND_API_KEY

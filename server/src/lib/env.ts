@@ -79,7 +79,13 @@ export const env = {
 export function missingCapabilities(): string[] {
   const missing: string[] = [];
   if (!env.openRouterKey) missing.push("OPENROUTER_API_KEY — text generation is unavailable");
-  if (!env.graphisteKey) missing.push("GRAPHISTE_GPT_API_KEY — poster generation is unavailable");
+  if (!env.graphisteKey || !env.graphisteUrl) {
+    // Both halves, because a key without an endpoint used to mean "send the
+    // posters to a hardcoded third-party project" rather than "unavailable".
+    missing.push(
+      "GRAPHISTE_GPT_API_KEY / GRAPHISTE_GPT_API_URL — poster generation is unavailable",
+    );
+  }
   if (!env.zernioKey) missing.push("ZERNIO_API_KEY — social publishing is unavailable");
   if (!env.resendKey || !env.resendFrom) {
     missing.push("RESEND_API_KEY / RESEND_FROM — outbound email is unavailable");

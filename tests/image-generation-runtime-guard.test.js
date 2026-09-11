@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -100,4 +100,45 @@ test('the generation provider is never reachable from the browser', () => {
       `${forbidden} must never appear in frontend code`,
     );
   }
+});
+
+test('no provider endpoint silently points at a Supabase project', () => {
+  // The poster endpoint used to default to a hardcoded *.supabase.co address.
+  // An operator who set the API key but not the URL therefore shipped every
+  // poster — company name, sector, brand colours, and any consented photo of
+  // a real person — to a Supabase project this deployment does not own, while
+  // believing the platform had no cloud dependency left.
+  const serverDir = join(__dirname, '..', 'server/src');
+  const walk = (dir) =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
+      entry.isDirectory()
+        ? walk(join(dir, entry.name))
+        : entry.name.endsWith('.ts')
+          ? [join(dir, entry.name)]
+          : [],
+    );
+
+  for (const file of walk(serverDir)) {
+    const source = readFileSync(file, 'utf8');
+    // Prose may explain the migration; a URL is a dependency.
+    const urls = source.match(/https?:\/\/[^\s"'`)]+/g) || [];
+    for (const url of urls) {
+      assert.doesNotMatch(
+        url,
+        /supabase\.(co|in)/,
+        `${file.replace(join(__dirname, '..') + '/', '')} still reaches a Supabase host: ${url}`,
+      );
+    }
+  }
+});
+
+test('poster generation is refused outright when its endpoint is unconfigured', () => {
+  const generation = readFileSync(
+    join(__dirname, '..', 'server/src/services/generation.ts'),
+    'utf8',
+  );
+  // Refused with the variable named, rather than falling back to any default.
+  assert.match(generation, /if \(!env\.graphisteUrl\) \{/);
+  assert.match(generation, /GRAPHISTE_GPT_API_URL/);
+  assert.doesNotMatch(generation, /env\.graphisteUrl \?\?/);
 });

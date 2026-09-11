@@ -1,5 +1,27 @@
 # HANDOVER — Document de transmission (Pro Social AI)
 
+> ## ⚠️ DOCUMENT HISTORIQUE — NE PAS SUIVRE POUR DÉPLOYER
+>
+> Ce fichier décrit l'architecture **Supabase** (Edge Functions, Auth,
+> Storage, RLS, déploiement Netlify) qui a précédé la migration vers le VPS.
+> **Plus rien de ce qui suit n'est déployé.** Les Edge Functions, les
+> migrations Supabase et les workflows Netlify ont été supprimés du dépôt.
+>
+> Il est conservé pour une seule raison : il documente les décisions et les
+> pièges de l'ancienne plateforme, utiles pour comprendre *pourquoi* le code
+> actuel fait ce qu'il fait.
+>
+> Pour l'état réel du système, lire dans cet ordre :
+>
+> * [`VPS_DEPLOYMENT_HANDOFF.md`](../VPS_DEPLOYMENT_HANDOFF.md) — déploiement,
+>   schéma, variables, sauvegarde, rollback ;
+> * [`DEPLOYMENT.md`](../DEPLOYMENT.md) — configuration, nginx, conteneurs ;
+> * [`README.md`](../README.md) — démarrage.
+>
+> Les sections ci-dessous mentionnant `supabase/functions`, `supabase-js`,
+> les clés `VITE_SUPABASE_*`, Netlify ou le Supabase Scheduler sont toutes
+> caduques.
+
 > Rédigé le 13 juillet 2026, à l'issue d'un audit complet (sécurité, bugs,
 > architecture) mené juste avant la passation. Ce document est le point
 > d'entrée de l'équipe qui reprend le projet. Il complète — sans les

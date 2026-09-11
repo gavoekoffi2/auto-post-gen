@@ -24,8 +24,13 @@ import {
 //      provider's own reason. There is no local SVG, no placeholder, and no
 //      "fallback visual" dressed up as a successful AI generation.
 
-const GRAPHISTE_DEFAULT_URL =
-  "https://bbfzfgcdioewzbmlgaqy.supabase.co/functions/v1/api-v1/v1/posters/generate";
+// No default endpoint, deliberately.
+//
+// This used to fall back to a hardcoded *.supabase.co address, which meant an
+// operator who set GRAPHISTE_GPT_API_KEY but not the URL silently sent every
+// poster — company name, sector, brand colours, and any consented photo of a
+// real person — to a Supabase project this deployment does not own. The
+// endpoint is now configuration, and its absence is refused out loud below.
 
 const GRAPHISTE_RATIOS = new Set([
   "9:16", "16:9", "1:1", "4:5", "5:4", "1.91:1", "4:3", "3:4", "2:3", "3:2",
@@ -123,8 +128,15 @@ export async function startPosterJob(input: PosterRequest): Promise<JobRow> {
     }
   }
 
+  if (!env.graphisteUrl) {
+    throw notConfigured(
+      "L'adresse du service de génération d'affiches n'est pas configurée sur ce " +
+        "serveur (GRAPHISTE_GPT_API_URL).",
+    );
+  }
+
   const spec = getSocialImageSpec(input.platforms);
-  const endpoint = env.graphisteUrl ?? GRAPHISTE_DEFAULT_URL;
+  const endpoint = env.graphisteUrl;
 
   const requestBody: Record<string, unknown> = {
     domain: "business",
@@ -286,11 +298,14 @@ export async function readJob(profileId: string, jobId: string): Promise<JobRow 
   );
   if (!job) return null;
   if (job.status !== "processing") return job;
-  if (!env.graphisteKey) return job;
+  // Without both halves of the provider configuration there is nothing to ask.
+  // The job keeps its current state rather than being declared failed: the
+  // deployment is misconfigured, the render is not necessarily lost.
+  if (!env.graphisteKey || !env.graphisteUrl) return job;
 
   const candidates: string[] = [];
   if (job.provider_job_id) {
-    const base = (env.graphisteUrl ?? GRAPHISTE_DEFAULT_URL).replace(/\/generate\/?$/, "");
+    const base = env.graphisteUrl.replace(/\/generate\/?$/, "");
     candidates.push(`${base}/${encodeURIComponent(job.provider_job_id)}`);
   }
   if (job.provider_status_url) candidates.push(job.provider_status_url);
