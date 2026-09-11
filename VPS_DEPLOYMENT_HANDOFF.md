@@ -16,7 +16,7 @@ Document de reprise pour l'ingénieur qui déploiera cette branche sur le VPS.
 
 Branche : `claude/lucid-johnson-14zub1`
 
-Dernier commit de code : `dd00433` (`git rev-parse dd00433` pour le SHA complet)
+Dernier commit de code : `a24dc527dbb334650a7343d414f91aa6df592192`
 
 Ce document ne peut pas contenir le SHA de son propre commit. Le SHA ci-dessus
 est celui du dernier commit de **code** ; la pointe de la branche est le
