@@ -6,6 +6,7 @@ import { env } from "../lib/env.js";
 import { clientIp, requireTenant } from "../lib/tenant.js";
 import { hitRateLimit } from "../lib/rateLimit.js";
 import {
+  asImageUrl,
   asInstant,
   asObject,
   asString,
@@ -101,7 +102,7 @@ export async function postRoutes(app: FastifyInstance): Promise<void> {
         category || null,
         platforms,
         asInstant(body.scheduledFor, "scheduledFor"),
-        asString(body.imageUrl, "imageUrl", { max: 500, optional: true }) || null,
+        asImageUrl(body.imageUrl, "imageUrl"),
       ],
     );
     return reply.code(201).send(row);
@@ -141,7 +142,7 @@ export async function postRoutes(app: FastifyInstance): Promise<void> {
       set("next_publish_attempt_at", new Date().toISOString());
     }
     if ("image_url" in body) {
-      const imageUrl = asString(body.image_url, "image_url", { max: 500, optional: true }) || null;
+      const imageUrl = asImageUrl(body.image_url, "image_url");
       set("image_url", imageUrl);
       if (imageUrl === null) {
         // Clearing the image also drops the poster job that produced it.

@@ -136,3 +136,50 @@ export function asObject(value: unknown, field: string): Record<string, unknown>
 export function asHeaderSafe(value: unknown, field: string, max = 200): string {
   return asString(value, field, { max, optional: true }).replace(/[\r\n]+/g, " ").trim();
 }
+
+// Hosts an image URL must never point at. These are not reachable from the
+// public internet, so a legitimate image is never there — but the servers
+// that fetch these URLs on our behalf (the poster renderer, the publishing
+// provider) sit inside networks where they resolve to something, including
+// cloud instance metadata.
+const PRIVATE_HOST =
+  /^(?:localhost|\[?::1\]?|0\.0\.0\.0|10\.\d+\.\d+\.\d+|127\.\d+\.\d+\.\d+|169\.254\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+)$/i;
+
+/**
+ * Validates a URL that will be handed to an image renderer or a publisher.
+ *
+ * Two shapes are accepted and no others:
+ *   - a relative path under /api/media/, which is this server's own storage;
+ *   - an absolute https:// URL on a public host.
+ *
+ * Everything else is refused. http:// is refused because the fetch would be
+ * in clear; a private or link-local host is refused because the fetch happens
+ * from inside someone else's network, where such a URL is an SSRF probe
+ * whose result can be rendered into a poster the caller then reads back.
+ */
+export function asImageUrl(value: unknown, field: string, max = 500): string | null {
+  const raw = asString(value, field, { max, optional: true }).trim();
+  if (!raw) return null;
+
+  if (raw.startsWith("/api/media/")) {
+    // No scheme, no host, no traversal: it can only address this server.
+    if (raw.includes("..") || raw.includes("//")) {
+      throw badRequest(`Le champ « ${field} » contient un chemin invalide.`);
+    }
+    return raw;
+  }
+
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw badRequest(`Le champ « ${field} » doit être une URL https valide.`);
+  }
+  if (url.protocol !== "https:") {
+    throw badRequest(`Le champ « ${field} » doit utiliser https.`);
+  }
+  if (PRIVATE_HOST.test(url.hostname) || url.hostname.endsWith(".local")) {
+    throw badRequest(`Le champ « ${field} » ne peut pas pointer vers une adresse interne.`);
+  }
+  return raw;
+}
