@@ -1,0 +1,28 @@
+{
+  "name": "pro-social-ai-server",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Self-hosted Fastify API for Pro Social AI. Runs on the VPS alongside PostgreSQL; no cloud backend.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/src/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "migrate": "npm run build && node dist/src/migrate.js",
+    "test": "npm run build && node --test --experimental-strip-types tests/*.test.ts"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.0.2",
+    "@fastify/multipart": "^9.0.3",
+    "fastify": "^5.2.1",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.16.5",
+    "@types/pg": "^8.11.10",
+    "typescript": "^5.8.3"
+  }
+}
