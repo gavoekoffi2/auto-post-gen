@@ -99,6 +99,41 @@ export async function mediaRoutes(app: FastifyInstance): Promise<void> {
   });
 
   /**
+   * Serves one media file to a bearer of its capability token.
+   *
+   * No session, by necessity: the publishing provider fetches the poster it
+   * is asked to attach. The token is the whole authorisation, so it is
+   * compared as an exact match on an indexed column and nothing else about
+   * the request is trusted — in particular the account is derived from the
+   * row, never from the request.
+   */
+  app.get("/media/public/:token", async (request, reply) => {
+    const token = asString((request.params as { token?: string }).token, "token", { max: 128 });
+    const row = await queryOne<MediaRow>(
+      `SELECT id, kind, storage_path, mime_type, size_bytes, created_at
+         FROM media_assets WHERE public_token = $1`,
+      [token],
+    );
+    if (!row) throw notFound("Média introuvable.");
+
+    const absolute = resolveMediaPath(row.storage_path);
+    try {
+      await stat(absolute);
+    } catch {
+      throw notFound("Le fichier n'est plus disponible.");
+    }
+
+    return reply
+      .header("Content-Type", row.mime_type)
+      .header("X-Content-Type-Options", "nosniff")
+      .header("Content-Disposition", "inline")
+      // Public but unguessable: a shared cache may keep it, and the provider
+      // may re-fetch it, but the URL is the only way to reach it.
+      .header("Cache-Control", "public, max-age=3600")
+      .send(createReadStream(absolute));
+  });
+
+  /**
    * Serves a stored file.
    *
    * Ownership is checked on every read: media is NOT public. The row is

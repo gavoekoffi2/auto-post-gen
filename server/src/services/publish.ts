@@ -1,5 +1,7 @@
 import { query, queryOne } from "../lib/db.js";
 import { env } from "../lib/env.js";
+import { readJob } from "./generation.js";
+import { mediaAssetIdFromUrl, publicMediaUrl } from "../lib/media.js";
 
 // Publishing.
 //
@@ -26,6 +28,33 @@ function nextAttemptAt(attempts: number): string {
   return new Date(Date.now() + minutes * 60_000).toISOString();
 }
 
+/**
+ * Turns a stored image URL into one the publishing provider can fetch.
+ *
+ * A relative /api/media/... URL is this server's own storage and is session
+ * guarded, so it gets a capability token. Anything else is already absolute
+ * and is passed through unchanged.
+ */
+async function publishableUrl(profileId: string, url: string): Promise<string> {
+  const assetId = mediaAssetIdFromUrl(url);
+  if (!assetId) return url;
+  if (!env.appPublicUrl) {
+    // Without a public base URL there is no absolute link to hand over. Going
+    // out text-only is wrong, so say it rather than sending an unfetchable
+    // relative path the provider will silently drop.
+    throw new Error("APP_PUBLIC_URL is required to publish a locally stored image");
+  }
+  const row = await queryOne<{ public_token: string | null }>(
+    `UPDATE media_assets
+        SET public_token = COALESCE(public_token, encode(gen_random_bytes(32), 'hex'))
+      WHERE id = $1 AND profile_id = $2
+      RETURNING public_token`,
+    [assetId, profileId],
+  );
+  if (!row?.public_token) return url;
+  return publicMediaUrl(row.public_token);
+}
+
 function normalisePlatform(label: string): string {
   const map: Record<string, string> = {
     Instagram: "instagram",
@@ -50,17 +79,38 @@ export async function publishPost(profileId: string, postId: string): Promise<Pu
     content: string;
     platforms: string[];
     image_url: string | null;
+    image_job_id: string | null;
     publish_attempts: number;
   }>(
     `UPDATE posts
         SET status = 'publishing', publishing_started_at = now()
       WHERE id = $1 AND profile_id = $2 AND status = 'validated'
-      RETURNING id, content, platforms, image_url, publish_attempts`,
+      RETURNING id, content, platforms, image_url, image_job_id, publish_attempts`,
     [postId, profileId],
   );
   // Someone else is already publishing it, or it is not in a publishable
   // state. Skipping is correct: re-claiming would risk a double post.
   if (!claimed) return [];
+
+  // A poster that was still rendering when the post was queued is settled
+  // here, before the content goes out. Publishing without it meant a
+  // scheduled post went out text-only — and on a network that requires media,
+  // failed outright — while a finished poster sat unattached in its job row.
+  let imageUrl = claimed.image_url;
+  if (!imageUrl && claimed.image_job_id) {
+    try {
+      const job = await readJob(profileId, claimed.image_job_id);
+      if (job?.status === "completed" && job.result_url) imageUrl = job.result_url;
+    } catch (err) {
+      // Best-effort: the post still publishes, with whatever it has.
+      console.error(`[publish] could not resume poster for ${postId}:`, (err as Error).message);
+    }
+  }
+
+  // A re-hosted poster lives behind a session, which the provider does not
+  // have. Mint (or reuse) a capability token for exactly that asset so it can
+  // fetch the image it is asked to attach, and nothing else.
+  const publishableImageUrl = imageUrl ? await publishableUrl(profileId, imageUrl) : null;
 
   const connection = await queryOne<{ provider_profile_key: string | null }>(
     `SELECT provider_profile_key FROM social_connections
@@ -98,7 +148,7 @@ export async function publishPost(profileId: string, postId: string): Promise<Pu
       connection.provider_profile_key,
       platforms,
       claimed.content,
-      claimed.image_url,
+      publishableImageUrl,
       claimed.id,
     );
   }

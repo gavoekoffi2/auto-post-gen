@@ -149,3 +149,68 @@ export async function deleteProfileMedia(profileId: string): Promise<void> {
 export function mediaUrl(assetId: string): string {
   return `/api/media/${assetId}/file`;
 }
+
+/**
+ * An absolute, session-free URL for one media asset.
+ *
+ * Used only where a third party must fetch the file — the publishing
+ * provider downloading a poster to attach it. The token is long and random,
+ * minted on demand for that one asset, and revocable by clearing the column;
+ * it grants reading that single file and nothing else.
+ */
+export function publicMediaUrl(token: string): string {
+  const base = (env.appPublicUrl ?? "").replace(/\/+$/, "");
+  return `${base}/api/media/public/${token}`;
+}
+
+/** The asset id inside a relative media URL, or null if it is not one. */
+export function mediaAssetIdFromUrl(url: string): string | null {
+  const match = /^\/api\/media\/([0-9a-f-]{36})\/file$/i.exec(url);
+  return match?.[1] ?? null;
+}
+
+/**
+ * Copies a remote image into this account's own storage.
+ *
+ * Posters come back as URLs on the renderer's CDN, and those expire. Storing
+ * the URL meant a poster silently disappeared from the dashboard — and from
+ * the post — some days after it was generated, including from posts scheduled
+ * for later.
+ *
+ * The URL is validated before it is fetched (https, public host only), the
+ * response's declared type must be a raster image we accept, and the body is
+ * capped WHILE streaming, so neither a redirect to an internal address nor an
+ * unbounded response can be used against this server.
+ */
+export async function rehostRemoteImage(
+  profileId: string,
+  url: string,
+): Promise<StoredFile> {
+  // Refuses http, private, link-local and metadata hosts. Imported here rather
+  // than at the top because validate.ts is otherwise request-shaped.
+  const { asImageUrl } = await import("./validate.js");
+  const safe = asImageUrl(url, "image_url");
+  if (!safe || safe.startsWith("/")) throw badRequest("URL d'image invalide.");
+
+  const response = await fetch(safe, {
+    // Redirects are followed by fetch, and a redirect can land anywhere — so
+    // the size and type checks below, not the initial URL, are what bound it.
+    redirect: "follow",
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (!response.ok || !response.body) {
+    throw badRequest(`L'image générée n'a pas pu être récupérée (${response.status}).`);
+  }
+
+  const declared = (response.headers.get("content-type") ?? "").split(";")[0]!.trim();
+  // Throws for SVG and for anything that is not a raster image we accept.
+  extensionForType(declared);
+
+  const declaredLength = Number(response.headers.get("content-length") ?? 0);
+  if (declaredLength > MAX_UPLOAD_BYTES) {
+    throw tooLarge("L'image générée est trop volumineuse.");
+  }
+
+  const { Readable } = await import("node:stream");
+  return storeUpload(profileId, Readable.fromWeb(response.body as never), declared);
+}

@@ -1,7 +1,14 @@
 import { queryOne, query } from "../lib/db.js";
 import { env } from "../lib/env.js";
 import { badRequest, notConfigured } from "../lib/errors.js";
+import { mediaUrl, rehostRemoteImage } from "../lib/media.js";
 import { getSocialImageSpec } from "../shared/socialImageSpecs.js";
+import {
+  extractImageUrl,
+  extractJobId,
+  extractStatusUrl,
+  jobFailed,
+} from "../shared/graphisteParse.js";
 
 // Poster generation.
 //
@@ -63,74 +70,6 @@ function aspectRatio(spec: { aspectRatio: string; orientation: string }): string
 }
 
 /** Pulls the provider's job handle out of its response envelope. */
-function extractJobId(value: unknown): string | null {
-  if (!value || typeof value !== "object") return null;
-  const obj = value as Record<string, unknown>;
-  // data.job_id is canonical. request_id is explicitly NOT accepted: it is a
-  // trace identifier, and polling it 404s — which is how every resumed job
-  // silently failed in the previous implementation.
-  const direct = obj.job_id ?? obj.jobId ?? obj.task_id ?? obj.taskId;
-  if (typeof direct === "string" && direct.trim()) return direct.trim();
-  for (const key of ["data", "result", "job"]) {
-    const nested = extractJobId(obj[key]);
-    if (nested) return nested;
-  }
-  return null;
-}
-
-function extractStatusUrl(value: unknown): string | null {
-  if (!value || typeof value !== "object") return null;
-  const obj = value as Record<string, unknown>;
-  const direct = obj.status_url ?? obj.statusUrl ?? obj.poll_url ?? obj.pollUrl;
-  if (typeof direct === "string" && direct.trim()) return direct.trim();
-  for (const key of ["data", "result", "job"]) {
-    const nested = extractStatusUrl(obj[key]);
-    if (nested) return nested;
-  }
-  return null;
-}
-
-/** Raster image URLs only — an SVG is never a finished poster here. */
-function extractImageUrl(value: unknown): string | null {
-  if (!value) return null;
-  if (typeof value === "string") {
-    const v = value.trim();
-    if (/^data:image\/svg/i.test(v)) return null;
-    if (v.startsWith("data:image/")) return v;
-    if (/^https?:\/\//i.test(v) && !/\.svg(\?|#|$)/i.test(v)) return v;
-    return null;
-  }
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const found = extractImageUrl(item);
-      if (found) return found;
-    }
-    return null;
-  }
-  if (typeof value === "object") {
-    const obj = value as Record<string, unknown>;
-    for (const field of [
-      "image_url", "imageUrl", "poster_url", "posterUrl", "final_url", "finalUrl",
-      "url", "public_url", "publicUrl", "data", "result", "output", "images",
-    ]) {
-      const found = extractImageUrl(obj[field]);
-      if (found) return found;
-    }
-  }
-  return null;
-}
-
-function jobFailed(value: unknown): boolean {
-  if (!value || typeof value !== "object") return false;
-  const obj = value as Record<string, unknown>;
-  if (obj.success === false && obj.error) return true;
-  const status = typeof obj.status === "string" ? obj.status.toLowerCase() : "";
-  if (["failed", "error", "canceled", "cancelled"].includes(status)) return true;
-  for (const key of ["data", "result", "job"]) {
-    if (jobFailed(obj[key])) return true;
-  }
-  return false;
-}
 
 export interface PosterRequest {
   profileId: string;
@@ -238,7 +177,10 @@ export async function startPosterJob(input: PosterRequest): Promise<JobRow> {
 
   const direct = extractImageUrl(payload);
   if (direct) {
-    return recordJob(input, "completed", { resultUrl: direct, format });
+    return recordJob(input, "completed", {
+      resultUrl: await persistPoster(input.profileId, direct),
+      format,
+    });
   }
 
   const providerJobId = extractJobId(payload);
@@ -251,6 +193,31 @@ export async function startPosterJob(input: PosterRequest): Promise<JobRow> {
     error: "Graphiste GPT n'a retourné ni affiche ni identifiant de tâche.",
     format,
   });
+}
+
+/**
+ * Copies a finished poster into this account's own media storage.
+ *
+ * The renderer's URLs expire, so persisting one meant the poster silently
+ * vanished from the dashboard and from the post days later — including from
+ * posts scheduled for after it expired. Best-effort: if the copy fails the
+ * provider URL is kept, which is worse but still better than losing the render
+ * we already paid for.
+ */
+async function persistPoster(profileId: string, remoteUrl: string): Promise<string> {
+  try {
+    const stored = await rehostRemoteImage(profileId, remoteUrl);
+    const asset = await queryOne<{ id: string }>(
+      `INSERT INTO media_assets (profile_id, kind, storage_path, mime_type, size_bytes)
+       VALUES ($1, 'poster', $2, $3, $4)
+       RETURNING id`,
+      [profileId, stored.storagePath, stored.mimeType, stored.sizeBytes],
+    );
+    if (asset) return mediaUrl(asset.id);
+  } catch (err) {
+    console.error("[generation] poster re-host failed:", (err as Error).message);
+  }
+  return remoteUrl;
 }
 
 async function recordJob(
@@ -343,7 +310,11 @@ export async function readJob(profileId: string, jobId: string): Promise<JobRow 
       try { data = JSON.parse(text); } catch { data = text; }
 
       const imageUrl = extractImageUrl(data);
-      if (imageUrl) return await settleJob(job, "completed", { resultUrl: imageUrl });
+      if (imageUrl) {
+        return await settleJob(job, "completed", {
+          resultUrl: await persistPoster(job.profile_id, imageUrl),
+        });
+      }
       if (jobFailed(data)) {
         return await settleJob(job, "failed", {
           error: "Graphiste GPT a signalé l'échec de cette génération.",
