@@ -474,10 +474,17 @@ export default function Dashboard() {
     setGenerating(true);
     const loadingToast = toast.loading("Recherche web + génération IA en cours...");
     try {
+      const generationPlatforms =
+        userProfile?.platforms && userProfile.platforms.length > 0
+          ? userProfile.platforms
+          : ['Instagram'];
       const { data, error } = await supabase.functions.invoke('generate-content', {
         body: {
           prompt: "Génère un post engageant pour mes réseaux sociaux",
           userPreferences: userProfile,
+          // Explicit targets so the generator can apply the tightest network's
+          // caption limit (a post addressed to X only has 280 characters).
+          platforms: generationPlatforms,
         },
       });
 
@@ -494,10 +501,7 @@ export default function Dashboard() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error("Non authentifié");
 
-      const defaultPlatforms =
-        userProfile?.platforms && userProfile.platforms.length > 0
-          ? userProfile.platforms
-          : ['Instagram'];
+      const defaultPlatforms = generationPlatforms;
 
       // 1. Save the post immediately with text only so the user sees
       //    the result without waiting for the slow image generation.
@@ -653,6 +657,9 @@ export default function Dashboard() {
         body: {
           prompt: `Régénère une nouvelle version professionnelle de ce post, claire, vendeuse et prête à publier. Garde le même objectif mais propose une formulation différente. Ancien post:\n${post.content}`,
           userPreferences: userProfile,
+          // This post's own targets, which can differ from the profile's:
+          // regenerating a post addressed to X must respect X's 280 characters.
+          platforms: post.platforms || (post.platform ? [post.platform] : []),
         },
       });
       if (error) throw error;

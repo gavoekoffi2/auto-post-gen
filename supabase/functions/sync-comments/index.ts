@@ -49,7 +49,15 @@ async function syncUser(supabase: DB, userId: string): Promise<SyncResult> {
     .in("provider", ["zernio", "ayrshare"]);
   const zernio = (conns as any[] || []).find((c) => c.provider === "zernio");
   const ayrshare = (conns as any[] || []).find((c) => c.provider === "ayrshare");
-  if (zernio) return await syncUserZernio(supabase, userId, zernio.profile_key ?? null);
+  // A connection row without a profile key is not an isolated tenant. Reading
+  // the provider inbox without one returns every profile's comments, which
+  // would be filed into THIS user's inbox — skip instead.
+  if (zernio) {
+    if (!zernio.profile_key) {
+      return { fetched: 0, inserted: 0, replied: 0, note: "zernio_profile_key_missing" };
+    }
+    return await syncUserZernio(supabase, userId, zernio.profile_key);
+  }
   if (ayrshare) return await syncUserAyrshare(supabase, userId, ayrshare.profile_key ?? null);
   return { fetched: 0, inserted: 0, replied: 0, note: "no_comment_provider" };
 }

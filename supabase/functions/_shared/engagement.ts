@@ -166,8 +166,16 @@ export interface ZernioCommentedPost {
 export async function zernioListCommentedPosts(
   profileId: string | null,
 ): Promise<{ posts: ZernioCommentedPost[]; addonMissing?: boolean }> {
+  // Same tenant boundary as zernioListAccounts: without profileId the inbox
+  // returns commented posts across EVERY profile, and sync-comments would then
+  // file other tenants' comments into this user's inbox.
+  if (!profileId) {
+    throw new Error(
+      "Profil Zernio manquant pour ce compte : impossible de lire la boîte de réception sans isolation par profil.",
+    );
+  }
   const url = new URL(`${ZERNIO_BASE}/inbox/comments`);
-  if (profileId) url.searchParams.set("profileId", profileId);
+  url.searchParams.set("profileId", profileId);
   url.searchParams.set("minComments", "1");
   url.searchParams.set("limit", "50");
   const r = await fetch(url.toString(), { headers: zernioHeaders() });

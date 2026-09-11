@@ -52,9 +52,11 @@ serve(async (req) => {
       return json({ ok: true });
     }
 
-    const name = String(body.name ?? "").trim();
+    const name = String(body.name ?? "").replace(/[\r\n]+/g, " ").trim();
     const email = String(body.email ?? "").trim();
-    const subject = String(body.subject ?? "").trim();
+    // Collapse any CR/LF: the subject is copied into an email header field, and
+    // a line break there is the classic header-injection primitive.
+    const subject = String(body.subject ?? "").replace(/[\r\n]+/g, " ").trim();
     const message = String(body.message ?? "").trim();
 
     if (!name || name.length > 100) {

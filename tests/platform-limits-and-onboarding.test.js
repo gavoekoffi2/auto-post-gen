@@ -287,3 +287,34 @@ test("account deletion pages through storage instead of stopping at 1000", () =>
     "a single unpaginated list leaves objects behind",
   );
 });
+
+test("the comments inbox is read per tenant, never across profiles", () => {
+  // Same boundary as zernioListAccounts: without profileId the inbox returns
+  // every profile's commented posts, which sync-comments would then file into
+  // THIS user's comment inbox.
+  const engagement = read("supabase/functions/_shared/engagement.ts");
+  assert.match(engagement, /zernioListCommentedPosts[\s\S]{0,400}?if \(!profileId\)[\s\S]{0,200}?throw new Error/);
+  assert.equal(
+    engagement.includes('if (profileId) url.searchParams.set("profileId", profileId);'),
+    false,
+  );
+  const sync = read("supabase/functions/sync-comments/index.ts");
+  assert.match(sync, /zernio_profile_key_missing/);
+});
+
+test("the contact form cannot inject a line break into an email header", () => {
+  const fn = read("supabase/functions/send-contact/index.ts");
+  const subject = fn.match(/const subject = [^\n]*/)[0];
+  assert.match(subject, /\[\\r\\n\]\+/);
+});
+
+test("generation is told which networks the post targets", () => {
+  // The binding caption limit comes from the post's own targets, which can
+  // differ from the profile's default selection.
+  const dashboard = read("src/pages/Dashboard.tsx");
+  assert.match(dashboard, /platforms: generationPlatforms/);
+  assert.match(
+    dashboard,
+    /platforms: post\.platforms \|\| \(post\.platform \? \[post\.platform\] : \[\]\)/,
+  );
+});
