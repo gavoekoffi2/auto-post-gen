@@ -21,29 +21,35 @@ test('dashboard tells the user which format was produced', () => {
   assert.ok(source.includes('${imageSpec.label}, ${imageSpec.aspectRatio}'));
 });
 
-test('dashboard resumes long poster jobs and surfaces clear errors', () => {
-  // resumable helper that re-calls generate-image with the returned job id.
+test('dashboard waits out long poster jobs and surfaces clear errors', () => {
+  // A slow poster comes back as a job to poll, not as a held-open request.
   assert.match(source, /async function generatePosterImage\(/);
-  assert.match(source, /data\?\.status === "processing"/);
-  assert.match(source, /jobId: data\.jobId/);
-  assert.match(source, /statusUrl: data\.statusUrl/);
-  // both flows use the helper and show the actionable error message.
+  assert.match(source, /async function awaitPosterJob\(/);
+  assert.match(source, /generations\.image\(input\)/);
+  assert.match(source, /generations\.status\(jobId\)/);
+  // Both flows show the provider's actionable error message.
   assert.match(source, /toast\.error\(res\.error\)/);
-  // and never claim a "secours"/SVG fallback success anymore.
+  // A failed generation is never dressed up as a successful one: there is no
+  // local placeholder or "secours" visual standing in for a real poster.
   assert.equal(source.includes('visuel de secours'), false);
   assert.equal(source.includes('affiche professionnelle de secours'), false);
 });
 
-test('dashboard resumes in-flight poster jobs persisted on the row, on page load', () => {
-  // The Post type carries the persisted job fields read back from the row.
+test('resuming an in-flight poster job never starts a second paid generation', () => {
+  // The post carries the job id the server persisted on it.
   assert.match(source, /image_status\?: string \| null/);
   assert.match(source, /image_job_id\?: string \| null/);
-  assert.match(source, /image_status_url\?: string \| null/);
   // On load, posts still "processing" with a saved job are resumed (bounded).
   assert.match(source, /const resumePendingImage = async \(post: Post\) =>/);
-  assert.match(source, /p\.image_status === "processing" && \(p\.image_job_id \|\| p\.image_status_url\)/);
+  assert.match(source, /p\.image_status === "processing" && p\.image_job_id/);
   assert.match(source, /void resumePendingImage\(p\)/);
-  // resume forwards the saved job id / status url so no new (paid) job starts.
-  assert.match(source, /jobId: post\.image_job_id \|\| undefined/);
-  assert.match(source, /statusUrl: post\.image_status_url \|\| undefined/);
+  // Resuming POLLS the existing job. It must not call generations.image(),
+  // which is what would start — and bill — a second render.
+  const resume = source.match(/const resumePendingImage[\s\S]*?\n  \};/)[0];
+  assert.match(resume, /await awaitPosterJob\(post\.image_job_id\)/);
+  assert.equal(
+    /generations\.image\(/.test(resume),
+    false,
+    'resuming must poll the existing job, never request a new generation',
+  );
 });

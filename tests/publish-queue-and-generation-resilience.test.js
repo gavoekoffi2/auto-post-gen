@@ -58,9 +58,17 @@ test("the retry columns exist and the cron's selection index covers them", () =>
 test("validating or retrying a post clears the inherited retry state", () => {
   // Otherwise a post that already burned its attempts is re-failed instantly
   // and the user's "Réessayer" click appears to do nothing.
-  const resets =
-    dashboard.match(/publish_attempts: 0,\s*\n\s*next_publish_attempt_at: new Date\(\)/g) || [];
-  assert.ok(resets.length >= 2, "both handleValidate and handleRetry must reset the retry state");
+  //
+  // The reset now happens SERVER-side as part of validating: the publish
+  // budget is the server's to grant, so the browser no longer writes the
+  // counter or the backoff stamp itself.
+  const validates = dashboard.match(/postsApi\.validate\(/g) || [];
+  assert.ok(validates.length >= 2, "both handleValidate and handleRetry must call validate");
+  assert.equal(
+    /publish_attempts:\s*0/.test(dashboard),
+    false,
+    "the browser must not set the retry counter itself",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -167,7 +175,7 @@ test("a manually generated post is given a real schedule", () => {
   // date on its card, and made it invisible to the publish cron (whose due
   // query filters on scheduled_for).
   assert.match(dashboard, /function nextPreferredSlot/);
-  assert.match(dashboard, /scheduled_for: nextPreferredSlot\(userProfile\)/);
+  assert.match(dashboard, /scheduledFor: nextPreferredSlot\(userProfile\)/);
 });
 
 test("regenerating a post's text drops the poster job that belonged to the old text", () => {

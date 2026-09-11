@@ -6,12 +6,13 @@ const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf
 
 test("profiles persist one optional footer message for every poster", () => {
   const migration = read("supabase/migrations/20260723000000_poster_footer_text.sql");
-  const types = read("src/integrations/supabase/types.ts");
+  // The generated Supabase types are gone with the migration to the
+  // self-hosted API; the field is now declared on the API client's Profile.
+  const apiTypes = read("src/lib/api.ts");
 
   assert.match(migration, /poster_footer_text text/i);
   assert.match(migration, /char_length\(poster_footer_text\) <= 120/i);
-  assert.match(types, /poster_footer_text: string \| null/);
-  assert.match(types, /poster_footer_text\?: string \| null/);
+  assert.match(apiTypes, /poster_footer_text: string \| null/);
 });
 
 test("profile and onboarding let the user choose and preview the footer message", () => {

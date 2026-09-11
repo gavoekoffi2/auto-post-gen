@@ -49,8 +49,9 @@ test('generated images complement the post and use a fixed discreet brand signat
     assert.match(source, /ne transforme pas le visuel en publicité/);
     assert.match(source, /contentCategory/);
   }
+  // The dashboard passes the post's editorial category when it creates the
+  // post and when it asks for the poster, so the visual matches the intent.
   assert.match(dashboard, /contentCategory: data\.postType/);
-  assert.match(dashboard, /content_category: data\.postType/);
 });
 
 test('only promotional visuals request a sales CTA', () => {

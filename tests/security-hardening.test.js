@@ -132,8 +132,9 @@ test('super-admin control plane is server-authorized and protects the founder', 
 });
 
 test('admin UI is protected and exposes global account operations', () => {
-  assert.match(adminGuard, /admin-api/);
-  assert.match(adminGuard, /role === "admin" \|\| role === "super_admin"/);
+  // The role is asked of the SERVER, never read from anything the browser holds.
+  assert.match(adminGuard, /admin\.me\(\)/);
+  assert.match(adminGuard, /me\.role === "admin" \|\| me\.role === "super_admin"/);
   for (const action of ['create_user', 'set_plan', 'set_role', 'set_blocked', 'reset_password', 'delete_user']) {
     assert.match(adminPage, new RegExp(action));
   }
@@ -149,15 +150,22 @@ test('public endpoints are IP rate-limited', () => {
   assert.match(rlMigration, /pg_advisory_xact_lock/);
 });
 
-test('password change re-authenticates with the current password', () => {
+test('password change is verified with the current password, server-side', () => {
   const account = read('src/components/AccountSettings.tsx');
-  assert.match(account, /signInWithPassword\(/);
-  assert.match(account, /currentPassword/);
-  // re-auth must happen before updateUser
-  assert.ok(
-    account.indexOf('signInWithPassword') < account.indexOf('updateUser'),
-    'must re-authenticate before changing the password',
-  );
+  // Both passwords travel together so the server verifies the old one before
+  // accepting the new one. Verifying in a separate round trip would leave a
+  // window between the check and the change.
+  assert.match(account, /auth\.changePassword\(currentPassword, newPassword\)/);
+});
+
+test('deleting an account requires the password, in its own field', () => {
+  const account = read('src/components/AccountSettings.tsx');
+  // Irreversible, so a session left open on a shared machine is not enough.
+  assert.match(account, /account\.remove\(deletePassword\)/);
+  // Its own field: reusing the "change password" input above would mean
+  // typing your password into an unrelated form to delete your account.
+  assert.match(account, /const \[deletePassword, setDeletePassword\]/);
+  assert.match(account, /disabled=\{deleting \|\| confirmText !== CONFIRM_WORD \|\| !deletePassword\}/);
 });
 
 test('email validation requires an explicit click (no auto-validate on load)', () => {

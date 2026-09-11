@@ -9,6 +9,8 @@ test("Zernio billing errors are actionable instead of the generic Edge Function 
   assert.match(edge, /free_tier_exceeded/);
   assert.match(edge, /ZERNIO_PAYMENT_REQUIRED/);
   assert.match(edge, /limite gratuite Zernio de 2 comptes connectés/);
-  assert.match(ui, /functionError\.context\.clone\(\)\.json\(\)/);
-  assert.match(ui, /toast\.error\(await functionErrorMessage/);
+  // The API client parses the server's message into ApiError, so the dialog
+  // surfaces that message directly instead of digging it out of a
+  // provider-specific error envelope.
+  assert.match(ui, /err instanceof Error \? err\.message/);
 });

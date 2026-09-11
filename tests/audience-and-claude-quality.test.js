@@ -44,7 +44,7 @@ test("manual and scheduled posts are explicitly written for approved audiences",
 
 test("onboarding proposes targets automatically and requires human validation", () => {
   const onboarding = read("src/pages/Onboarding.tsx");
-  assert.match(onboarding, /detect-audiences/);
+  assert.match(onboarding, /profileApi\.detectAudiences\(\)/);
   assert.match(onboarding, /Cibles recommandées/);
   assert.match(onboarding, /target_audiences/);
   assert.match(onboarding, /audiences_confirmed_at/);
@@ -53,7 +53,7 @@ test("onboarding proposes targets automatically and requires human validation", 
 
 test("profile lets users re-analyse, select and edit multiple audiences", () => {
   const profile = read("src/pages/Profile.tsx") + read("src/components/AudienceEditor.tsx");
-  assert.match(profile, /detect-audiences/);
+  assert.match(profile, /profileApi\.detectAudiences\(\)/);
   assert.match(profile, /Analyser à nouveau/);
   assert.match(profile, /target_audiences/);
   assert.match(profile, /audience_suggestions/);
