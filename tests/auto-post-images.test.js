@@ -7,57 +7,86 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const read = (p) => readFileSync(join(__dirname, '..', p), 'utf8');
 
-const weekly = read('supabase/functions/auto-generate-weekly/index.ts');
-const publish = read('supabase/functions/publish-post/index.ts');
-const graphiste = read('supabase/functions/_shared/graphiste.ts');
+const weekly = read('server/src/services/weekly.ts');
+const publish = read('server/src/services/publish.ts');
+const generation = read('server/src/services/generation.ts');
+const media = read('server/src/lib/media.ts');
 
-test('auto-generate-weekly attaches a custom-library image when the profile has one', () => {
+test('weekly generation attaches a custom-library image when the profile has one', () => {
   assert.match(weekly, /profile\.use_custom_images/);
   assert.match(weekly, /profile\.custom_image_urls/);
-  // The post is inserted with the chosen image and its id is read back.
-  assert.match(weekly, /image_url: customImage/);
-  assert.match(weekly, /\.select\("id"\)/);
-  assert.match(weekly, /\.single\(\)/);
+  assert.match(weekly, /image_url\b/);
+  // The row's id is read back, because the poster job attaches to that post.
+  assert.match(weekly, /RETURNING id/);
 });
 
-test('auto-generate-weekly kicks an async Graphiste GPT poster job when there is no custom image', () => {
-  assert.match(weekly, /from "\.\.\/_shared\/graphiste\.ts"/);
+test('weekly generation starts a poster job when there is no custom image', () => {
+  assert.match(weekly, /if \(!customImage && env\.graphisteKey\)/);
   assert.match(weekly, /startPosterJob\(/);
-  assert.match(weekly, /GRAPHISTE_GPT_API_KEY/);
-  // Pending jobs are persisted so publish-post can resume them later.
-  assert.match(weekly, /image_job_id: poster\.jobId/);
-  assert.match(weekly, /image_status: "processing"/);
-  // A fast poster is re-hosted to our own bucket for a stable URL.
-  assert.match(weekly, /rehostToUserAssets\(/);
+  // Best-effort: a poster failure must not lose the text just generated.
+  assert.match(weekly, /\[weekly\] poster failed/);
 });
 
-test('publish-post resumes a pending poster job and attaches it before publishing', () => {
-  assert.match(publish, /from "\.\.\/_shared\/graphiste\.ts"/);
-  assert.match(publish, /resumePosterJob\(/);
-  assert.match(publish, /!post\.image_url &&\s+post\.image_job_id/);
-  assert.match(publish, /image_status: "done"/);
-  assert.match(publish, /image_status: "failed"/);
+test('publishing resumes a poster that was still rendering', () => {
+  // Without this a scheduled post goes out text-only — and fails outright on
+  // a network that requires media — while a finished poster sits unattached
+  // in its job row.
+  assert.match(publish, /if \(!imageUrl && claimed\.image_job_id\)/);
+  assert.match(publish, /readJob\(profileId, claimed\.image_job_id\)/);
+  assert.match(publish, /job\?\.status === "completed" && job\.result_url/);
 });
 
-test('shared Graphiste client honours the documented v1.1 async contract', () => {
-  assert.match(graphiste, /export async function startPosterJob/);
-  assert.match(graphiste, /export async function resumePosterJob/);
-  assert.match(graphiste, /export async function rehostToUserAssets/);
-  assert.match(graphiste, /mode: "async"/);
-  assert.match(graphiste, /quality: "premium"/);
-  assert.match(graphiste, /reliability_mode: true/);
-  assert.match(graphiste, /"Idempotency-Key": crypto\.randomUUID\(\)/);
-  // Never persist an SVG/placeholder as a real poster.
-  assert.match(graphiste, /refusing SVG data URL/);
-  assert.match(graphiste, /user-assets/);
+test('a finished poster is copied into our own storage, not linked', () => {
+  // The renderer's URLs expire. Persisting one meant the poster silently
+  // vanished from the dashboard and from posts scheduled for later.
+  assert.match(generation, /async function persistPoster/);
+  assert.match(generation, /rehostRemoteImage\(profileId, remoteUrl\)/);
+  assert.match(generation, /INSERT INTO media_assets/);
+  // Best-effort: keeping the provider URL is worse than owning the file, but
+  // better than losing a render that was already paid for.
+  assert.match(generation, /return remoteUrl;/);
 });
 
-test('shared Graphiste client uses the single shared response parser (no duplicated job-id logic)', () => {
-  // job-id / status-url / failure parsing lives in one tested module so the
-  // request_id-vs-job_id fix cannot drift between the cron and interactive paths.
-  assert.match(graphiste, /from "\.\/graphisteParse\.ts"/);
-  assert.match(graphiste, /extractJobId/);
-  assert.match(graphiste, /extractStatusUrl/);
-  // the buggy local getter that accepted request_id must be gone from here.
-  assert.doesNotMatch(graphiste, /o\.request_id \|\| o\.requestId/);
+test('re-hosting validates the URL, the type and the size before writing', () => {
+  assert.match(media, /export async function rehostRemoteImage/);
+  assert.match(media, /asImageUrl\(url, "image_url"\)/);
+  // A redirect can land anywhere, so the type and size checks — not the
+  // initial URL — are what actually bound this.
+  assert.match(media, /extensionForType\(declared\)/);
+  assert.match(media, /declaredLength > MAX_UPLOAD_BYTES/);
+  assert.match(media, /maxBytes/);
+});
+
+test('a locally stored poster is published through a capability URL', () => {
+  // /api/media/:id/file needs a session, which the provider does not have.
+  assert.match(publish, /async function publishableUrl/);
+  assert.match(publish, /mediaAssetIdFromUrl\(url\)/);
+  assert.match(publish, /encode\(gen_random_bytes\(32\), 'hex'\)/);
+  // Minted once and reused: regenerating it would break a provider that
+  // re-fetches the image later.
+  assert.match(publish, /COALESCE\(public_token,/);
+  // Scoped to the owner, like every other row access.
+  assert.match(publish, /WHERE id = \$1 AND profile_id = \$2/);
+  // Silently sending a relative path the provider drops would look like a
+  // successful publish with no image.
+  assert.match(publish, /APP_PUBLIC_URL is required/);
+});
+
+test('the poster request honours the documented Graphiste GPT async contract', () => {
+  assert.match(generation, /mode: "async"/);
+  assert.match(generation, /quality: "premium"/);
+  assert.match(generation, /reliability_mode: true/);
+  // Avoids double-charging when a request is retried.
+  assert.match(generation, /"Idempotency-Key": crypto\.randomUUID\(\)/);
+  assert.match(generation, /resolution: "2K"/);
+  assert.match(generation, /aspect_ratio/);
+});
+
+test('job-id parsing lives in one tested module, not duplicated per call site', () => {
+  // The request_id-vs-job_id distinction must not drift between the weekly
+  // path and the interactive one.
+  assert.match(generation, /from "\.\.\/shared\/graphisteParse\.js"/);
+  assert.match(generation, /extractJobId/);
+  assert.match(generation, /extractStatusUrl/);
+  assert.doesNotMatch(generation, /o\.request_id \|\| o\.requestId/);
 });

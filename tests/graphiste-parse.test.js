@@ -5,10 +5,11 @@ import assert from 'node:assert/strict';
 // TypeScript types on import (supported since v22.6), so we exercise the real
 // extraction logic — not just the source text.
 import {
+  extractImageUrl,
   extractJobId,
   extractStatusUrl,
   jobFailed,
-} from '../supabase/functions/_shared/graphisteParse.ts';
+} from '../server/src/shared/graphisteParse.ts';
 
 // The canonical v1.1 async response (POST /v1/posters/generate, HTTP 202), per
 // the published OpenAPI spec: the JOB id is data.job_id; request_id at the top
@@ -64,4 +65,13 @@ test('jobFailed flags terminal states and non-2xx Graphiste error envelopes', ()
   assert.equal(jobFailed({ data: { status: 'processing' } }), false);
   assert.equal(jobFailed({ data: { status: 'completed' } }), false);
   assert.equal(jobFailed(ASYNC_ACCEPTED), false);
+});
+
+test('extractImageUrl only accepts a finished render, never a placeholder', () => {
+  assert.equal(extractImageUrl({ data: { image_url: 'https://cdn/x.png' } }), 'https://cdn/x.png');
+  // A job that is still running has no image: returning anything here is how a
+  // spinner resolves to a picture that was never generated.
+  assert.equal(extractImageUrl({ data: { status: 'processing', image_url: null } }), null);
+  assert.equal(extractImageUrl({ data: {} }), null);
+  assert.equal(extractImageUrl({}), null);
 });

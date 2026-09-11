@@ -327,3 +327,55 @@ test("the queue's selection index exists and is actually used", async () => {
     `the queue index is missing; plan was:\n${text}`,
   );
 });
+
+test("a capability token is minted once and reused, never regenerated", async () => {
+  // Regenerating it on every publish would break a provider that re-fetches
+  // the image later, and would leave a trail of live tokens behind.
+  const asset = await query<{ id: string }>(
+    `INSERT INTO media_assets (profile_id, kind, storage_path, mime_type, size_bytes)
+     VALUES ($1, 'poster', $2, 'image/png', 2048)
+     RETURNING id`,
+    [alice, `${alice}/poster.png`],
+  );
+  const assetId = asset[0]!.id;
+
+  const mint = () =>
+    query<{ public_token: string | null }>(
+      `UPDATE media_assets
+          SET public_token = COALESCE(public_token, encode(gen_random_bytes(32), 'hex'))
+        WHERE id = $1 AND profile_id = $2
+        RETURNING public_token`,
+      [assetId, alice],
+    );
+
+  const first = (await mint())[0]!.public_token!;
+  const second = (await mint())[0]!.public_token!;
+  assert.equal(first, second, "the token must be stable across publishes");
+  assert.ok(first.length >= 32, "a guessable token is not a capability");
+
+  // And it is scoped to the owner: another account cannot mint one for it.
+  const asBob = await query(
+    `UPDATE media_assets
+        SET public_token = COALESCE(public_token, encode(gen_random_bytes(32), 'hex'))
+      WHERE id = $1 AND profile_id = $2
+      RETURNING public_token`,
+    [assetId, bob],
+  );
+  assert.equal(asBob.length, 0);
+});
+
+test("two accounts cannot end up sharing one capability token", async () => {
+  const rows = await query<{ id: string }>(
+    `INSERT INTO media_assets (profile_id, kind, storage_path, mime_type, size_bytes)
+     VALUES ($1, 'poster', $2, 'image/png', 1024), ($3, 'poster', $4, 'image/png', 1024)
+     RETURNING id`,
+    [alice, `${alice}/a.png`, bob, `${bob}/b.png`],
+  );
+  await query(`UPDATE media_assets SET public_token = 'shared-token' WHERE id = $1`, [
+    rows[0]!.id,
+  ]);
+  await assert.rejects(
+    query(`UPDATE media_assets SET public_token = 'shared-token' WHERE id = $1`, [rows[1]!.id]),
+    /idx_media_assets_public_token|duplicate key/,
+  );
+});

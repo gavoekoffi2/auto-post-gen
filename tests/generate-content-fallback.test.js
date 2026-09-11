@@ -5,29 +5,43 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const source = readFileSync(
-  join(__dirname, '..', 'supabase/functions/generate-content/index.ts'),
-  'utf8',
-);
+const read = (p) => readFileSync(join(__dirname, '..', p), 'utf8');
+const text = read('server/src/services/text.ts');
+const routes = read('server/src/routes/generations.ts');
 
-test('generate-content never returns a 500 just because OpenRouter is unavailable', () => {
-  assert.equal(
-    source.includes('AI service not configured (OPENROUTER_API_KEY missing)'),
-    false,
-    'missing OpenRouter key must not produce a non-2xx response for first users',
+test('a provider outage does not turn into a 500 in the user\'s face', () => {
+  // The whole chain being unavailable still produces something usable rather
+  // than an error the user can neither understand nor act on.
+  assert.match(text, /function cannedFallback/);
+  assert.match(text, /falling back to canned content/);
+});
+
+test('filler is labelled as filler, never passed off as a generation', () => {
+  // This is the important half. Returning boilerplate silently is how a user
+  // publishes text that was never written for their business believing it was.
+  assert.match(text, /fallback: true/);
+  assert.match(read('src/lib/api.ts'), /fallback\?: boolean/);
+  assert.match(read('src/pages/Dashboard.tsx'), /fallback/);
+});
+
+test('a fallback is not charged against the user\'s quota', () => {
+  assert.match(routes, /if \(result\.fallback\) await releaseQuota\(ctx\.profileId, "generate-text"\)/);
+});
+
+test('the quota is atomic and taken before the provider is called', () => {
+  assert.match(routes, /const reserved = await consumeQuota\(ctx\.profileId, "generate-text"/);
+  // Reserved first, then generated: counting afterwards lets parallel requests
+  // all pass the same check.
+  assert.ok(
+    routes.indexOf('consumeQuota(ctx.profileId, "generate-text"') <
+      routes.indexOf('generateText({ profileId: ctx.profileId'),
+    'the quota must be reserved before the paid call',
   );
-  assert.match(source, /provider:\s*"local-content-fallback"/);
+  assert.match(read('server/migrations/0001_core_schema.sql'), /pg_advisory_xact_lock/);
 });
 
-test('generate-content enforces an atomic per-user quota before spending on the AI', () => {
-  // The bypassable count-then-insert check was replaced by an atomic RPC.
-  assert.match(source, /consume_generation_quota/);
-  assert.match(source, /p_function:\s*"generate-content"/);
-});
-
-test('generate-content converts OpenRouter non-2xx into a usable local post fallback', () => {
-  assert.match(source, /throw new Error\(`OpenRouter \$\{textResponse\.status\}:/);
-  assert.match(source, /const payload = fallbackContent\(fallbackReason \|\| "AI returned empty content"\)/);
-  assert.match(source, /JSON\.stringify\(payload\)/);
-  assert.match(source, /status:\s*200/);
+test('an unconfigured server says which secret is missing', () => {
+  // Rather than silently producing filler for every request forever.
+  assert.match(routes, /OPENROUTER_API_KEY/);
+  assert.match(routes, /notConfigured\(/);
 });
