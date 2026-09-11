@@ -170,7 +170,7 @@ scripts/{test-schema.sh,test-image-gen.sh,test-openrouter-image.sh,diagnose-grap
 
 ---
 
-## 5. Preuve qu'aucun appel Supabase ne subsiste dans `src/`
+## 5. Preuve qu'aucun appel Supabase ne subsiste
 
 Commandes et sorties réelles, exécutées sur la branche :
 
@@ -197,10 +197,36 @@ $ npm run build && grep -rc supabase dist/ | grep -v ':0'
 (aucun résultat)          # le bundle produit ne contient pas le mot
 ```
 
-Les deux seules occurrences du mot « supabase » restant dans `tests/` sont des
-commentaires expliquant d'où viennent ces tests. La CI rejette désormais toute
-réapparition d'un import, d'une variable `VITE_SUPABASE_*` ou d'une référence
-dans le bundle.
+### Le backend et la configuration nginx, pas seulement le dashboard
+
+Cette section ne couvrait initialement que `src/`. Deux dépendances
+**fonctionnelles** y avaient donc échappé ; elles sont corrigées :
+
+* `server/src/services/generation.ts` repliait la génération d'affiches sur une
+  adresse `*.supabase.co` codée en dur dès que `GRAPHISTE_GPT_API_URL` était
+  absente. Un opérateur renseignant seulement la clé envoyait donc chaque
+  affiche — nom de l'entreprise, secteur, couleurs, et toute photo de dirigeant
+  consentie — vers un projet Supabase qui ne lui appartient pas. Il n'y a plus
+  de valeur par défaut : sans l'URL, la fonctionnalité est désactivée et le
+  serveur le dit.
+* `nginx.vps.conf` autorisait encore `https://*.supabase.co` et le `wss://`
+  correspondant dans `connect-src`. `connect-src` vaut désormais exactement
+  `'self'`.
+
+```
+$ grep -rnE "https?://[^\"'\`[:space:]]*supabase\.(co|in)" server/src/ nginx.vps.conf
+(aucun résultat)
+```
+
+La CI exécute exactement cette commande, en plus des contrôles sur `src/` et
+sur le bundle. Deux tests la doublent côté suite : aucun hôte Supabase dans une
+URL du serveur, et une demande d'affiche refusée quand l'URL manque. Les deux
+ont été vérifiés en réintroduisant l'ancienne adresse — ils échouent bien.
+
+Les occurrences restantes du mot « supabase » dans le dépôt sont de la prose :
+commentaires expliquant d'où vient un test ou pourquoi une valeur par défaut a
+été retirée, et `docs/HANDOVER.md` / `docs/PRICING.md`, explicitement marqués
+comme historiques en tête de fichier.
 
 ---
 
@@ -478,7 +504,7 @@ npm start
 ```
 npm run lint       0 erreur, 8 avertissements (shadcn/fast-refresh, préexistants)
 npm run typecheck  0 erreur
-npm test           162 tests, 162 réussis, 0 échec
+npm test           164 tests, 164 réussis, 0 échec
 npm run build      OK
 server typecheck   0 erreur
 server test        19 tests, 19 réussis, 0 échec (PostgreSQL 16 local)
@@ -732,6 +758,17 @@ réintroduire.
    fournisseur n'a pas. Les trois sont corrigés (copie locale, reprise du
    job avant publication, jeton de capacité).
 
+5. **Deux dépendances Supabase fonctionnelles subsistaient hors de `src/`**
+   — l'adresse par défaut du moteur d'affiches et l'autorisation `connect-src`
+   du CSP nginx. Détail et preuves en section 5. Elles n'étaient pas visibles
+   depuis le dashboard, ce qui est précisément pourquoi le contrôle CI porte
+   désormais aussi sur `server/src/` et sur `nginx.vps.conf`.
+6. **La version de Node exigée n'était déclarée nulle part.** La suite importe
+   des modules `.ts` directement : en dessous de 22.18, l'installation
+   réussissait et l'échec n'apparaissait qu'au premier test, sous une forme
+   qui ressemblait à un dépôt cassé. `engines` + `engine-strict` le refusent
+   maintenant à l'installation.
+
 Deux durcissements ont également été ajoutés : les URL d'images fournies par
 l'utilisateur sont validées avant d'être remises à un moteur externe (une
 adresse interne y serait une sonde SSRF exécutée depuis le réseau du
@@ -748,11 +785,21 @@ Exécuté réellement, sortie constatée.
 
 - `npm run lint` — 0 erreur, 8 avertissements préexistants.
 - `npm run typecheck` — 0 erreur. `npm --prefix server run typecheck` — 0 erreur.
-- `npm test` — **162 tests, 162 réussis**.
+- `npm test` — **164 tests, 164 réussis**.
 - `npm --prefix server test` — **19 tests, 19 réussis**, contre un PostgreSQL 16 réel.
 - `npm run build` — réussi ; le bundle produit ne contient pas le mot « supabase ».
 - Les deux migrations appliquées sur une base vierge, puis **rejouées deux
-  fois de plus** intégralement, sans erreur.
+  fois de plus** intégralement, sans erreur. Et, cas qui compte vraiment pour
+  votre base existante : la table de suivi vidée puis les deux migrations
+  **ré-appliquées par-dessus un schéma déjà peuplé**, sans erreur, la suite
+  serveur repassant à 19/19 ensuite.
+- `npm ci` depuis un clone neuf, pour le dashboard et pour l'API. Le
+  garde-fou Node vérifié dans les deux sens : réussite sur 22.22, échec
+  `EBADENGINE` quand la plage exigée dépasse la version installée.
+- `nginx -t` sur `nginx.vps.conf`, puis nginx réellement démarré : le CSP
+  servi porte `connect-src 'self'`, et il survit sur `/index.html` à côté de
+  `Cache-Control: no-cache` (le piège `add_header` en bloc `location`) ; un
+  asset au nom haché reçoit bien `max-age=604800`.
 - L'API démarrée et interrogée au curl :
   - `/api/health` → 200 ;
   - huit routes authentifiées sans cookie → **401** ;
@@ -767,7 +814,11 @@ Exécuté réellement, sortie constatée.
   - un post d'un compte A demandé par un compte B → **404** en modification
     comme en suppression, et le post de A reste intact ;
   - la file de publication : ignore un post dans sa fenêtre de report, le
-    tente une fois sortie, incrémente le compteur et le reporte à nouveau.
+    tente une fois sortie, incrémente le compteur et le reporte à nouveau ;
+  - une demande d'affiche avec `GRAPHISTE_GPT_API_KEY` renseignée mais
+    `GRAPHISTE_GPT_API_URL` absente → **503** nommant la variable, **aucun
+    appel sortant**, et `generation_usage` vide : le refus ne consomme pas le
+    quota horaire du compte.
 - Les preuves d'absence de Supabase de la section 5.
 
 ### À vérifier sur le VPS
