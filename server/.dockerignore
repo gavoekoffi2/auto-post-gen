@@ -1,0 +1,12 @@
+# Never copied into the build context. node_modules is reinstalled from the
+# lockfile inside the image, and the rest is either build output, local
+# configuration, or data that must not end up in an image layer.
+node_modules
+dist
+tests
+*.log
+.env
+.env.*
+.npmrc
+.nvmrc
+media

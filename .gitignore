@@ -17,6 +17,9 @@ dist-ssr
 .env
 .env.*
 !.env.example
+# The example carries names and placeholders only; .env.selfhosted itself
+# stays ignored by the rule above.
+!.env.selfhosted.example
 
 # Editor directories and files
 .vscode/*

@@ -501,19 +501,139 @@ npm start
 
 ### Sortie obtenue dans le bac à sable
 
-```
-npm run lint       0 erreur, 8 avertissements (shadcn/fast-refresh, préexistants)
-npm run typecheck  0 erreur
-npm test           164 tests, 164 réussis, 0 échec
-npm run build      OK
-server typecheck   0 erreur
-server test        19 tests, 19 réussis, 0 échec (PostgreSQL 16 local)
-git diff --check   propre
+Séquence exécutée réellement, `node_modules` supprimés d'abord, dans cet ordre.
 
-npm ci             réussit sur Node 22.22 (dashboard et API), depuis un clone neuf
-npm ci             échoue en EBADENGINE quand la plage requise dépasse la version
-                   installée — le garde-fou a été vérifié dans les deux sens
 ```
+rm -rf node_modules && npm ci        OK
+npm run lint                         0 erreur, 8 avertissements (shadcn/fast-refresh, préexistants)
+npm run typecheck                    0 erreur
+npm test                             164 tests, 164 réussis, 0 échec
+npm run build                        OK
+
+rm -rf server/node_modules
+npm --prefix server ci               OK, 0 vulnérabilité
+npm --prefix server run typecheck    0 erreur
+npm --prefix server run migrate      2 migrations appliquées
+npm --prefix server test             19 tests, 19 réussis, 0 échec (PostgreSQL 16 réel)
+npm --prefix server run build        OK
+
+git diff --check                     propre
+grep Supabase (imports, VITE_, appels)   aucun résultat
+grep hôtes *.supabase.co / wss://        aucun résultat
+```
+
+### Sur les échecs signalés par la validation indépendante
+
+Trois points du rapport n'ont **pas pu être reproduits**, au SHA exact contrôlé
+(`7b49163`), depuis un clone neuf de GitHub avec `node_modules` supprimés :
+
+| Signalé | Constaté ici |
+|---|---|
+| `npm run lint` → `Cannot find package '@eslint/js'` | 0 erreur, 8 avertissements |
+| typecheck : `src/assets/*.jpg` et `src/index.css` introuvables | 0 erreur ; les fichiers sont versionnés et présents (43–159 Ko) |
+| serveur : `Cannot find name 'process'`, `'Buffer'`, `node:crypto`, types `pg` | 0 erreur |
+
+Ces trois symptômes sont la signature d'un `node_modules` absent, pas d'un
+lockfile incohérent : `@eslint/js`, `@types/node` et `@types/pg` sont déclarés
+**et** présents dans les deux lockfiles, et `npm ci` — qui installe
+exclusivement depuis le lockfile et échoue s'il diverge de `package.json` —
+réussit dans les deux paquets. Si la validation se reproduit chez vous,
+l'information utile serait la sortie de `npm ci` elle-même, pas celle de la
+commande suivante.
+
+Un garde-fou a tout de même été ajouté, parce qu'une version de Node trop
+ancienne produisait exactement ce genre d'erreur déroutante : voir « Prérequis :
+Node >= 22.18 » ci-dessus.
+
+---
+
+## 10 bis. Artefacts Docker
+
+Ajoutés parce qu'ils manquaient : la branche apportait un backend `server/`
+sans aucun moyen de le construire ni de le lancer.
+
+| Fichier | Rôle |
+|---|---|
+| `server/Dockerfile` | Image de l'API. Multi-étages : compilation TypeScript puis image d'exécution sans dev-dependencies. |
+| `server/.dockerignore` | Empêche `node_modules`, `dist`, les tests, les `.env` et les médias d'entrer dans le contexte de build. |
+| `deploy/docker-compose.vps.yml` | Pile de production : `postgres`, `api`, `frontend`, plus un service ponctuel `migrate`. |
+| `.env.selfhosted.example` | **Noms de variables et valeurs factices uniquement.** Aucun secret. |
+
+L'ancien `docker-compose.vps.yml` de la racine ne décrivait que le frontend et
+proxifiait vers un conteneur `api` qui n'existait nulle part ; il a été déplacé
+dans `deploy/` et complété, pour qu'il n'y ait qu'un seul fichier de pile.
+
+### Rien n'est présumé de votre installation
+
+Noms de conteneurs, noms de volumes, hôte public et chemins viennent tous de
+`.env.selfhosted`. **Avant le premier démarrage**, comparez avec l'existant :
+
+```bash
+docker volume ls
+docker ps -a
+```
+
+Si `pro-social-ai_pgdata` et `pro-social-ai_media` existent déjà et contiennent
+les données vivantes, mettez `VOLUMES_ARE_EXTERNAL=true` : Compose les adopte
+au lieu d'en créer des vides. **C'est le point le plus dangereux de ce
+déploiement** — se tromper ici démarre sur une base neuve et donne l'illusion
+d'une perte totale de données.
+
+### Migration du schéma : commande explicite, jamais automatique
+
+```bash
+docker compose -f deploy/docker-compose.vps.yml --env-file .env.selfhosted \
+  --profile migrate run --rm migrate
+```
+
+Le service `migrate` est sous un profil, donc `up` ne le déclenche pas. C'est
+délibéré : un conteneur qui migre à son démarrage rejoue le schéma à chaque
+redémarrage et sur chaque réplique à la fois. Les migrations sont idempotentes
+et suivies dans `schema_migrations`, donc la relancer est sans effet.
+
+### Ce qui a été vérifié dans le bac à sable
+
+Docker était disponible ici, donc ces artefacts n'ont pas été écrits « à
+l'aveugle » — ils ont été construits et exécutés :
+
+```
+docker compose config                        valide
+docker build (server/Dockerfile)             image construite
+  User=node                                  non-root
+  Healthcheck                                présent
+  typescript dans node_modules               absent (dev-dependencies élaguées)
+  fichiers *.test.ts dans l'image            aucun
+  /app                                       dist, media, migrations, node_modules, package.json
+  variables d'environnement de l'image       PATH, NODE_VERSION, YARN_VERSION, NODE_ENV — aucun secret
+docker compose up -d                         postgres healthy, puis api healthy, puis frontend healthy
+profile migrate run --rm migrate             2 migrations appliquées, puis « Schema already up to date »
+port 5432 depuis l'hôte                      fermé (aucun port publié)
+```
+
+Puis le parcours utilisateur complet, **à travers nginx dans la pile**, avec un
+terminateur TLS devant pour reproduire Traefik :
+
+```
+POST /api/auth/register                      201 + cookie HttpOnly; Secure; SameSite=Lax
+GET  /api/auth/me                            200
+PATCH /api/profile (onboarding)              200
+POST /api/posts                              201
+GET  /api/posts, /api/posts/statistics       200
+GET  /api/media                              200
+PATCH /api/profile {plan, role}              200 mais plan reste "starter"
+GET  /api/admin/me (compte simple)           403
+POST /api/auth/logout                        204, puis /api/auth/me → 401
+GET  / et lien profond /dashboard            200 (SPA)
+```
+
+Le build de l'image a nécessité, **dans ce bac à sable uniquement**, d'injecter
+le certificat du proxy intercepteur pour que `npm ci` aboutisse. Cette
+injection n'est pas dans le `Dockerfile` livré : sur un hôte à réseau normal,
+il se construit tel quel.
+
+Ce qui reste à vérifier sur le VPS : que ces noms correspondent aux vôtres, que
+le réseau externe `web` est bien celui de votre reverse-proxy, et que le
+certificat TLS est émis pour votre hôte réel.
 
 ---
 
@@ -524,58 +644,71 @@ sauvegarde de la section 12.
 
 ```bash
 # 0. Sauvegarder (section 12). Ne pas sauter cette étape.
-#
-#    Les commandes ci-dessous supposent que le service de l'API s'appelle
-#    "api" dans docker-compose.yml. Ce nom n'a pas pu être vérifié depuis le
-#    bac à sable : lisez /opt/pro-social-ai/docker-compose.yml d'abord.
 
 # 1. Récupérer la branche
 cd /opt/pro-social-ai
 git fetch origin
 git checkout claude/lucid-johnson-14zub1
 
-# 2. Renseigner les variables de la section 9 dans .env.selfhosted
-#    (jamais dans le dépôt, jamais dans un commit)
-$EDITOR /opt/pro-social-ai/.env.selfhosted
-chmod 600 /opt/pro-social-ai/.env.selfhosted
+# 2. Configuration. Partir de l'exemple, qui ne contient que des noms.
+cp .env.selfhosted.example .env.selfhosted
+$EDITOR .env.selfhosted
+chmod 600 .env.selfhosted
 
-# 3. Appliquer les migrations, base à l'arrêt de l'ancienne API si elle tourne
-cd /opt/pro-social-ai/server
-npm ci
-DATABASE_URL="…" npm run migrate
-#    Sortie attendue : "applied 0001…", "applied 0002…"
-#    ou "skip … (already applied)" sur une base déjà migrée.
+# 3. ADOPTER les volumes existants plutôt qu'en créer des vides.
+docker volume ls          # relever les noms réels
+docker ps -a              # relever les noms de conteneurs réels
+#    Reporter ces noms dans .env.selfhosted (PGDATA_VOLUME, MEDIA_VOLUME,
+#    *_CONTAINER_NAME) et mettre VOLUMES_ARE_EXTERNAL=true si les volumes
+#    existent déjà. Se tromper ici démarre sur une base vierge.
 
-# 4. Construire et démarrer l'API
-cd /opt/pro-social-ai
-docker compose build api
-docker compose up -d api
-docker compose logs -f api        # vérifier les capacités annoncées au démarrage
+# 4. Construire l'image de l'API
+docker compose -f deploy/docker-compose.vps.yml --env-file .env.selfhosted build api
 
-# 5. Vérifier l'API avant de toucher au frontend
-curl -s http://127.0.0.1:8080/api/health
+# 5. Démarrer PostgreSQL seul, puis migrer — avant toute API qui écrit
+docker compose -f deploy/docker-compose.vps.yml --env-file .env.selfhosted up -d postgres
+docker compose -f deploy/docker-compose.vps.yml --env-file .env.selfhosted \
+  --profile migrate run --rm migrate
+#    Attendu : "applied 0001…/0002…" sur une base neuve,
+#    "skip … (already applied)" sur une base déjà migrée.
+
+# 6. Démarrer l'API et lire ce qu'elle annonce
+docker compose -f deploy/docker-compose.vps.yml --env-file .env.selfhosted up -d api
+docker compose -f deploy/docker-compose.vps.yml --env-file .env.selfhosted logs -f api
+#    Les lignes "capability unavailable: …" listent les fonctionnalités
+#    désactivées faute de clé. Aucune n'empêche le démarrage.
+
+# 7. Vérifier l'API depuis le réseau interne, avant de toucher au frontend
+docker compose -f deploy/docker-compose.vps.yml --env-file .env.selfhosted \
+  exec api node -e "fetch('http://127.0.0.1:8080/api/health').then(r=>r.text()).then(console.log)"
 #    attendu : {"ok":true}
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/api/profile
-#    attendu : 401
 
-# 6. Construire le dashboard
+# 8. Construire le dashboard
 cd /root/projects/auto-post-gen
 git checkout claude/lucid-johnson-14zub1
 npm ci
 npm run build
 
-# 7. Basculer dist/ de façon atomique (et réversible)
+# 9. Basculer dist/ de façon atomique (et réversible)
 mv /root/projects/auto-post-gen/dist /root/projects/auto-post-gen/dist.new
 mv /root/projects/auto-post-gen/dist.current /root/projects/auto-post-gen/dist.previous
 mv /root/projects/auto-post-gen/dist.new /root/projects/auto-post-gen/dist.current
 ln -sfn /root/projects/auto-post-gen/dist.current /root/projects/auto-post-gen/dist
 
-# 8. Recharger nginx (voir DEPLOYMENT.md pour la configuration attendue)
-docker exec auto-post-gen-frontend nginx -t
-docker exec auto-post-gen-frontend nginx -s reload
+# 10. Démarrer / recharger le frontend
+cd /opt/pro-social-ai
+docker compose -f deploy/docker-compose.vps.yml --env-file .env.selfhosted up -d frontend
+docker exec "$FRONTEND_CONTAINER_NAME" nginx -t
+docker exec "$FRONTEND_CONTAINER_NAME" nginx -s reload
 
-# 9. Vérifier de bout en bout, depuis l'extérieur
+# 11. Vérifier de bout en bout, depuis l'extérieur
 curl -s https://auto-post-gen.76.13.129.252.sslip.io/api/health
+#    attendu : {"ok":true} en application/json.
+#    Si vous recevez du HTML ici, le proxy /api/ de nginx n'est pas actif :
+#    c'est le bloc "location /api/" de nginx.vps.conf. Sans lui, le site
+#    s'affiche mais AUCUNE action ne fonctionne.
+curl -s -o /dev/null -w '%{http_code}\n' https://auto-post-gen.76.13.129.252.sslip.io/api/profile
+#    attendu : 401
 #    puis, dans un navigateur : créer un compte, faire l'onboarding,
 #    générer un post, générer une affiche, programmer, publier.
 ```
@@ -768,6 +901,17 @@ réintroduire.
    réussissait et l'échec n'apparaissait qu'au premier test, sous une forme
    qui ressemblait à un dépôt cassé. `engines` + `engine-strict` le refusent
    maintenant à l'installation.
+
+7. **`nginx.vps.conf` n'avait aucun proxy `/api/`.** Toute requête d'API
+   tombait dans `location /` et recevait `index.html` en **200**. Le site se
+   serait affiché et absolument aucune action n'aurait fonctionné : ni
+   connexion, ni publication, ni génération. `DEPLOYMENT.md` documentait
+   pourtant le bloc correct — le fichier réellement déployable, lui, ne
+   l'avait pas. Reproduit puis corrigé (section 10 bis).
+8. **Aucun artefact de construction Docker pour l'API.** La branche ajoutait
+   `server/` sans `Dockerfile`, et le seul fichier Compose ne décrivait que le
+   frontend, en proxifiant vers un conteneur `api` inexistant. Ajoutés et
+   réellement exécutés dans le bac à sable (section 10 bis).
 
 Deux durcissements ont également été ajoutés : les URL d'images fournies par
 l'utilisateur sont validées avant d'être remises à un moteur externe (une
