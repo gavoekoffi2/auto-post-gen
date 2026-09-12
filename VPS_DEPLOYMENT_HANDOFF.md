@@ -16,7 +16,7 @@ Document de reprise pour l'ingénieur qui déploiera cette branche sur le VPS.
 
 Branche : `claude/lucid-johnson-14zub1`
 
-Dernier commit de code : `a24dc527dbb334650a7343d414f91aa6df592192`
+Dernier commit de code : `df7b622998f764b30ec3e3a64c7478dd5979f60c`
 
 Ce document ne peut pas contenir le SHA de son propre commit. Le SHA ci-dessus
 est celui du dernier commit de **code** ; la pointe de la branche est le
