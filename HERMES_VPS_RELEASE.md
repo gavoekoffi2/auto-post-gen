@@ -17,7 +17,7 @@
 | | |
 |---|---|
 | **Branche** | `claude/legacy-status-compat-9m2x` |
-| **SHA du code** | `CODE_SHA_PLACEHOLDER` |
+| **SHA du code** | `5fa5755b29fd955d7b54489be0ad131d7c775105` |
 | **SHA à déployer** | la pointe de la branche (ce document est le seul commit au-dessus du code ; `git log -1 --format=%H`) |
 | **Branche précédente** | `claude/legacy-db-compat-b7k3` @ `07d8d0d2f8c13facf1fdfc9646d1e560cea96d4d` (bloquée par la répétition générale) |
 | **Branche d'origine** | `claude/lucid-johnson-14zub1` @ `f3479c2428a45e696e0c48ce679df3946a94b689` |
