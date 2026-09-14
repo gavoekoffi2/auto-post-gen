@@ -11,6 +11,7 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { AudienceEditor } from "@/components/AudienceEditor";
+import { PosterPersonImage, type PosterPersonPlacement } from "@/components/PosterPersonImage";
 import { AudienceSegment, normalizeAudienceSegments } from "@/lib/audiences";
 
 export default function Onboarding() {
@@ -30,6 +31,10 @@ export default function Onboarding() {
     platforms: [] as string[],
     preferredDays: [] as string[],
     imagePeopleType: "african",
+    usePosterPersonImage: false,
+    posterPersonImageUrl: "",
+    posterPersonLabel: "",
+    posterPersonPlacement: "right" as PosterPersonPlacement,
     audienceSuggestions: [] as AudienceSegment[],
     selectedAudienceIds: [] as string[],
   });
@@ -107,7 +112,7 @@ export default function Onboarding() {
         if (!analyzed) return;
       }
       setStep(4);
-    } else if (step < 8) {
+    } else if (step < 9) {
       setStep(step + 1);
     } else {
       // Save profile to database
@@ -134,6 +139,13 @@ export default function Onboarding() {
               preferred_days: formData.preferredDays,
               auto_publish: false,
               image_people_type: formData.imagePeopleType,
+              // Opt-in personal photo on every poster. Keep the switch on only
+              // when a photo was really uploaded.
+              use_poster_person_image:
+                formData.usePosterPersonImage && !!formData.posterPersonImageUrl,
+              poster_person_image_url: formData.posterPersonImageUrl || null,
+              poster_person_label: formData.posterPersonLabel.trim() || null,
+              poster_person_placement: formData.posterPersonPlacement,
               audience_suggestions: formData.audienceSuggestions,
               target_audiences: formData.audienceSuggestions.filter((audience) =>
                 formData.selectedAudienceIds.includes(audience.id)
@@ -178,6 +190,9 @@ export default function Onboarding() {
         return formData.preferredDays.length > 0;
       case 8:
         return formData.imagePeopleType !== "";
+      case 9:
+        // The personal photo is entirely optional.
+        return true;
       default:
         return false;
     }
@@ -198,7 +213,7 @@ export default function Onboarding() {
         {/* Progress bar */}
         <div className="mb-8">
           <div className="flex justify-between mb-2">
-            {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
+            {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => (
               <div
                 key={i}
                 className={`h-2 flex-1 mx-1 rounded-full transition-all ${
@@ -208,7 +223,7 @@ export default function Onboarding() {
             ))}
           </div>
           <p className="text-center text-sm text-muted-foreground">
-            Étape {step} sur 8
+            Étape {step} sur 9
           </p>
         </div>
 
@@ -462,7 +477,7 @@ export default function Onboarding() {
           {step === 8 && (
             <div className="space-y-6">
               <div>
-                <h2 className="text-2xl font-bold mb-2">Dernière étape !</h2>
+                <h2 className="text-2xl font-bold mb-2">Vos visuels</h2>
                 <p className="text-muted-foreground">
                   Quel type de personnes souhaitez-vous voir dans vos images ?
                 </p>
@@ -521,6 +536,43 @@ export default function Onboarding() {
             </div>
           )}
 
+          {step === 9 && (
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-2xl font-bold mb-2">Dernière étape : votre photo (facultatif)</h2>
+                <p className="text-muted-foreground">
+                  Vous pouvez apparaître sur chacune de vos affiches. L'IA intègre votre photo
+                  à côté du texte, comme une vraie affiche professionnelle.
+                </p>
+              </div>
+
+              <PosterPersonImage
+                value={{
+                  enabled: formData.usePosterPersonImage,
+                  imageUrl: formData.posterPersonImageUrl,
+                  label: formData.posterPersonLabel,
+                  placement: formData.posterPersonPlacement,
+                }}
+                companyName={formData.companyName}
+                footerText={formData.posterFooterText}
+                onChange={(next) =>
+                  setFormData({
+                    ...formData,
+                    usePosterPersonImage: next.enabled,
+                    posterPersonImageUrl: next.imageUrl,
+                    posterPersonLabel: next.label,
+                    posterPersonPlacement: next.placement,
+                  })
+                }
+              />
+
+              <p className="text-xs text-muted-foreground">
+                Vous pourrez activer, changer ou retirer cette photo à tout moment dans
+                Profil → Images.
+              </p>
+            </div>
+          )}
+
           <div className="flex justify-between mt-8">
             <Button
               variant="outline"
@@ -537,7 +589,7 @@ export default function Onboarding() {
               disabled={!canProceed() || loading || analyzingAudiences}
               className="bg-gradient-to-r from-primary to-secondary hover:opacity-90"
             >
-              {analyzingAudiences ? "Analyse des cibles..." : loading ? "Sauvegarde..." : step === 8 ? "Valider mes cibles et terminer" : "Suivant"}
+              {analyzingAudiences ? "Analyse des cibles..." : loading ? "Sauvegarde..." : step === 9 ? "Terminer la configuration" : "Suivant"}
               <ArrowRight className="w-4 h-4 ml-2" />
             </Button>
           </div>

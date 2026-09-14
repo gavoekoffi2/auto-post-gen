@@ -5,7 +5,12 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { clientIp, hitIpRateLimit } from "../_shared/rateLimit.ts";
 
 
-const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+// One-click validation links are mailed by the WEEKLY cron and cover posts
+// scheduled up to 7 days ahead, so a 24h TTL expired before most users had even
+// opened the email. The token is a random uuid, single-use (validation_token_used_at)
+// and only ever moves a post from 'pending' to 'validated' — 7 days is the
+// right trade-off for this flow.
+const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 serve(async (req) => {
   const corsHeaders = buildCorsHeaders(req.headers.get("origin"));

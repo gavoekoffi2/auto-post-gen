@@ -21,6 +21,14 @@
 import { getSocialImageSpec, type SocialImageSpec } from "./socialImageSpecs.ts";
 import { fetchImageBytes } from "./safeFetch.ts";
 import { extractJobId, extractStatusUrl, jobFailed } from "./graphisteParse.ts";
+import {
+  brandFontDirection,
+  imageStyleDirection,
+  normalizePosterPerson,
+  peopleTypeDirection,
+  posterPersonBlock,
+  type PosterPersonInput,
+} from "./posterPrompt.ts";
 
 const GRAPHISTE_GPT_DEFAULT_URL =
   "https://bbfzfgcdioewzbmlgaqy.supabase.co/functions/v1/api-v1/v1/posters/generate";
@@ -43,6 +51,13 @@ export interface StartPosterParams {
   accent: string;
   logoUrl: string | null;
   platforms: string[];
+  // Saved visual preferences (Profil → Images). Optional so existing callers
+  // keep compiling; when absent the builders fall back to their defaults.
+  imageStyle?: string | null;
+  peopleType?: string | null;
+  brandFont?: string | null;
+  // Opt-in personal photo composited into every poster.
+  person?: PosterPersonInput | null;
 }
 
 export interface PosterResult {
@@ -123,10 +138,13 @@ function buildGraphisteSubject(params: StartPosterParams, spec: SocialImageSpec)
       : `N'invente aucun appel à l'action commercial, prix ou offre: ne transforme pas le visuel en publicité; seul le texte permanent explicitement choisi par l'utilisateur ci-dessous peut apparaître.`,
     persistentFooter,
     `Identité de marque: place le logo fourni et/ou le nom exact "${params.companyName}" comme signature de marque discrète dans l'angle inférieur droit, toujours au même emplacement, petite mais lisible; ce nom ne doit jamais être le titre principal.`,
+    posterPersonBlock(normalizePosterPerson(params.person)),
+    imageStyleDirection(params.imageStyle),
+    brandFontDirection(params.brandFont),
     `Interdictions: pas de petit texte illisible, pas de fausses lettres, pas de watermark, pas d'élément d'interface, pas d'image vide ni de template vide.`,
-    `Si des personnes sont représentées, privilégier des personnes africaines/noires professionnelles et crédibles.`,
+    peopleTypeDirection(params.peopleType),
     `Direction (EN): premium editorial social visual, complementary to the post text, cinematic lighting, strong visual hierarchy, modern clean layout, short readable headline, discreet fixed bottom-right brand signature, no tiny unreadable text, no random letters, no watermark, no UI.`,
-  ].join("\n").slice(0, 1800);
+  ].filter(Boolean).join("\n").slice(0, 2400);
 }
 
 function absoluteGraphisteUrl(value: string): string {
@@ -235,6 +253,9 @@ export async function startPosterJob(params: StartPosterParams): Promise<PosterR
   };
   if (colors.length) requestBody.colors = colors;
   if (params.logoUrl && /^https?:\/\//i.test(params.logoUrl)) requestBody.logo_urls = [params.logoUrl];
+  // Opt-in personal photo composited into the poster (documented v1.1 field).
+  const person = normalizePosterPerson(params.person);
+  if (person) requestBody.reference_image_url = person.imageUrl;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 30_000);

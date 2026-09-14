@@ -9,6 +9,16 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { buildCorsHeaders } from "../_shared/cors.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { getSocialImageSpec, type SocialImageSpec } from "../_shared/socialImageSpecs.ts";
+import {
+  brandFontDirection,
+  imageStyleDirection,
+  normalizePosterPerson,
+  peopleTypeDirection,
+  posterPersonBlock,
+  posterPersonMisconfigured,
+  POSTER_PERSON_MISSING_MESSAGE,
+  type PosterPerson,
+} from "../_shared/posterPrompt.ts";
 // Image generation for Pro Social AI must produce real poster layouts.
 // Keep this endpoint dedicated to Graphiste GPT poster output rather than
 // generic image providers. The chosen output format always follows the post's
@@ -311,6 +321,10 @@ function buildGraphisteSubject(params: {
   description: string;
   companyName: string;
   footerText: string;
+  imageStyle: string;
+  peopleType: string;
+  brandFont: string;
+  person: PosterPerson | null;
   spec: SocialImageSpec;
 }): string {
   const ctx = [
@@ -334,10 +348,13 @@ function buildGraphisteSubject(params: {
       : `N'invente aucun appel à l'action commercial, prix ou offre: ne transforme pas le visuel en publicité; seul le texte permanent explicitement choisi par l'utilisateur ci-dessous peut apparaître.`,
     persistentFooter,
     `Identité de marque: place le logo fourni et/ou le nom exact "${params.companyName}" comme signature de marque discrète dans l'angle inférieur droit, toujours au même emplacement, petite mais lisible; ce nom ne doit jamais être le titre principal.`,
+    posterPersonBlock(params.person),
+    imageStyleDirection(params.imageStyle),
+    brandFontDirection(params.brandFont),
     `Interdictions: pas de petit texte illisible, pas de fausses lettres, pas de watermark, pas d'élément d'interface, pas d'image vide ni de template vide.`,
-    `Si des personnes sont représentées, privilégier des personnes africaines/noires professionnelles et crédibles.`,
+    peopleTypeDirection(params.peopleType),
     `Direction (EN): premium editorial social visual, complementary to the post text, cinematic lighting, strong visual hierarchy, modern clean layout, short readable headline, discreet fixed bottom-right brand signature, no tiny unreadable text, no random letters, no watermark, no UI.`,
-  ].join("\n").slice(0, 1800);
+  ].filter(Boolean).join("\n").slice(0, 2400);
 }
 
 // Turn a Graphiste GPT HTTP error into a clear, actionable message. Parses the
@@ -368,6 +385,10 @@ async function tryGraphisteGptPoster(params: {
   description: string;
   companyName: string;
   footerText: string;
+  imageStyle: string;
+  peopleType: string;
+  brandFont: string;
+  person: PosterPerson | null;
   primary: string;
   secondary: string;
   accent: string;
@@ -409,6 +430,12 @@ async function tryGraphisteGptPoster(params: {
   if (colors.length) requestBody.colors = colors;
   if (params.logoUrl && /^https?:\/\//i.test(params.logoUrl)) {
     requestBody.logo_urls = [params.logoUrl];
+  }
+  // Opt-in personal photo: the documented v1.1 field for a real image the
+  // engine must composite into the poster (normalizePosterPerson already
+  // guarantees a public https URL).
+  if (params.person) {
+    requestBody.reference_image_url = params.person.imageUrl;
   }
 
   const controller = new AbortController();
@@ -657,7 +684,7 @@ serve(async (req) => {
       const { data: profile } = await supabase
         .from("profiles")
         .select(
-          "image_people_type, image_style, brand_primary_color, brand_secondary_color, brand_accent_color, brand_font, sector, description, company_name, logo_url, poster_footer_text",
+          "image_people_type, image_style, brand_primary_color, brand_secondary_color, brand_accent_color, brand_font, sector, description, company_name, logo_url, poster_footer_text, use_poster_person_image, poster_person_image_url, poster_person_label, poster_person_placement",
         )
         .eq("id", userId)
         .maybeSingle();
@@ -668,6 +695,24 @@ serve(async (req) => {
       const sector = profile?.sector || "";
       const description = profile?.description || "";
 
+      // Opt-in "ma photo sur chaque affiche". If the option is ON but the
+      // stored photo is unusable, stop with an actionable message rather than
+      // silently billing a poster without the person the user expects.
+      const personInput = {
+        enabled: profile?.use_poster_person_image === true,
+        imageUrl: profile?.poster_person_image_url || null,
+        label: profile?.poster_person_label || null,
+        placement: profile?.poster_person_placement || null,
+      };
+      if (posterPersonMisconfigured(personInput)) {
+        return jsonResponse({
+          error: POSTER_PERSON_MISSING_MESSAGE,
+          code: "missing_person_image",
+          format,
+        });
+      }
+      const person = normalizePosterPerson(personInput);
+
       const graphiste = await tryGraphisteGptPoster({
         postContent,
         contentCategory,
@@ -675,6 +720,10 @@ serve(async (req) => {
         description,
         companyName: profile?.company_name || "Entreprise",
         footerText: profile?.poster_footer_text || "",
+        imageStyle: profile?.image_style || "",
+        peopleType: profile?.image_people_type || "",
+        brandFont: profile?.brand_font || "",
+        person,
         primary,
         secondary,
         accent,

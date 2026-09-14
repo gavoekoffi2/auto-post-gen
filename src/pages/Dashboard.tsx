@@ -171,11 +171,13 @@ export default function Dashboard() {
       // Does the user have a social account connected? Drives the
       // "connect a network" first-run nudge. Only non-secret columns are
       // readable here (tokens are locked down at the DB level).
+      // Count EVERY provider: direct OAuth (LinkedIn/Meta/Twitter), Zernio,
+      // Postiz and Ayrshare all publish. Filtering on 'zernio' alone kept
+      // nagging users who had connected a network through direct OAuth.
       const { count: connCount } = await supabase
         .from('social_connections')
         .select('id', { count: 'exact', head: true })
-        .eq('user_id', session.user.id)
-        .eq('provider', 'zernio');
+        .eq('user_id', session.user.id);
       setHasConnection((connCount ?? 0) > 0);
 
       // Load posts

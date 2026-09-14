@@ -19,5 +19,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run lint
+      # Vite's build does not type-check; run tsc explicitly so type errors
+      # cannot reach production (three were sitting in main undetected).
+      - run: npm run typecheck
       - run: npm test
       - run: npm run build

@@ -1,4 +1,8 @@
 export interface AudienceSegment {
+  // Index signature so a segment list is assignable to the generated `Json`
+  // column type (profiles.audience_suggestions / target_audiences) without a
+  // cast — `tsc --noEmit` rejected the plain interface.
+  [key: string]: string | number | string[] | undefined;
   id: string;
   name: string;
   description: string;

@@ -118,14 +118,40 @@ serve(async (req) => {
     // text-only. publish-post still publishes everything on schedule.
     const posterDeadline = Date.now() + 90_000;
 
-    const { data: profiles, error: profilesError } = await supabase
+    // Who gets weekly posts?
+    //   * auto_publish = true            → posts are generated AND published
+    //     automatically (inserted as 'validated').
+    //   * auto_generate_enabled = true   → posts are generated and wait for the
+    //     user (inserted as 'pending'); send-validation-email then mails them.
+    // The second case was missing entirely: users who wanted to validate every
+    // post manually received nothing from the weekly cron, and the validation
+    // email had no pending post to send.
+    const { data: candidateProfiles, error: profilesError } = await supabase
       .from("profiles")
       .select("*")
-      .eq("auto_publish", true);
+      .or("auto_publish.eq.true,auto_generate_enabled.eq.true");
 
     if (profilesError) throw profilesError;
 
-    console.log(`Found ${profiles?.length || 0} profile(s) with auto_publish enabled`);
+    // Never spend AI credits on a half-finished signup: onboarding must be done
+    // (the same completeness check the frontend uses to unlock the dashboard).
+    const profiles = (candidateProfiles || []).filter((profile: any) => {
+      const complete =
+        !!profile.sector &&
+        !!profile.tone &&
+        Array.isArray(profile.content_types) &&
+        profile.content_types.length > 0 &&
+        !!(profile.description || "").trim();
+      if (!complete) {
+        console.log(`Skipping ${profile.id}: onboarding not complete`);
+      }
+      return complete;
+    });
+
+    console.log(
+      `Found ${profiles.length} profile(s) eligible for weekly generation ` +
+        `(${profiles.filter((p: any) => p.auto_publish).length} auto-publish)`,
+    );
 
     const results: any[] = [];
 
@@ -390,11 +416,16 @@ Génère uniquement le texte du post, sans titre ni explication.`;
               content: generatedContent,
               content_category: contentCategory,
               platforms,
-              // When auto_publish is on, mark as validated so the publisher
-              // can pick them up; the user has pre-approved the workflow.
-              status: "validated",
+              // auto_publish on  → 'validated': the publisher may send it, the
+              //                    user pre-approved the workflow.
+              // auto_publish off → 'pending': it waits for an explicit
+              //                    validation (dashboard or email link).
+              status: profile.auto_publish ? "validated" : "pending",
               week_number: weekNumber,
               scheduled_for: scheduledDate.toISOString(),
+              // Starts the 24h validation-link TTL checked by validate-post.
+              // Without it a mailed link never expired.
+              validation_token_created_at: profile.auto_publish ? null : new Date().toISOString(),
               image_url: customImage,
             })
             .select("id")
@@ -425,6 +456,18 @@ Génère uniquement le texte du post, sans titre ni explication.`;
                 accent: profile.brand_accent_color || "#F59E0B",
                 logoUrl: profile.logo_url || null,
                 platforms,
+                imageStyle: profile.image_style || null,
+                peopleType: profile.image_people_type || null,
+                brandFont: profile.brand_font || null,
+                // Opt-in personal photo on every poster. An unusable stored URL
+                // is ignored here (the post still gets a poster); the dashboard
+                // path reports it so the user can fix the photo.
+                person: {
+                  enabled: profile.use_poster_person_image === true,
+                  imageUrl: profile.poster_person_image_url || null,
+                  label: profile.poster_person_label || null,
+                  placement: profile.poster_person_placement || null,
+                },
               });
               if (poster.imageUrl) {
                 // Fast path: a finished poster came back immediately.

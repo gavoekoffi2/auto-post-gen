@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { LogoUpload } from "@/components/LogoUpload";
 import { CustomImageLibrary } from "@/components/CustomImageLibrary";
+import { PosterPersonImage, type PosterPersonPlacement } from "@/components/PosterPersonImage";
 import { AccountSettings } from "@/components/AccountSettings";
 
 const DAYS = [
@@ -61,9 +62,14 @@ export default function Profile() {
     promo_posts_per_week: 1,
     research_posts_per_week: 1,
     auto_publish: false,
+    auto_generate_enabled: true,
     image_people_type: "african",
     use_custom_images: false,
     custom_image_urls: [] as string[],
+    use_poster_person_image: false,
+    poster_person_image_url: "",
+    poster_person_label: "",
+    poster_person_placement: "right" as PosterPersonPlacement,
     brand_primary_color: "#8B5CF6",
     brand_secondary_color: "#3B82F6",
     brand_accent_color: "#F59E0B",
@@ -116,9 +122,14 @@ export default function Profile() {
           promo_posts_per_week: data.promo_posts_per_week ?? 1,
           research_posts_per_week: data.research_posts_per_week ?? 1,
           auto_publish: data.auto_publish || false,
+          auto_generate_enabled: data.auto_generate_enabled ?? true,
           image_people_type: data.image_people_type || "african",
           use_custom_images: data.use_custom_images || false,
           custom_image_urls: data.custom_image_urls || [],
+          use_poster_person_image: data.use_poster_person_image || false,
+          poster_person_image_url: data.poster_person_image_url || "",
+          poster_person_label: data.poster_person_label || "",
+          poster_person_placement: (data.poster_person_placement as PosterPersonPlacement) || "right",
           brand_primary_color: data.brand_primary_color || "#8B5CF6",
           brand_secondary_color: data.brand_secondary_color || "#3B82F6",
           brand_accent_color: data.brand_accent_color || "#F59E0B",
@@ -203,9 +214,16 @@ export default function Profile() {
           promo_posts_per_week: profile.promo_posts_per_week,
           research_posts_per_week: profile.research_posts_per_week,
           auto_publish: profile.auto_publish,
+          auto_generate_enabled: profile.auto_generate_enabled,
           image_people_type: profile.image_people_type,
           use_custom_images: profile.use_custom_images,
           custom_image_urls: profile.custom_image_urls,
+          // Only keep the photo switch on when a photo is actually stored, so a
+          // profile can never ask for a person the poster engine cannot fetch.
+          use_poster_person_image: profile.use_poster_person_image && !!profile.poster_person_image_url,
+          poster_person_image_url: profile.poster_person_image_url || null,
+          poster_person_label: profile.poster_person_label.trim() || null,
+          poster_person_placement: profile.poster_person_placement,
           brand_primary_color: profile.brand_primary_color,
           brand_secondary_color: profile.brand_secondary_color,
           brand_accent_color: profile.brand_accent_color,
@@ -655,7 +673,32 @@ export default function Profile() {
 
                 <div className="flex items-center space-x-2 pt-4 border-t border-border/50">
                   <Checkbox
+                    id="auto-generate"
+                    checked={profile.auto_generate_enabled}
+                    onCheckedChange={(checked) =>
+                      setProfile({
+                        ...profile,
+                        auto_generate_enabled: !!checked,
+                        // Automatic publication has no meaning without
+                        // automatic generation.
+                        auto_publish: checked ? profile.auto_publish : false,
+                      })
+                    }
+                  />
+                  <label htmlFor="auto-generate" className="text-sm cursor-pointer">
+                    Générer mes posts automatiquement chaque semaine
+                  </label>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Chaque lundi, l’IA prépare vos posts de la semaine (texte + affiche) et vous
+                  recevez un email pour les valider. Rien n’est publié sans votre accord tant
+                  que la publication automatique reste désactivée.
+                </p>
+
+                <div className="flex items-center space-x-2 pt-4 border-t border-border/50">
+                  <Checkbox
                     id="auto-publish"
+                    disabled={!profile.auto_generate_enabled}
                     checked={profile.auto_publish}
                     onCheckedChange={(checked) => handleAutoPublishToggle(!!checked)}
                   />
@@ -837,6 +880,26 @@ export default function Profile() {
                 </p>
               </div>
             </Card>
+
+            <PosterPersonImage
+              value={{
+                enabled: profile.use_poster_person_image,
+                imageUrl: profile.poster_person_image_url,
+                label: profile.poster_person_label,
+                placement: profile.poster_person_placement,
+              }}
+              companyName={profile.company_name}
+              footerText={profile.poster_footer_text}
+              onChange={(next) =>
+                setProfile({
+                  ...profile,
+                  use_poster_person_image: next.enabled,
+                  poster_person_image_url: next.imageUrl,
+                  poster_person_label: next.label,
+                  poster_person_placement: next.placement,
+                })
+              }
+            />
 
             <CustomImageLibrary
               images={profile.custom_image_urls}

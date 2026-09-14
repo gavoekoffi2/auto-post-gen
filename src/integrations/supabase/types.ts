@@ -253,6 +253,7 @@ export type Database = {
           activity_keywords: string[] | null
           audience_suggestions: Json
           audiences_confirmed_at: string | null
+          auto_generate_enabled: boolean
           auto_publish: boolean | null
           brand_accent_color: string | null
           brand_font: string | null
@@ -273,6 +274,10 @@ export type Database = {
           linkedin_username: string | null
           logo_url: string | null
           poster_footer_text: string | null
+          poster_person_image_url: string | null
+          poster_person_label: string | null
+          poster_person_placement: string
+          use_poster_person_image: boolean
           platforms: string[]
           post_frequency: number
           preferred_days: string[] | null
@@ -296,6 +301,7 @@ export type Database = {
           activity_keywords?: string[] | null
           audience_suggestions?: Json
           audiences_confirmed_at?: string | null
+          auto_generate_enabled?: boolean
           auto_publish?: boolean | null
           brand_accent_color?: string | null
           brand_font?: string | null
@@ -316,6 +322,10 @@ export type Database = {
           linkedin_username?: string | null
           logo_url?: string | null
           poster_footer_text?: string | null
+          poster_person_image_url?: string | null
+          poster_person_label?: string | null
+          poster_person_placement?: string
+          use_poster_person_image?: boolean
           platforms?: string[]
           post_frequency?: number
           preferred_days?: string[] | null
@@ -339,6 +349,7 @@ export type Database = {
           activity_keywords?: string[] | null
           audience_suggestions?: Json
           audiences_confirmed_at?: string | null
+          auto_generate_enabled?: boolean
           auto_publish?: boolean | null
           brand_accent_color?: string | null
           brand_font?: string | null
@@ -359,6 +370,10 @@ export type Database = {
           linkedin_username?: string | null
           logo_url?: string | null
           poster_footer_text?: string | null
+          poster_person_image_url?: string | null
+          poster_person_label?: string | null
+          poster_person_placement?: string
+          use_poster_person_image?: boolean
           platforms?: string[]
           post_frequency?: number
           preferred_days?: string[] | null
