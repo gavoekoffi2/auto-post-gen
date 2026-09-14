@@ -72,3 +72,35 @@ test("every migration applied by the pipeline is safe to re-run", () => {
     );
   }
 });
+
+test("health-check is cron-protected and watches what actually breaks", () => {
+  const fn = read("supabase/functions/health-check/index.ts");
+  // Fail closed like every other cron endpoint (verify_jwt = false).
+  assert.match(fn, /CRON_SECRET/);
+  assert.match(fn, /refusing to run/);
+  assert.match(fn, /provided !== expectedSecret/);
+  for (const signal of [
+    "graphiste_credits",
+    "openrouter",
+    "posts_stuck_publishing",
+    "publications_overdue",
+    "weekly_generation",
+    "poster_person_photo",
+  ]) {
+    assert.ok(fn.includes(signal), `health-check must report ${signal}`);
+  }
+  // A hard failure must be visible to an uptime monitor AND emailed.
+  assert.match(fn, /status: level === "error" \? 500 : 200/);
+  assert.match(fn, /ADMIN_ALERT_EMAIL/);
+
+  const config = read("supabase/config.toml");
+  assert.match(config, /\[functions\.health-check\]\nverify_jwt = false/);
+});
+
+test("a personal photo that no longer resolves never burns a paid poster", () => {
+  const manual = read("supabase/functions/generate-image/index.ts");
+  assert.match(manual, /personImageReachable/);
+  assert.match(manual, /method: "HEAD"/);
+  // An inconclusive answer (network hiccup) must not block the generation.
+  assert.match(manual, /return null;/);
+});

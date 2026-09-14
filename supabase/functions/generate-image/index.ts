@@ -101,6 +101,23 @@ function absoluteGraphisteUrl(value: string): string {
   return value;
 }
 
+// Cheap pre-flight on the user's personal photo: a paid poster must never be
+// generated against a URL that no longer resolves (the file was deleted from
+// the bucket, the object was made private...). Returns null when the answer is
+// inconclusive — a network hiccup must not block a generation.
+async function personImageReachable(url: string): Promise<boolean | null> {
+  try {
+    const resp = await fetch(url, { method: "HEAD", signal: AbortSignal.timeout(5_000) });
+    if (resp.status === 404 || resp.status === 403 || resp.status === 410) return false;
+    if (!resp.ok) return null;
+    const contentType = (resp.headers.get("content-type") || "").toLowerCase();
+    if (contentType && !contentType.startsWith("image/")) return false;
+    return true;
+  } catch (_err) {
+    return null;
+  }
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -712,6 +729,13 @@ serve(async (req) => {
         });
       }
       const person = normalizePosterPerson(personInput);
+      if (person && (await personImageReachable(person.imageUrl)) === false) {
+        return jsonResponse({
+          error: POSTER_PERSON_MISSING_MESSAGE,
+          code: "missing_person_image",
+          format,
+        });
+      }
 
       const graphiste = await tryGraphisteGptPoster({
         postContent,

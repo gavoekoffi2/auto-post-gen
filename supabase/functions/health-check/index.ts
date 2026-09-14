@@ -222,6 +222,23 @@ serve(async (req) => {
       });
     }
 
+    // Profiles that asked for their photo on every poster but whose photo is
+    // gone: the cron keeps producing posters without the promised person.
+    const { count: brokenPhoto, error: photoError } = await supabase
+      .from("profiles")
+      .select("id", { count: "exact", head: true })
+      .eq("use_poster_person_image", true)
+      .is("poster_person_image_url", null);
+    if (photoError) {
+      checks.push({ name: "poster_person_photo", level: "warn", detail: photoError.message });
+    } else {
+      checks.push({
+        name: "poster_person_photo",
+        level: (brokenPhoto ?? 0) > 0 ? "warn" : "ok",
+        detail: `${brokenPhoto ?? 0} profil(s) avec l'option « photo sur chaque affiche » activée sans photo enregistrée`,
+      });
+    }
+
     // Is the weekly generator still producing anything at all?
     const { count: eligible, error: profilesError } = await supabase
       .from("profiles")
