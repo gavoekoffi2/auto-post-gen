@@ -32,6 +32,10 @@ const DAY_MAPPING: Record<string, number> = {
 // runaway configs and platform spam limits.
 const HARD_MAX_POSTS_PER_RUN = 20;
 
+// Past this many never-validated posts, an account is considered dormant and
+// the weekly generation pauses for it (every generated poster costs money).
+const DORMANT_PENDING_LIMIT = 10;
+
 // Rotated so the week's posts don't all share the same shape.
 const AUTO_ANGLES = [
   "Astuce concrète applicable tout de suite",
@@ -157,6 +161,25 @@ serve(async (req) => {
 
     for (const profile of profiles || []) {
       try {
+        // Dormancy guard. A user who never validates keeps accumulating
+        // generated posts — and each one costs a paid poster. Past this many
+        // untouched 'pending' posts we stop generating for them; validating or
+        // deleting a few resumes it automatically on the next run.
+        if (!profile.auto_publish) {
+          const { count: untouched } = await supabase
+            .from("posts")
+            .select("id", { count: "exact", head: true })
+            .eq("user_id", profile.id)
+            .eq("status", "pending");
+          if ((untouched ?? 0) >= DORMANT_PENDING_LIMIT) {
+            console.log(
+              `Skipping ${profile.id}: ${untouched} posts en attente jamais validés (compte dormant)`,
+            );
+            results.push({ userId: profile.id, postsGenerated: 0, skipped: "dormant" });
+            continue;
+          }
+        }
+
         const postsNeeded = Math.min(
           HARD_MAX_POSTS_PER_RUN,
           Math.max(1, profile.post_frequency || 2),

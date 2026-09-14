@@ -50,3 +50,12 @@ test("the dashboard counts every publishing provider, not just Zernio", () => {
   assert.doesNotMatch(block, /provider/, "direct OAuth connections must count too");
   assert.match(block, /\.eq\('user_id', session\.user\.id\)/);
 });
+
+test("generation pauses for dormant accounts instead of burning posters forever", () => {
+  // A user who never validates would otherwise accumulate ~2 paid posters a
+  // week indefinitely.
+  assert.match(weekly, /const DORMANT_PENDING_LIMIT = 10/);
+  assert.match(weekly, /if \(!profile\.auto_publish\) \{/);
+  assert.match(weekly, /untouched \?\? 0\) >= DORMANT_PENDING_LIMIT/);
+  assert.match(weekly, /skipped: "dormant"/);
+});
