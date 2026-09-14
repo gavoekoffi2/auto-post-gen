@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 // Behavioral tests for the pure poster-prompt helpers (Node strips the TS types
 // on import), plus source assertions that lock the wiring end to end.
 import {
+  assembleSubject,
   brandFontDirection,
   imageStyleDirection,
   normalizePosterPerson,
@@ -159,4 +160,35 @@ test("users can enable, preview and manage the photo from the app", () => {
     // Never persist "enabled" without a stored photo.
     assert.match(source, /&& !!(formData\.posterPersonImageUrl|profile\.poster_person_image_url)/);
   }
+});
+
+test("the art direction is never truncated away — only the post excerpt shrinks", () => {
+  // Joining everything and slicing the result used to cut the END of the brief
+  // (interdictions, people direction, English direction) as soon as the user had
+  // a long description plus a long permanent message.
+  const brief = assembleSubject(
+    [
+      "PREMIERE DIRECTIVE",
+      { prefix: "Message source: ", text: "m".repeat(5000) },
+      "DERNIERE DIRECTIVE",
+    ],
+    900,
+  );
+  assert.ok(brief.startsWith("PREMIERE DIRECTIVE"));
+  assert.ok(brief.endsWith("DERNIERE DIRECTIVE"), "the closing art direction must survive");
+  assert.ok(brief.length <= 900);
+
+  // Empty/blank lines are dropped instead of leaving holes in the brief.
+  assert.equal(assembleSubject(["a", "", null, undefined, "b"]), "a\nb");
+});
+
+test("a poster brief with a personal photo still fits the subject budget", () => {
+  const person = normalizePosterPerson({
+    enabled: true,
+    imageUrl: PHOTO,
+    label: "z".repeat(60),
+    placement: "center",
+  });
+  // ~850 chars worst case: it has to coexist with the rest of the direction.
+  assert.ok(posterPersonBlock(person).length < 950, "the photo brief must stay compact");
 });

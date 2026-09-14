@@ -24,9 +24,11 @@ import { extractJobId, extractStatusUrl, jobFailed } from "./graphisteParse.ts";
 import {
   brandFontDirection,
   imageStyleDirection,
+  assembleSubject,
   normalizePosterPerson,
   peopleTypeDirection,
   posterPersonBlock,
+  SUBJECT_COMPACT_CHARS,
   type PosterPersonInput,
 } from "./posterPrompt.ts";
 
@@ -126,12 +128,17 @@ function buildGraphisteSubject(params: StartPosterParams, spec: SocialImageSpec)
   const persistentFooter = params.footerText.trim()
     ? `Texte permanent utilisateur: écris le texte exact "${params.footerText.trim().slice(0, 120)}" dans l'angle inférieur gauche, dans un cartouche élégant à fort contraste, très lisible et bien aligné. Ne le reformule pas, ne le corrige pas et ne le répète nulle part ailleurs.`
     : `L'utilisateur n'a défini aucun message: n'ajoute aucun texte permanent dans l'angle inférieur gauche.`;
-  return [
+  return assembleSubject([
     isPromo
       ? `Affiche publicitaire professionnelle premium pour les réseaux sociaux (${spec.label}, ${orientationLabel(spec.orientation)}).`
       : `Visuel éditorial professionnel premium pour les réseaux sociaux (${spec.label}, ${orientationLabel(spec.orientation)}).`,
     `${ctx}.`,
-    `Le visuel doit être complémentaire au texte, pas une copie intégrale: transforme l'idée centrale en une scène, une métaphore ou une composition visuelle claire. Message source: ${params.postContent.slice(0, 700)}`,
+    // Flexible: only this excerpt is shortened when the brief would overflow,
+    // so no art-direction line is ever silently cut off the end.
+    {
+      prefix: "Le visuel doit être complémentaire au texte, pas une copie intégrale: transforme l'idée centrale en une scène, une métaphore ou une composition visuelle claire. Message source: ",
+      text: params.postContent,
+    },
     `Composition: visuel complet (pas un fond vide), accroche courte et très lisible, hiérarchie visuelle forte, éclairage cinématographique, mise en page moderne remplie de bord à bord, contraste premium.`,
     isPromo
       ? `Appel à l'action commercial du contenu: ${cta}.`
@@ -144,7 +151,7 @@ function buildGraphisteSubject(params: StartPosterParams, spec: SocialImageSpec)
     `Interdictions: pas de petit texte illisible, pas de fausses lettres, pas de watermark, pas d'élément d'interface, pas d'image vide ni de template vide.`,
     peopleTypeDirection(params.peopleType),
     `Direction (EN): premium editorial social visual, complementary to the post text, cinematic lighting, strong visual hierarchy, modern clean layout, short readable headline, discreet fixed bottom-right brand signature, no tiny unreadable text, no random letters, no watermark, no UI.`,
-  ].filter(Boolean).join("\n").slice(0, 2400);
+  ]);
 }
 
 function absoluteGraphisteUrl(value: string): string {
@@ -260,17 +267,30 @@ export async function startPosterJob(params: StartPosterParams): Promise<PosterR
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 30_000);
   try {
-    const resp = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${key}`,
-        "Content-Type": "application/json",
-        "Idempotency-Key": crypto.randomUUID(),
-      },
-      body: JSON.stringify(requestBody),
-      signal: controller.signal,
-    });
-    const text = await resp.text();
+    const send = (body: Record<string, unknown>) =>
+      fetch(endpoint, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${key}`,
+          "Content-Type": "application/json",
+          "Idempotency-Key": crypto.randomUUID(),
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+
+    let resp = await send(requestBody);
+    let text = await resp.text();
+    // Same length fallback as the interactive path: a rejected brief must not
+    // cost the weekly batch its posters.
+    if (resp.status === 400 && /subject|length|long|caract|size/i.test(text)) {
+      console.warn("Graphiste GPT rejected the full subject; retrying compact.");
+      resp = await send({
+        ...requestBody,
+        subject: String(requestBody.subject).slice(0, SUBJECT_COMPACT_CHARS),
+      });
+      text = await resp.text();
+    }
     let data: unknown = null;
     try { data = JSON.parse(text); } catch { data = null; }
     if (!resp.ok) return { imageUrl: null, jobId: null, statusUrl: null, status: "failed", error: `Graphiste GPT ${resp.status}: ${text.slice(0, 160)}` };

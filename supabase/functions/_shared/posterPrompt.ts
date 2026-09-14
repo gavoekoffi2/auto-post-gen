@@ -86,20 +86,18 @@ export function posterPersonBlock(person: PosterPerson | null): string {
     return "Aucune photo réelle n'est fournie: n'ajoute pas de portrait de personne réelle identifiable.";
   }
   const side = PLACEMENT_SIDE[person.placement];
+  // Deliberately dense: this block competes for room with the rest of the art
+  // direction inside the subject budget (see assembleSubject).
   const parts = [
-    `PHOTO RÉELLE FOURNIE (reference_image_url): c'est la photo de la personne à mettre en avant sur l'affiche.`,
-    `Intègre CETTE personne dans la composition: détourage net et propre (aucun reste de l'arrière-plan d'origine), placée ${side.person}, cadrage buste ou pied selon la photo, occupant environ 40% de la hauteur de l'affiche.`,
-    `Fidélité absolue: conserve exactement son visage, sa carnation, sa coiffure, sa barbe, ses lunettes et sa tenue. Ne la remplace jamais par une personne générée, ne rajeunis pas, n'éclaircis pas la peau, ne déforme ni les traits ni les mains, n'ajoute pas de membre ni de second visage.`,
-    `Ancrage professionnel: ombre portée douce sous la personne, léger halo ou aplat aux couleurs de la marque derrière elle, lumière du décor cohérente avec celle de la photo, bords nets sans contour blanc.`,
-    `Réserve l'espace ${side.text} pour le titre et le texte de l'affiche: aucun texte ne doit recouvrir le visage ni le buste de la personne.`,
+    `PHOTO RÉELLE FOURNIE (reference_image_url): intègre CETTE personne dans l'affiche — détourage net (aucun reste du fond d'origine), placée ${side.person}, occupant environ 40% de la hauteur, ombre portée douce et aplat aux couleurs de la marque derrière elle.`,
+    `Fidélité absolue: conserve exactement son visage, sa carnation, sa coiffure et sa tenue; ne la remplace jamais par une personne générée, n'éclaircis pas la peau, ne déforme ni les traits ni les mains.`,
+    `Réserve l'espace ${side.text} pour le titre et le texte: aucun texte ne doit recouvrir le visage ni le buste.`,
   ];
   if (person.label) {
-    parts.push(
-      `Sous la personne, écris le texte exact "${person.label}" en petit, propre et lisible (nom/rôle). Ne le reformule pas.`,
-    );
+    parts.push(`Sous la personne, écris le texte exact "${person.label}" en petit et lisible, sans le reformuler.`);
   }
   parts.push(
-    `Direction (EN): cut out the supplied real person photo and composite it into the poster, preserve the exact same face and outfit, soft contact shadow, brand-colored backdrop, headline text on the opposite side, never cover the face.`,
+    `EN: composite the supplied real person, exact same face and outfit, clean cutout, soft contact shadow, headline on the opposite side, never cover the face.`,
   );
   return parts.join(" ");
 }
@@ -136,4 +134,62 @@ export function brandFontDirection(font?: string | null): string {
   const value = (font || "").trim();
   if (!value) return "";
   return `Typographie de marque: utilise une police proche de "${value.slice(0, 40)}" pour le titre et les textes de l'affiche.`;
+}
+
+// ---------------------------------------------------------------------------
+// Subject assembly
+//
+// The creative brief sent as `subject` is capped. Joining every line and then
+// slicing the result truncates the END of the brief — which is exactly where
+// the art direction lives (interdictions, people direction, English direction).
+// With a long activity description, a 120-character permanent message and a
+// 700-character post excerpt, the cap was already reached before those lines,
+// so they silently never reached the engine.
+//
+// assembleSubject keeps every DIRECTIVE intact and shortens only the flexible
+// part (the quoted post excerpt), which the engine merely needs as context.
+// ---------------------------------------------------------------------------
+
+// Large enough for the full art direction INCLUDING the personal-photo block
+// (~850 chars in the worst case) plus a useful excerpt of the post. The API
+// documents no maximum for `subject`; callers retry once with
+// SUBJECT_COMPACT_CHARS if it ever answers 400 on the length.
+export const SUBJECT_MAX_CHARS = 3600;
+export const SUBJECT_COMPACT_CHARS = 1500;
+
+export interface FlexibleLine {
+  /** Always kept in full. */
+  prefix: string;
+  /** Shortened first when the brief would overflow. */
+  text: string;
+  /** Never cut below this many characters (default 180). */
+  min?: number;
+  /** Never include more than this many characters (default 700). */
+  max?: number;
+}
+
+export function assembleSubject(
+  lines: Array<string | FlexibleLine | null | undefined>,
+  cap: number = SUBJECT_MAX_CHARS,
+): string {
+  const kept = lines.filter((line): line is string | FlexibleLine =>
+    typeof line === "string" ? line.trim().length > 0 : !!line
+  );
+  // Length of everything that is never shortened (+1 per newline separator).
+  const fixed = kept.reduce(
+    (total, line) => total + (typeof line === "string" ? line.length : line.prefix.length) + 1,
+    0,
+  );
+  let budget = cap - fixed;
+  const out = kept.map((line) => {
+    if (typeof line === "string") return line;
+    const min = line.min ?? 300;
+    const max = line.max ?? 700;
+    const allowed = Math.max(min, Math.min(max, budget));
+    const text = line.text.slice(0, allowed);
+    budget -= text.length;
+    return line.prefix + text;
+  });
+  // Final safety net: a brief made only of directives can still be long.
+  return out.join("\n").slice(0, cap);
 }
