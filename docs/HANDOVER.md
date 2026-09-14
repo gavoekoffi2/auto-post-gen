@@ -23,12 +23,14 @@ npm run dev                       # http://localhost:8080
 Vérifications avant tout commit :
 
 ```bash
-npm test        # 73 tests — DOIVENT tous passer
-npm run lint    # 0 erreur (7 warnings shadcn/fast-refresh connus, non bloquants)
-npm run build   # build Vite 7
+npm test          # 118 tests — DOIVENT tous passer
+npm run lint      # 0 erreur (7 warnings shadcn/fast-refresh connus, non bloquants)
+npm run typecheck # tsc --noEmit : le build Vite ne type-check PAS
+npm run build     # build Vite 7
+deno check supabase/functions/*/index.ts   # edge functions (Deno)
 ```
 
-La CI (`.github/workflows/ci.yml`) exécute exactement ces trois commandes sur
+La CI (`.github/workflows/ci.yml`) exécute exactement ces commandes sur
 chaque PR : si ça passe en local, ça passera en CI.
 
 ### En production
@@ -38,7 +40,7 @@ Il n'y a **ni VPS, ni serveur à administrer, ni n8n**. Tout est géré :
 | Quoi | Où | Déclencheur |
 |---|---|---|
 | Frontend (SPA React) | **Netlify** | push sur `main` touchant `src/**` → `.github/workflows/deploy-netlify.yml` |
-| Edge Functions (23) | **Supabase** (projet `ixinojsmymqovekgkbdg`) | push sur `main` touchant `supabase/functions/**` → `.github/workflows/deploy-functions.yml` (déploie TOUT) |
+| Edge Functions (24) | **Supabase** (projet `tktoyntaeajgsuplhntd`) | push sur `main` touchant `supabase/functions/**` → `.github/workflows/deploy-functions.yml` (déploie TOUT) |
 | Base de données | **Supabase Postgres** | migrations dans `supabase/migrations/` (`supabase db push`) |
 | Tâches planifiées | **Supabase Scheduler** (dashboard) | voir cadences dans `DEPLOYMENT.md` §Cron |
 
@@ -57,8 +59,8 @@ Supabase ──┬─ Auth (sessions JWT, localStorage, autoRefresh)
            │    profiles, posts, social_connections, social_comments,
            │    generation_usage, ip_rate_events
            ├─ Storage : bucket user-assets (affiches réhébergées)
-           └─ 23 Edge Functions (Deno) ── APIs externes :
-                ├─ OpenRouter        → TEXTE IA (gemini-2.5-flash)
+           └─ 24 Edge Functions (Deno) ── APIs externes :
+                ├─ OpenRouter        → TEXTE IA (anthropic/claude-sonnet-5)
                 ├─ Graphiste GPT     → AFFICHES IA (exclusif, pas de repli)
                 ├─ Zernio            → publication sociale (voie principale)
                 ├─ Postiz / Ayrshare → publication (voies alternatives)
@@ -181,11 +183,13 @@ Notes mineures (acceptées, pas des trous) :
    emails de validation finiront en spam. Runbook §6.
 
 ### P1 — fiabilité d'exploitation
-5. **Observabilité : il n'y en a AUCUNE.** Les erreurs partent en
-   `console.error` (logs Supabase) et personne n'est alerté si un cron échoue.
-   Minimum viable : Sentry sur le front + un cron de « health check » qui
-   appelle `scripts/diagnose-graphiste.mjs` et alerte (email) si la clé/les
-   crédits tombent. C'est la prochaine vraie dette.
+5. ~~**Observabilité : il n'y en a AUCUNE.**~~ **FAIT (14/09/2026).** La
+   fonction `health-check` (cron horaire, protégée par `CRON_SECRET`) vérifie
+   les secrets obligatoires, le solde de crédits Graphiste GPT et OpenRouter,
+   les posts bloqués en `publishing`, les publications en retard, les affiches
+   figées et le silence du générateur hebdomadaire. Elle répond HTTP 500 en cas
+   de panne dure (pour un moniteur externe) et envoie un email à
+   `ADMIN_ALERT_EMAIL`. Reste optionnel : Sentry côté front.
 6. **Routage image par plan** (GPT Image 2 prioritaire pour Pro/Enterprise) :
    documenté et budgété dans PRICING.md §1, PAS encore codé.
 7. **Fonctionnalité vidéo IA** : affichée « bientôt disponible » sur la page
@@ -199,10 +203,13 @@ Notes mineures (acceptées, pas des trous) :
    sur main est bonne à reprendre à cette occasion.
 9. **`src/integrations/supabase/types.ts` est généré** : après toute
    migration, regénérer (`supabase gen types typescript --project-id
-   ixinojsmymqovekgkbdg > src/integrations/supabase/types.ts`).
-10. **`deno check` des edge functions n'est pas dans la CI** (Deno absent du
-    runner CI actuel). L'ajouter éviterait qu'une erreur de type edge ne se
-    découvre qu'au déploiement.
+   tktoyntaeajgsuplhntd > src/integrations/supabase/types.ts`).
+10. ~~**`deno check` des edge functions n'est pas dans la CI**~~ **FAIT
+    (14/09/2026)** : la CI installe Deno et exécute
+    `deno check supabase/functions/*/index.ts`, plus `npm run typecheck` pour
+    le front (trois erreurs de type dormaient dans `main`, invisibles parce que
+    le build Vite ne type-check pas). Cinq erreurs de type edge ont été
+    corrigées à cette occasion.
 
 ---
 
@@ -210,7 +217,7 @@ Notes mineures (acceptées, pas des trous) :
 
 | Accès | Où le trouver / le mettre |
 |---|---|
-| Secrets des edge functions (OpenRouter, Graphiste, Zernio, Resend, CRON_SECRET…) | **Supabase Dashboard → Project Settings → Edge Functions → Secrets** (projet `ixinojsmymqovekgkbdg`). Liste de référence : DEPLOYMENT.md §2. |
+| Secrets des edge functions (OpenRouter, Graphiste, Zernio, Resend, CRON_SECRET…) | **Supabase Dashboard → Project Settings → Edge Functions → Secrets** (projet `tktoyntaeajgsuplhntd`). Liste de référence : DEPLOYMENT.md §2. |
 | Variables front (VITE_*) | Local : `.env.local` (jamais commité). CI/prod : **GitHub → repo → Settings → Secrets and variables → Actions** (`VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, + `NETLIFY_AUTH_TOKEN`, `NETLIFY_SITE_ID`, `SUPABASE_ACCESS_TOKEN`). |
 | Compte Graphiste GPT (clé + crédits) | Compte Graphiste GPT du propriétaire ; solde vérifiable via `GET /v1/account/credits` ou le script de diagnostic. |
 | Zernio | https://zernio.com/dashboard/api-keys (clé `sk_` + 64 hex). |
@@ -288,6 +295,49 @@ Cochez dans l'ordre. Chaque étape a un résultat observable.
       palier Zernio) avant de figer la grille publique.
 - [ ] 14. Mettre en place l'observabilité minimale (§5 P1) — ne lancez pas
       commercialement un produit dont vous ne voyez pas les pannes.
+
+---
+
+## 8. Mise à jour du 14 septembre 2026
+
+### Nouvelle fonctionnalité — « Ma photo sur chaque affiche »
+
+L'utilisateur peut téléverser sa photo (Profil → Images, ou dernière étape de
+l'onboarding) et activer l'option : chaque affiche générée intègre alors cette
+personne, détourée, placée à gauche/droite/centre, le texte de l'affiche
+occupant le côté opposé, avec un nom/rôle facultatif sous la photo.
+
+- Colonnes `profiles.use_poster_person_image`, `poster_person_image_url`,
+  `poster_person_label`, `poster_person_placement` (contraintes SQL : URL
+  **https** uniquement, légende ≤ 60 caractères, placement dans un ensemble).
+- La photo part vers Graphiste GPT dans le champ documenté
+  `reference_image_url` ; les consignes de composition (fidélité du visage,
+  détourage, ombre portée, zone de texte réservée) vivent dans le module pur
+  `supabase/functions/_shared/posterPrompt.ts`, testé unitairement.
+- Si l'option est active sans photo exploitable, `generate-image` renvoie
+  `missing_person_image` : on ne facture jamais une affiche amputée de la
+  personne promise.
+
+### Bugs corrigés
+
+| Criticité | Problème | Correctif |
+|---|---|---|
+| **BLOQUANT (déploiement)** | La CI n'appliquait que 3 migrations codées en dur dans le workflow : toute nouvelle migration n'atteignait JAMAIS la production (le code interroge alors des colonnes inexistantes). | `scripts/apply-migrations.sh` applique toutes les migrations en attente via une table de registre (`schema_migrations_applied`) ; les anciennes migrations non idempotentes sont enregistrées, jamais rejouées. `scripts/verify-schema.sh` fait échouer le déploiement si une colonne attendue manque. |
+| **MAJEUR (produit)** | `auto-generate-weekly` ne tournait que pour `auto_publish = true`. Tous les utilisateurs qui valident manuellement ne recevaient **aucun** post hebdomadaire, et `send-validation-email` n'avait rien à envoyer. | Le cron sert aussi les profils `auto_generate_enabled` (nouvelle colonne, défaut `true`, case à cocher dans le Profil) et insère leurs posts en `pending`. Garde-fou : onboarding incomplet = profil ignoré (aucun crédit IA dépensé). |
+| **MAJEUR (produit)** | Les préférences visuelles (`image_style`, `image_people_type`, `brand_font`) étaient lues en base mais jamais envoyées au moteur d'affiches : le choix de l'utilisateur n'avait aucun effet. | Traduites en direction artistique explicite dans les deux constructeurs de prompt. |
+| Majeur (UX) | Le lien de validation par email expirait en 24 h alors qu'il annonce des posts programmés jusqu'à 7 jours plus tard. | TTL porté à 7 jours (jeton toujours à usage unique). |
+| Moyen | Le bandeau « connectez un réseau » ne comptait que les connexions Zernio : les utilisateurs connectés en OAuth direct étaient harcelés. | Toutes les connexions sont comptées. |
+| Moyen | `npm run build` ne type-check pas ; trois erreurs de type dormaient dans `main`, cinq autres côté Deno. | Corrigées, et `npm run typecheck` + `deno check` ajoutés à la CI. |
+| Mineur | Chaîne d'images OpenRouter morte (`generateImageUrl`, `getImageModels`) contredisant la politique « Graphiste GPT uniquement ». | Supprimée. |
+| Mineur | README et ce document pointaient l'ancien projet Supabase (`ixinojs…`) alors que la CI déploie sur `tktoyntaeajgsuplhntd` — piège classique : configurer les secrets sur le mauvais projet. | Références corrigées. |
+
+### À faire côté compte (rien à coder)
+
+1. Ajouter le cron horaire `health-check` et le secret `ADMIN_ALERT_EMAIL`.
+2. Vérifier après le prochain déploiement que l'étape « Apply every pending
+   database migration » a bien appliqué `20260914000000_poster_person_image.sql`
+   et `20260914000100_weekly_generation_opt_in.sql`.
+3. Le paiement Mobile Money (P0 n°2) reste le seul vrai bloquant pour encaisser.
 
 ---
 

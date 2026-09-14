@@ -37,9 +37,9 @@ environment variables in the Supabase dashboard before deploying.
 | `OPENROUTER_TEXT_MODEL` *(optional)* | `generate-content`, `detect-audiences`, `auto-generate-weekly` | Claude override. Defaults to `anthropic/claude-sonnet-5`; non-Claude values are deliberately ignored so editorial writing always remains on Claude. |
 | `GRAPHISTE_GPT_API_KEY` | `generate-image`, `auto-generate-weekly` | **REQUIRED for poster/image generation — without it the app generates post TEXT but never an image** (the "seul le texte se génère" symptom). The poster engine is Graphiste GPT exclusively; there is NO fallback by design. Verify end-to-end with `GRAPHISTE_GPT_API_KEY=... node scripts/diagnose-graphiste.mjs` (checks key validity, credits, and runs a real generation). |
 | `GRAPHISTE_GPT_API_URL` *(optional)* | `generate-image`, `auto-generate-weekly` | Override the Graphiste GPT endpoint. Defaults to the documented v1.1 `posters/generate` URL. |
-| `OPENROUTER_IMAGE_MODEL` *(legacy, unused by the poster flow)* | — | Kept for the deprecated OpenRouter image chain in `_shared/ai.ts`. Poster generation does NOT use OpenRouter. |
+| ~~`OPENROUTER_IMAGE_MODEL`~~ | — | **Removed.** The dead OpenRouter image chain no longer exists in `_shared/ai.ts`; posters come exclusively from Graphiste GPT. |
 | `APP_NAME` / `APP_PUBLIC_URL` *(optional)* | all AI calls | Sent as `X-Title` and `HTTP-Referer` to OpenRouter so usage shows up cleanly in their dashboard. |
-| `IMAGE_GENERATION_TIMEOUT_MS` *(optional)* | `generate-image` | Per-model timeout for image generation. Defaults to 60000. |
+| `AI_TEXT_TIMEOUT_MS` *(optional)* | text generation | Timeout for the OpenRouter text call. Defaults to 60000. The legacy name `IMAGE_GENERATION_TIMEOUT_MS` is still honoured. |
 | `TAVILY_API_KEY` *(optional upgrade)* | `generate-content` | Premium web-search source. The function already uses **free** Google News RSS + DuckDuckGo by default — Tavily just adds higher quality results when configured. Free tier 1k queries/month at https://tavily.com. |
 | `BRAVE_SEARCH_API_KEY` *(optional upgrade)* | `generate-content` | Same idea as Tavily: optional premium search source. Free tier 2k queries/month at https://brave.com/search/api. |
 | `AYRSHARE_API_KEY` *(strongly recommended for MVP)* | `ayrshare-connect`, `ayrshare-status`, `publish-post`, `sync-comments`, `comment-reply` | When set, users see a "Connexion rapide" button that handles all social platforms (IG, FB, LinkedIn, X, TikTok, YouTube, Pinterest, Threads, Bluesky) through one Ayrshare account. No Meta App Review, no LinkedIn approval, no TikTok partnership — Ayrshare has done all that. Free trial (100 posts/month, 1 profile) at https://app.ayrshare.com. Paid tiers from $49/month. **Comment inbox + auto-reply require the Premium plan** (Comments API). |
@@ -49,12 +49,13 @@ environment variables in the Supabase dashboard before deploying.
 | `ZERNIO_API_URL` *(optional)* | `zernio-*`, `publish-post` | Override the Zernio base URL. Defaults to `https://zernio.com/api/v1`. |
 | `SUPABASE_URL` | all server functions | (auto-provided) |
 | `SUPABASE_SERVICE_ROLE_KEY` | all server functions | (auto-provided) |
-| `CRON_SECRET` | `auto-generate-weekly`, `send-validation-email`, `publish-post` (cron) | Shared secret between Supabase Scheduler and the functions. Also used as the OAuth state HMAC secret if `OAUTH_STATE_SECRET` is unset. |
+| `CRON_SECRET` | `auto-generate-weekly`, `send-validation-email`, `publish-post`, `health-check` (cron) | Shared secret between Supabase Scheduler and the functions. Also used as the OAuth state HMAC secret if `OAUTH_STATE_SECRET` is unset. |
 | `OAUTH_STATE_SECRET` | all `oauth-*` functions | (Optional) Dedicated HMAC secret for OAuth state tokens; defaults to `CRON_SECRET`. |
 | `ALLOWED_ORIGINS` | all functions | Comma-separated list of origins (e.g. `https://app.example.com`). **Fails closed**: when unset, no `Access-Control-Allow-Origin` is emitted and browsers block cross-origin calls. Set `*` explicitly only for local development. |
 | `RESEND_API_KEY` | `send-validation-email` | Email delivery |
 | `RESEND_FROM` | `send-validation-email` | Verified sender (`Pro Social AI <no-reply@yourdomain.com>`) |
 | `APP_BASE_URL` | `send-validation-email`, validation links | Where to point the validation link (e.g. `https://app.example.com`) — should be the front-end origin, not the Supabase URL. |
+| `ADMIN_ALERT_EMAIL` *(strongly recommended)* | `health-check` | Where production alerts are emailed (missing secret, Graphiste/OpenRouter credits exhausted, cron stopped, publications stuck). Without it nobody is warned when production breaks. Requires `RESEND_API_KEY`. |
 | `OAUTH_LINKEDIN_CLIENT_ID` / `OAUTH_LINKEDIN_CLIENT_SECRET` | `oauth-*-linkedin` | LinkedIn app credentials |
 | `OAUTH_META_APP_ID` / `OAUTH_META_APP_SECRET` | `oauth-*-meta` | Meta (Facebook + Instagram) app credentials |
 | `OAUTH_TWITTER_CLIENT_ID` / `OAUTH_TWITTER_CLIENT_SECRET` | `oauth-*-twitter` | Twitter/X app credentials (PKCE; secret only for confidential clients) |
@@ -72,9 +73,10 @@ Configure these in the Supabase dashboard, sending the header
 
 | Cadence | Endpoint | What it does |
 | --- | --- | --- |
-| Mondays, 06:00 UTC | `POST /functions/v1/auto-generate-weekly` | For every profile with `auto_publish=true`, generates the weekly batch. Posts are inserted as `validated`. |
+| Mondays, 06:00 UTC | `POST /functions/v1/auto-generate-weekly` | Generates the weekly batch for every profile with `auto_generate_enabled=true` **or** `auto_publish=true` (and a completed onboarding). Posts are inserted as `validated` when `auto_publish` is on, otherwise as `pending` (awaiting validation). |
 | Mondays, 08:00 UTC | `POST /functions/v1/send-validation-email` | Emails any user with `pending` posts so they can validate them. |
 | Every 15 minutes | `POST /functions/v1/publish-post` (no body) | Publishes any `validated` post whose `scheduled_for` is in the past. |
+| Every hour | `POST /functions/v1/health-check` (no body) | Verifies the secrets, the Graphiste GPT / OpenRouter credit balances and the publishing pipeline (posts stuck, publications overdue, weekly generation silent). Emails `ADMIN_ALERT_EMAIL` on a hard failure and answers HTTP 500 so an uptime monitor also sees it. |
 | Every 15–30 minutes | `POST /functions/v1/sync-comments` (no body) | Pulls new comments on published posts into the inbox and (if the user enabled it) auto-replies with the AI. Requires a comment-capable provider (Ayrshare Premium). |
 
 ## 3. Social network publishing — the truth

@@ -7,7 +7,8 @@ Le produit aide une petite entreprise à :
 - configurer son activité en onboarding ;
 - générer des posts en français adaptés à son métier ;
 - enrichir les posts avec recherche web gratuite (Google News RSS, Wikipedia, DuckDuckGo) ;
-- générer un visuel IA associé ;
+- générer une affiche IA associée, avec en option **la photo de l'utilisateur
+  intégrée sur chaque affiche** ;
 - valider, programmer et publier les posts ;
 - connecter les réseaux sociaux via Zernio / Postiz / Ayrshare selon les secrets configurés ;
 - suivre les statistiques et les commentaires.
@@ -17,7 +18,7 @@ Le produit aide une petite entreprise à :
 - React + Vite + TypeScript
 - Tailwind + shadcn-ui
 - Supabase Auth / Database / Storage / Edge Functions
-- OpenRouter pour la génération IA de **texte**
+- OpenRouter (Claude) pour la génération IA de **texte**
 - Graphiste GPT pour les **affiches/images** (moteur exclusif, pas de repli)
 - Zernio / Postiz / Ayrshare / OAuth direct pour la publication sociale
 - Netlify pour le frontend (déployé par GitHub Actions)
@@ -44,17 +45,15 @@ Les secrets backend ne doivent jamais être mis dans `.env.local` : ils vont dan
 
 ```bash
 npm run lint
+npm run typecheck
+npm test
 npm run build
 ```
 
-Les Edge Functions peuvent être vérifiées avec Deno :
+Les Edge Functions sont vérifiées avec Deno (la CI le fait aussi) :
 
 ```bash
-deno check \
-  supabase/functions/generate-content/index.ts \
-  supabase/functions/generate-image/index.ts \
-  supabase/functions/auto-generate-weekly/index.ts \
-  supabase/functions/publish-post/index.ts
+deno check supabase/functions/*/index.ts
 ```
 
 ## Secrets Supabase minimum pour un premier utilisateur
@@ -88,6 +87,7 @@ ZERNIO_API_URL=https://zernio.com/api/v1
 Optionnel :
 
 ```bash
+ADMIN_ALERT_EMAIL=...            # destinataire des alertes de health-check
 RESEND_API_KEY=...
 RESEND_FROM="Pro Social AI <no-reply@votre-domaine.com>"
 TAVILY_API_KEY=...
@@ -111,7 +111,7 @@ sur `main` touchant `supabase/functions/**` déploie **toutes** les fonctions
 (`.github/workflows/deploy-functions.yml`). En manuel si besoin :
 
 ```bash
-supabase functions deploy --project-ref ixinojsmymqovekgkbdg
+supabase functions deploy --project-ref tktoyntaeajgsuplhntd
 ```
 
 ## Cron Supabase à configurer
@@ -127,11 +127,32 @@ Cadences recommandées :
 - `auto-generate-weekly` : lundi 06:00 UTC
 - `send-validation-email` : lundi 08:00 UTC
 - `publish-post` : toutes les 15 minutes
+- `health-check` : toutes les heures (alerte email si une clé, des crédits ou
+  un cron tombent — configurez `ADMIN_ALERT_EMAIL`)
 - `sync-comments` : toutes les 15–30 minutes si commentaires activés
+
+## Affiches personnalisées avec votre photo
+
+Dans **Profil → Images → « Ma photo sur chaque affiche »** (ou à la dernière
+étape de l'onboarding), l'utilisateur peut téléverser sa photo et activer
+l'option. L'affiche générée intègre alors cette personne (détourée, placée à
+gauche / à droite / au centre au choix), le texte de l'affiche occupant le côté
+opposé, avec un nom/rôle facultatif sous la photo.
+
+Techniquement : la photo est stockée dans le bucket public `user-assets` et
+envoyée à Graphiste GPT via le champ documenté `reference_image_url`, avec les
+consignes de composition construites dans
+`supabase/functions/_shared/posterPrompt.ts`. Si l'option est active mais
+qu'aucune photo exploitable n'est enregistrée, la génération échoue avec un
+message explicite (`missing_person_image`) plutôt que de produire une affiche
+sans la personne promise.
 
 ## État actuel vérifié
 
 - `npm run build` : OK
+- `npm run typecheck` : OK (0 erreur)
+- `npm test` : OK
+- `deno check supabase/functions/*/index.ts` : OK
 - `npm run lint` : OK avec warnings shadcn/fast-refresh non bloquants
 - Recherche web mutualisée : `supabase/functions/_shared/research.ts`
 - Génération manuelle et automatique utilisent la recherche web
