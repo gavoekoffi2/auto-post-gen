@@ -39,12 +39,56 @@ function sessionSecret(): string {
   return secret;
 }
 
+/**
+ * The database connection string.
+ *
+ * Two ways in, and the second is the one Compose uses:
+ *
+ *   1. DATABASE_URL — a complete connection string. Local development, CI,
+ *      and anything running outside Compose.
+ *   2. PGHOST / PGPORT / PGUSER / PGPASSWORD / PGDATABASE — the parts, which
+ *      this function assembles.
+ *
+ * Why the parts matter in production: a URL built by string interpolation in
+ * a YAML file embeds the password in the resolved configuration, so
+ * `docker compose config` prints it (or masks it, which reads like the file
+ * itself contains a literal mask and sends an operator hunting a bug that is
+ * not there). Worse, it is silently WRONG for a password containing @ : / ? #
+ * or any other character that means something inside a URL — the connection
+ * then fails with an authentication error that points nowhere near the cause.
+ *
+ * Assembling here fixes both: the password travels as its own variable, and
+ * every part is percent-encoded exactly once.
+ */
+function databaseUrl(): string {
+  const direct = optional("DATABASE_URL");
+  if (direct) return direct;
+
+  const host = optional("PGHOST");
+  const user = optional("PGUSER");
+  const password = optional("PGPASSWORD");
+  const database = optional("PGDATABASE");
+  const port = optional("PGPORT") ?? "5432";
+
+  if (!host || !user || !database) {
+    throw new Error(
+      "No database configuration. Set DATABASE_URL, or PGHOST / PGUSER / PGPASSWORD / PGDATABASE " +
+        "(PGPORT defaults to 5432) — see .env.selfhosted.example.",
+    );
+  }
+
+  const credentials = password
+    ? `${encodeURIComponent(user)}:${encodeURIComponent(password)}`
+    : encodeURIComponent(user);
+  return `postgres://${credentials}@${host}:${port}/${encodeURIComponent(database)}`;
+}
+
 export const env = {
   isProduction,
   port: Number(process.env.PORT ?? 8080),
   host: process.env.HOST ?? "0.0.0.0",
 
-  databaseUrl: required("DATABASE_URL"),
+  databaseUrl: databaseUrl(),
   sessionSecret: sessionSecret(),
 
   /** Absolute path of the local volume uploads are written to. */

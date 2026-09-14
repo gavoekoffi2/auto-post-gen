@@ -201,7 +201,8 @@ test("no legacy row is lost, and every id is preserved", async () => {
   assert.deepEqual(byTable, {
     users: "2",
     profiles: "2",
-    posts: "2",
+    // One per legacy status: draft, scheduled, published, failed.
+    posts: "4",
     media_assets: "1",
     generation_jobs: "1",
     social_connections: "1",
@@ -467,4 +468,156 @@ test("non-uuid identifiers are refused rather than half-converted", async () => 
   const result = await runMigrate(db);
   assert.equal(result.ok, false);
   assert.match(result.output, /primary keys are not uuid/);
+});
+
+// ---------------------------------------------------------------------
+// The legacy status vocabulary — the blocker found by the rehearsal on a
+// copy of the real production database.
+// ---------------------------------------------------------------------
+
+test("the legacy status CHECK is widened, not removed, and keeps every old row", async () => {
+  const db = await createScratchDatabase();
+  await loadSql(db, legacyFixture);
+
+  // The fixture carries production's own constraint.
+  const [before] = await rows<{ def: string }>(
+    db,
+    `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint
+      WHERE conrelid = 'posts'::regclass AND conname = 'posts_status_check'`,
+  );
+  assert.match(before!.def, /draft/);
+  assert.doesNotMatch(before!.def, /pending/, "the fixture must start with the legacy vocabulary");
+
+  assert.ok((await runMigrate(db)).ok);
+
+  // Every legacy status is still stored, untouched and uncounted-for-nothing.
+  const statuses = await rows<{ status: string; n: string }>(
+    db,
+    `SELECT status, count(*)::text AS n FROM posts GROUP BY status ORDER BY status`,
+  );
+  assert.deepEqual(
+    statuses.map((r) => `${r.status}:${r.n}`),
+    ["draft:1", "failed:1", "published:1", "scheduled:1"],
+    "no legacy post may be deleted, rewritten or re-labelled",
+  );
+
+  // And the constraint now covers both vocabularies.
+  const [after] = await rows<{ def: string }>(
+    db,
+    `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint
+      WHERE conrelid = 'posts'::regclass AND conname = 'posts_status_check'`,
+  );
+  for (const value of ["draft", "scheduled", "published", "failed", "pending", "validated", "publishing"]) {
+    assert.ok(after!.def.includes(value), `posts_status_check must accept ${value}`);
+  }
+});
+
+test("every status the API writes is accepted, and an unknown one is still refused", async () => {
+  const db = await createScratchDatabase();
+  await loadSql(db, legacyFixture);
+  assert.ok((await runMigrate(db)).ok);
+
+  await withClient(adminUrlFor(db), async (c) => {
+    const { rows: created } = await c.query<{ id: string }>(
+      `INSERT INTO profiles (email, password_hash, password_salt)
+       VALUES ('status-flow@example.test', 'h', 's') RETURNING id`,
+    );
+    const profileId = created[0]!.id;
+
+    // The real lifecycle: created → approved → claimed → sent, and the failure
+    // branch. A constraint that allowed only the first would break later, in
+    // production, on a post a user had already approved.
+    const { rows: post } = await c.query<{ id: string }>(
+      `INSERT INTO posts (profile_id, title, content, status, platforms)
+       VALUES ($1, 'Flow', 'Contenu', 'pending', ARRAY['LinkedIn']::text[]) RETURNING id`,
+      [profileId],
+    );
+    const postId = post[0]!.id;
+    for (const status of ["validated", "publishing", "published", "failed"]) {
+      await c.query(`UPDATE posts SET status = $2 WHERE id = $1`, [postId, status]);
+    }
+
+    // Strictness is preserved: widening is not weakening.
+    await assert.rejects(
+      () => c.query(`UPDATE posts SET status = 'not-a-real-status' WHERE id = $1`, [postId]),
+      /violates check constraint/,
+      "a typo must still be rejected after the migration",
+    );
+  });
+});
+
+test("widening one column leaves the others' rules alone", async () => {
+  // 'status' is a substring of 'image_status'. Matching constraints by text
+  // rewrote the image rule to be about the post status — caught by comparing
+  // the schema before and after a replay.
+  const db = await createScratchDatabase();
+  await loadSql(db, legacyFixture);
+  assert.ok((await runMigrate(db)).ok);
+
+  const definitions = async () =>
+    (
+      await rows<{ conname: string; def: string }>(
+        db,
+        `SELECT conname, pg_get_constraintdef(oid) AS def FROM pg_constraint
+          WHERE conrelid = 'posts'::regclass AND contype = 'c' ORDER BY conname`,
+      )
+    )
+      .map((r) => `${r.conname}=${r.def}`)
+      .join("\n");
+
+  const before = await definitions();
+  assert.match(before, /posts_image_status_known=CHECK \(\(\(image_status IS NULL\)/);
+
+  // Replaying the file outside the ledger must not change a single definition.
+  const sql = await readFile(join(migrationsDir, "0000_legacy_production_compat.sql"), "utf8");
+  await withClient(adminUrlFor(db), (c) => c.query(sql));
+  assert.equal(await definitions(), before, "a replay must be a no-op on the constraints");
+});
+
+test("0001's own constraints never abort on rows that predate them", async () => {
+  // A legacy post longer than the new limit, and a platform the new list does
+  // not know: both must survive, with the rule applying from now on.
+  const db = await createScratchDatabase();
+  await loadSql(db, legacyFixture);
+  await loadSql(
+    db,
+    `INSERT INTO posts (user_id, title, content, status)
+     VALUES ('11111111-1111-1111-1111-111111111111', 'Trop long', repeat('x', 12000), 'published');`,
+  );
+
+  const result = await runMigrate(db);
+  assert.ok(result.ok, `migration must not fail on legacy rows:\n${result.output}`);
+
+  const [{ n }] = await rows<{ n: string }>(db, `SELECT count(*)::text AS n FROM posts`);
+  assert.equal(n, "5", "the oversized legacy post must be kept");
+
+  // Kept via NOT VALID, and said so rather than silently skipping the rule.
+  const notValid = await rows<{ conname: string }>(
+    db,
+    `SELECT conname FROM pg_constraint
+      WHERE conrelid = 'posts'::regclass AND conname = 'posts_content_len' AND NOT convalidated`,
+  );
+  assert.equal(notValid.length, 1, "the rule must exist, marked NOT VALID");
+
+  const report = await rows<{ detail: string }>(
+    db,
+    `SELECT detail FROM legacy_compat_report WHERE detail LIKE '%NOT VALID%'`,
+  );
+  assert.ok(report.length >= 1, "the report must name what was left unvalidated");
+
+  // New writes are still checked.
+  await withClient(adminUrlFor(db), async (c) => {
+    const { rows: p } = await c.query<{ id: string }>(
+      `INSERT INTO profiles (email) VALUES ('len@example.test') RETURNING id`,
+    );
+    await assert.rejects(
+      () =>
+        c.query(
+          `INSERT INTO posts (profile_id, content, status, platforms)
+           VALUES ($1, repeat('y', 12000), 'pending', ARRAY[]::text[])`,
+          [p[0]!.id],
+        ),
+      /violates check constraint/,
+    );
+  });
 });

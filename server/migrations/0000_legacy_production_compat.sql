@@ -718,6 +718,294 @@ END;
 $relax$;
 
 -- ---------------------------------------------------------------------
+-- 6b. CHECK CONSTRAINTS WITH A LEGACY VOCABULARY.
+--
+-- Production carries its own value lists, written for the previous engine:
+--
+--     posts_status_check CHECK (status IN ('draft','scheduled','published','failed'))
+--
+-- This build writes 'pending' (post created), 'validated' (approved by the
+-- user or through the emailed link), 'publishing' (claimed by the queue),
+-- 'published' and 'failed'. Three of those five are absent from the legacy
+-- list, so the first post the API creates is rejected — exactly what the
+-- rehearsal on a copy of production reported:
+--
+--     new row for relation "posts" violates check constraint
+--     "posts_status_check" (SQLSTATE 23514)
+--
+-- The fix is a UNION, never a removal:
+--
+--     legacy values  ∪  values present in the data  ∪  values this build writes
+--
+-- so no existing row is invalidated, nothing is deleted or rewritten, and the
+-- column stays strictly validated — a typo is still rejected. The constraint
+-- is dropped and recreated under the SAME NAME inside this migration's single
+-- transaction, so no other session ever sees the table unconstrained.
+--
+-- It is done generically, for every enum-like column, because the same class
+-- of mismatch can exist on any of them; the goal is not to patch one reported
+-- error. A constraint whose shape is not a plain value list is left untouched,
+-- and the write probe in section 7 then names it rather than this file
+-- silently weakening something it did not understand.
+-- ---------------------------------------------------------------------
+
+-- Every SCALAR value named by a CHECK definition.
+--
+-- Postgres re-renders a constraint it was given as ARRAY['a','b'] into the
+-- compact form '{a,b}'::text[]. A naive "find the quoted strings" pass then
+-- returns ONE value, the literal {a,b} — which, fed back into a widened
+-- constraint, adds a nonsense entry and makes a second run differ from the
+-- first. Array literals are therefore flattened here, in one place used by
+-- both callers.
+CREATE OR REPLACE FUNCTION legacy_compat_check_literals(p_def text) RETURNS text[]
+LANGUAGE plpgsql IMMUTABLE AS $fn$
+DECLARE
+  result text[] := ARRAY[]::text[];
+  lit    text;
+  elem   text;
+BEGIN
+  FOR lit IN SELECT m[1] FROM regexp_matches(p_def, $re$'([^']*)'$re$, 'g') AS m LOOP
+    IF lit ~ '^\{.*\}$' THEN
+      BEGIN
+        FOREACH elem IN ARRAY lit::text[] LOOP
+          IF elem IS NOT NULL AND NOT (elem = ANY (result)) THEN result := result || elem; END IF;
+        END LOOP;
+        CONTINUE;
+      EXCEPTION WHEN others THEN
+        -- Not a parseable array literal after all: keep it as a scalar.
+        NULL;
+      END;
+    END IF;
+    IF NOT (lit = ANY (result)) THEN result := result || lit; END IF;
+  END LOOP;
+  RETURN result;
+END;
+$fn$;
+
+COMMENT ON FUNCTION legacy_compat_check_literals(text) IS
+  'Read-only. The scalar values a CHECK definition names, with array literals flattened.';
+
+-- The union of: the values allowed by existing CHECK constraints on the
+-- column, the values present in the column today, and the values the caller
+-- requires. Read-only.
+CREATE OR REPLACE FUNCTION legacy_compat_value_union(
+  p_table text, p_column text, p_required text[]
+) RETURNS text[]
+LANGUAGE plpgsql STABLE AS $fn$
+DECLARE
+  result text[] := p_required;
+  def    text;
+  lit    text;
+  used   text[];
+BEGIN
+  IF to_regclass('public.' || p_table) IS NULL THEN RETURN result; END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = p_table AND column_name = p_column
+  ) THEN RETURN result; END IF;
+
+  -- Values named by existing value-list constraints.
+  --
+  -- Constraints are matched on the column they REFERENCE (pg_constraint.conkey),
+  -- never on their text. Matching the definition against the column name would
+  -- make 'status' match 'image_status' too, and the rewrite below would then
+  -- replace one column's rule with the other's.
+  FOR def IN
+    SELECT pg_get_constraintdef(c.oid)
+      FROM pg_constraint c
+      JOIN pg_class t ON t.oid = c.conrelid
+      JOIN pg_namespace n ON n.oid = t.relnamespace
+      JOIN pg_attribute a ON a.attrelid = t.oid AND a.attname = p_column AND NOT a.attisdropped
+     WHERE n.nspname = 'public' AND t.relname = p_table AND c.contype = 'c'
+       AND c.conkey = ARRAY[a.attnum]::smallint[]
+       AND pg_get_constraintdef(c.oid) LIKE '%= ANY (%'
+  LOOP
+    FOR lit IN SELECT unnest(legacy_compat_check_literals(def)) LOOP
+      IF NOT (lit = ANY (result)) THEN result := result || lit; END IF;
+    END LOOP;
+  END LOOP;
+
+  -- Values actually stored. Belt and braces: even a constraint this function
+  -- could not read cannot lead to an existing row being invalidated.
+  EXECUTE format(
+    'SELECT coalesce(array_agg(DISTINCT %I::text), ARRAY[]::text[]) FROM public.%I WHERE %I IS NOT NULL',
+    p_column, p_table, p_column) INTO used;
+  FOR lit IN SELECT unnest(used) LOOP
+    IF NOT (lit = ANY (result)) THEN result := result || lit; END IF;
+  END LOOP;
+
+  RETURN result;
+END;
+$fn$;
+
+COMMENT ON FUNCTION legacy_compat_value_union(text, text, text[]) IS
+  'Read-only. The set of values a CHECK on this column must accept so that neither existing rows nor new writes are rejected.';
+
+-- Rewrites every plain value-list CHECK on the column so that it also accepts
+-- what this build writes. Same name, same strictness, wider vocabulary.
+CREATE OR REPLACE FUNCTION legacy_compat_widen_value_checks(
+  p_table text, p_column text, p_required text[]
+) RETURNS void
+LANGUAGE plpgsql AS $fn$
+DECLARE
+  con      record;
+  allowed  text[];
+  literals text[];
+  missing  text[];
+BEGIN
+  IF to_regclass('public.' || p_table) IS NULL THEN RETURN; END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = p_table AND column_name = p_column
+  ) THEN RETURN; END IF;
+
+  allowed := legacy_compat_value_union(p_table, p_column, p_required);
+
+  -- Only constraints that reference THIS column, and only this one (conkey).
+  FOR con IN
+    SELECT c.conname, pg_get_constraintdef(c.oid) AS def
+      FROM pg_constraint c
+      JOIN pg_class t ON t.oid = c.conrelid
+      JOIN pg_namespace n ON n.oid = t.relnamespace
+      JOIN pg_attribute a ON a.attrelid = t.oid AND a.attname = p_column AND NOT a.attisdropped
+     WHERE n.nspname = 'public' AND t.relname = p_table AND c.contype = 'c'
+       AND c.conkey = ARRAY[a.attnum]::smallint[]
+  LOOP
+    -- Only a plain "column = ANY (ARRAY[...])" list is rewritten. Anything
+    -- else (a length rule, a cross-column rule) is left exactly as it is.
+    CONTINUE WHEN con.def NOT LIKE '%= ANY (%';
+
+    literals := legacy_compat_check_literals(con.def);
+    CONTINUE WHEN array_length(literals, 1) IS NULL;
+
+    SELECT coalesce(array_agg(r), ARRAY[]::text[]) INTO missing
+      FROM unnest(p_required) AS r WHERE NOT (r = ANY (literals));
+    -- Already accepts everything this build writes: leave it alone. This is
+    -- what makes a second run a no-op.
+    CONTINUE WHEN array_length(missing, 1) IS NULL;
+
+    EXECUTE format('ALTER TABLE public.%I DROP CONSTRAINT %I', p_table, con.conname);
+    EXECUTE format(
+      'ALTER TABLE public.%I ADD CONSTRAINT %I CHECK (%I IS NULL OR %I = ANY (%L))',
+      p_table, con.conname, p_column, p_column, allowed);
+
+    INSERT INTO legacy_compat_report (step, detail)
+    VALUES ('check.' || p_table || '.' || p_column,
+            format('%s widened to accept %s (it was missing %s); every existing value is kept',
+                   con.conname, array_to_string(allowed, ','), array_to_string(missing, ',')));
+    RAISE NOTICE '[0000] % now accepts %', con.conname, array_to_string(allowed, ',');
+  END LOOP;
+END;
+$fn$;
+
+-- Adds one of 0001's constraints AHEAD of 0001, so legacy rows cannot make
+-- 0001 abort. 0001 adds each of its constraints inside a handler that skips a
+-- duplicate name, so whatever is created here wins.
+--
+--   * the data satisfies it → added and validated, as on a fresh install;
+--   * the data does not     → added NOT VALID: every existing row is KEPT and
+--                             every new or updated row is still checked. The
+--                             report says so, instead of the migration failing
+--                             on history nobody can change.
+CREATE OR REPLACE FUNCTION legacy_compat_ensure_check(
+  p_table text, p_name text, p_expr text
+) RETURNS void
+LANGUAGE plpgsql AS $fn$
+DECLARE offenders bigint;
+BEGIN
+  IF to_regclass('public.' || p_table) IS NULL THEN RETURN; END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint c
+      JOIN pg_class t ON t.oid = c.conrelid
+      JOIN pg_namespace n ON n.oid = t.relnamespace
+     WHERE n.nspname = 'public' AND t.relname = p_table AND c.conname = p_name
+  ) THEN RETURN; END IF;
+
+  EXECUTE format('SELECT count(*) FROM public.%I WHERE NOT (%s)', p_table, p_expr) INTO offenders;
+
+  IF offenders = 0 THEN
+    EXECUTE format('ALTER TABLE public.%I ADD CONSTRAINT %I CHECK (%s)', p_table, p_name, p_expr);
+  ELSE
+    EXECUTE format('ALTER TABLE public.%I ADD CONSTRAINT %I CHECK (%s) NOT VALID', p_table, p_name, p_expr);
+    INSERT INTO legacy_compat_report (step, detail, row_count)
+    VALUES ('check.' || p_table,
+            format('%s added NOT VALID: %s existing row(s) predate it and are kept; new writes are checked',
+                   p_name, offenders),
+            offenders);
+    RAISE WARNING '[0000] % existing row(s) do not satisfy %; they are kept and the rule applies from now on.',
+                  offenders, p_name;
+  END IF;
+END;
+$fn$;
+
+DO $checks$
+DECLARE
+  post_statuses text[];
+BEGIN
+  IF to_regclass('public.profiles') IS NULL THEN RETURN; END IF;
+
+  -- 1. Widen the legacy value lists to this build's vocabulary. posts.status
+  --    is the one production actually blocked on.
+  PERFORM legacy_compat_widen_value_checks('posts', 'status',
+    ARRAY['pending', 'validated', 'publishing', 'published', 'failed']);
+  PERFORM legacy_compat_widen_value_checks('posts', 'content_category',
+    ARRAY['value', 'research', 'promo']);
+  PERFORM legacy_compat_widen_value_checks('posts', 'image_status',
+    ARRAY['processing', 'done', 'failed']);
+  PERFORM legacy_compat_widen_value_checks('profiles', 'role',
+    ARRAY['user', 'admin', 'super_admin']);
+  PERFORM legacy_compat_widen_value_checks('media_assets', 'kind',
+    ARRAY['logo', 'custom_image', 'poster', 'other']);
+  PERFORM legacy_compat_widen_value_checks('generation_jobs', 'kind',
+    ARRAY['image', 'video']);
+  PERFORM legacy_compat_widen_value_checks('generation_jobs', 'status',
+    ARRAY['processing', 'completed', 'failed']);
+
+  -- 2. Create 0001's constraints here, legacy-aware, so 0001 cannot abort on
+  --    rows that predate them. On a fresh database none of this runs and 0001
+  --    installs its own stricter definitions unchanged.
+  post_statuses := legacy_compat_value_union('posts', 'status',
+    ARRAY['pending', 'validated', 'publishing', 'published', 'failed']);
+
+  PERFORM legacy_compat_ensure_check('posts', 'posts_status_known',
+    format('status = ANY (%L)', post_statuses));
+  PERFORM legacy_compat_ensure_check('posts', 'posts_category_known',
+    format('content_category IS NULL OR content_category = ANY (%L)',
+           legacy_compat_value_union('posts', 'content_category', ARRAY['value','research','promo'])));
+  PERFORM legacy_compat_ensure_check('posts', 'posts_image_status_known',
+    format('image_status IS NULL OR image_status = ANY (%L)',
+           legacy_compat_value_union('posts', 'image_status', ARRAY['processing','done','failed'])));
+  PERFORM legacy_compat_ensure_check('posts', 'posts_attempts_nonneg', 'publish_attempts >= 0');
+  PERFORM legacy_compat_ensure_check('posts', 'posts_content_len', 'char_length(content) <= 10000');
+  PERFORM legacy_compat_ensure_check('posts', 'posts_platforms_known',
+    $q$platforms <@ ARRAY['Instagram','Facebook','Twitter','Twitter (X)','LinkedIn','instagram','facebook','twitter','linkedin']::text[]$q$);
+
+  PERFORM legacy_compat_ensure_check('profiles', 'profiles_role_known',
+    format('role = ANY (%L)',
+           legacy_compat_value_union('profiles', 'role', ARRAY['user','admin','super_admin'])));
+  PERFORM legacy_compat_ensure_check('profiles', 'profiles_poster_footer_len',
+    'poster_footer_text IS NULL OR char_length(poster_footer_text) <= 120');
+
+  PERFORM legacy_compat_ensure_check('media_assets', 'media_kind_known',
+    format('kind = ANY (%L)',
+           legacy_compat_value_union('media_assets', 'kind', ARRAY['logo','custom_image','poster','other'])));
+  PERFORM legacy_compat_ensure_check('media_assets', 'media_size_positive',
+    'size_bytes > 0 AND size_bytes <= 20971520');
+
+  PERFORM legacy_compat_ensure_check('generation_jobs', 'generation_jobs_kind_known',
+    format('kind = ANY (%L)',
+           legacy_compat_value_union('generation_jobs', 'kind', ARRAY['image','video'])));
+  PERFORM legacy_compat_ensure_check('generation_jobs', 'generation_jobs_status_known',
+    format('status = ANY (%L)',
+           legacy_compat_value_union('generation_jobs', 'status', ARRAY['processing','completed','failed'])));
+
+  INSERT INTO legacy_compat_report (step, detail)
+  VALUES ('check.posts.status',
+          format('statuses accepted after migration: %s', array_to_string(post_statuses, ', ')));
+END;
+$checks$;
+
+-- ---------------------------------------------------------------------
 -- 7. WRITE PROBE — can the new code actually write to this database?
 --
 -- A migration that only changes the schema can still leave the product
@@ -744,8 +1032,15 @@ BEGIN
     RETURNING id INTO probe_profile;
 
     IF to_regclass('public.posts') IS NOT NULL THEN
+      -- Every status the API moves a post through, not only the first one: a
+      -- legacy CHECK that accepts 'pending' but not 'validated' would
+      -- otherwise surface when a user approves their first post, in production.
       INSERT INTO posts (profile_id, title, content, status, platforms)
-      VALUES (probe_profile, 'probe', 'probe', 'pending', ARRAY[]::text[]);
+      VALUES (probe_profile, 'probe', 'probe', 'pending', ARRAY['LinkedIn']::text[]);
+      UPDATE posts SET status = 'validated' WHERE profile_id = probe_profile;
+      UPDATE posts SET status = 'publishing', publishing_started_at = now() WHERE profile_id = probe_profile;
+      UPDATE posts SET status = 'published', published_at = now() WHERE profile_id = probe_profile;
+      UPDATE posts SET status = 'failed', publish_error = 'probe' WHERE profile_id = probe_profile;
     END IF;
 
     IF to_regclass('public.media_assets') IS NOT NULL THEN
@@ -794,6 +1089,15 @@ $probe$;
 
 -- ---------------------------------------------------------------------
 -- 8. Close the run.
+--
+-- The two helpers that WRITE (they drop and recreate constraints) are
+-- migration scaffolding and are dropped again: nothing able to weaken a
+-- constraint stays callable in the production database afterwards. The
+-- read-only diagnostic functions are kept.
+-- ---------------------------------------------------------------------
+DROP FUNCTION IF EXISTS legacy_compat_widen_value_checks(text, text, text[]);
+DROP FUNCTION IF EXISTS legacy_compat_ensure_check(text, text, text);
+
 -- ---------------------------------------------------------------------
 INSERT INTO legacy_compat_report (step, detail)
 SELECT 'run', format('0000 legacy compatibility completed (strategy=%s)', legacy_compat_identity_strategy())

@@ -119,6 +119,62 @@ test("the production stack keeps Postgres private and routes /api to the API", (
   assert.match(nginx, /try_files \$uri \$uri\/ \/index\.html;/);
 });
 
+test("the database password never travels inside a URL in the compose file", () => {
+  const compose = read("deploy/docker-compose.vps.yml").replace(/^\s*#.*$/gm, "");
+
+  // A URL assembled here would put the password into the resolved
+  // configuration, where `docker compose config` prints or masks it — and a
+  // mask there is indistinguishable from a literal `***` in the file, which is
+  // how a working deployment gets reported as broken. It is also silently
+  // wrong for a password containing @ : / ? #.
+  assert.doesNotMatch(
+    compose,
+    /DATABASE_URL:\s*postgres:\/\//,
+    "the connection must be passed as parts, not as an interpolated URL",
+  );
+
+  // Both the API and the one-shot migration must reach the same database the
+  // same way, or a migration lands somewhere the API never reads.
+  for (const service of ["api", "migrate"]) {
+    const start = compose.indexOf(`\n  ${service}:`);
+    assert.ok(start > 0, `${service} must exist`);
+    // Up to the next top-level service: a line indented by exactly two spaces.
+    const rest = compose.slice(start + service.length + 4);
+    const nextService = rest.search(/\n {2}[a-z_-]+:/);
+    const block = nextService === -1 ? rest : rest.slice(0, nextService);
+    for (const key of ["PGHOST:", "PGUSER:", "PGPASSWORD:", "PGDATABASE:"]) {
+      assert.ok(block.includes(key), `${service} must receive ${key}`);
+    }
+    assert.match(block, /PGPASSWORD: \$\{POSTGRES_PASSWORD\}/,
+      `${service} must take the password from the env file, never a literal`);
+  }
+
+  // And the server knows how to assemble them.
+  const env = read("server/src/lib/env.ts");
+  assert.match(env, /encodeURIComponent/);
+  assert.match(env, /PGPASSWORD/);
+  assert.match(env, /optional\("DATABASE_URL"\)/, "DATABASE_URL must still work outside Compose");
+});
+
+test("no real secret is committed anywhere in the deployment files", () => {
+  for (const path of ["deploy/docker-compose.vps.yml", ".env.selfhosted.example", "HERMES_VPS_RELEASE.md"]) {
+    // Compose substitutions are removed first: `${POSTGRES_PASSWORD:?set ...}`
+    // is a variable reference and its error text is not a value.
+    const text = read(path).replace(/\$\{[^}]*\}/g, "${VAR}");
+    // Every remaining value must be an obvious placeholder.
+    // [ \t]* rather than \s*: a newline must not be skipped, or an empty
+    // `OPENROUTER_API_KEY=` reads as if it carried the NEXT line's value.
+    const suspicious = text.match(/(PASSWORD|SECRET|API_KEY)[ \t]*[:=][ \t]*([^\s#]+)/g) || [];
+    for (const line of suspicious) {
+      assert.match(
+        line,
+        /replace-me|placeholder|fake|example|changeme|<|\.\.\.|\$\{/i,
+        `possible real secret committed: ${line}`,
+      );
+    }
+  }
+});
+
 test("the frontend has no cloud backend left in it", () => {
   const api = read("src/lib/api.ts");
   assert.doesNotMatch(api, /supabase/i);

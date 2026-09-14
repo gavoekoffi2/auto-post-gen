@@ -16,23 +16,28 @@
 
 | | |
 |---|---|
-| **Branche** | `claude/legacy-db-compat-b7k3` |
-| **SHA du code** | `5959a0e0af8678fa2dc4811ee7722ca20dea0504` |
+| **Branche** | `claude/legacy-status-compat-9m2x` |
+| **SHA du code** | `CODE_SHA_PLACEHOLDER` |
 | **SHA à déployer** | la pointe de la branche (ce document est le seul commit au-dessus du code ; `git log -1 --format=%H`) |
-| **Branche de départ** | `claude/lucid-johnson-14zub1` @ `f3479c2428a45e696e0c48ce679df3946a94b689` |
+| **Branche précédente** | `claude/legacy-db-compat-b7k3` @ `07d8d0d2f8c13facf1fdfc9646d1e560cea96d4d` (bloquée par la répétition générale) |
+| **Branche d'origine** | `claude/lucid-johnson-14zub1` @ `f3479c2428a45e696e0c48ce679df3946a94b689` |
 | **`main`** | non modifié, non poussé, non fusionné |
 
 Comparer avec la branche Claude initiale :
 
 ```bash
 git fetch origin
-git diff --stat f3479c2428a45e696e0c48ce679df3946a94b689..origin/claude/legacy-db-compat-b7k3
-git log --oneline f3479c2428a45e696e0c48ce679df3946a94b689..origin/claude/legacy-db-compat-b7k3
+# depuis la branche précédente (ce que corrige cette livraison)
+git diff --stat origin/claude/legacy-db-compat-b7k3..origin/claude/legacy-status-compat-9m2x
+git log --oneline origin/claude/legacy-db-compat-b7k3..origin/claude/legacy-status-compat-9m2x
+
+# depuis la branche Claude initiale
+git diff --stat f3479c2428a45e696e0c48ce679df3946a94b689..origin/claude/legacy-status-compat-9m2x
 ```
 
 ---
 
-## 2. Le blocage traité
+## 2. Les blocages traités
 
 Sur une **copie isolée** de la base de production, la migration échouait :
 
@@ -49,6 +54,50 @@ l'index unique sur `profiles(email)` — s'arrête net.
 
 Un correctif numéroté APRÈS 0001 n'aurait jamais pu s'exécuter, puisque 0001
 échoue avant. D'où `0000_legacy_production_compat.sql`, qui passe en premier.
+
+**Troisième blocage — trouvé par VOTRE répétition générale sur copie réelle.**
+La vraie base porte sa propre contrainte :
+
+```sql
+posts_status_check CHECK (status IN ('draft', 'scheduled', 'published', 'failed'))
+```
+
+Le nouveau moteur écrit `pending` (post créé), `validated` (approuvé par
+l'utilisateur ou par le lien email), `publishing` (pris par la file),
+`published`, `failed`. Trois de ces cinq valeurs sont absentes de la liste
+héritée, donc le premier post créé par l'API était rejeté :
+
+```text
+new row for relation "posts" violates check constraint "posts_status_check"
+(SQLSTATE 23514)
+```
+
+**Correctif : une UNION, jamais une suppression.** La contrainte est reconstruite
+sous le même nom avec `valeurs héritées ∪ valeurs présentes dans les données ∪
+valeurs écrites par ce build`, à l'intérieur de la transaction unique de la
+migration — aucune session ne voit jamais la table sans contrainte. Après
+migration :
+
+```sql
+posts_status_check CHECK (status IS NULL OR status = ANY
+  ('{pending,validated,publishing,published,failed,draft,scheduled}'))
+```
+
+Aucune ligne existante n'est invalidée, aucun statut n'est réécrit, et la colonne
+reste strictement validée : `UPDATE posts SET status='n-importe-quoi'` est
+toujours refusé. Le traitement est **générique** (toutes les colonnes de type
+énumération : `posts.content_category`, `posts.image_status`, `profiles.role`,
+`media_assets.kind`, `generation_jobs.kind/status`), parce que le même écart
+peut exister ailleurs et qu'il ne s'agit pas de rustiner une erreur.
+
+**Et une conséquence que la sonde ne voyait pas encore.** 0001 ajoute ses
+propres contraintes (`posts_content_len`, `posts_platforms_known`, …) en les
+validant sur les lignes existantes : un vieux post de plus de 10 000 caractères
+ou une plateforme inconnue aurait fait échouer 0001 **après** que 0000 ait
+réussi. Ces contraintes sont donc créées par 0000, en amont : validées si les
+données s'y conforment, sinon `NOT VALID` — **les lignes historiques sont
+conservées** et la règle s'applique à partir de maintenant. Le rapport le dit
+ligne par ligne.
 
 **Second blocage, trouvé en testant (il n'était pas encore apparu).** Une fois
 le schéma migré, l'API ne pouvait toujours pas créer un compte : la colonne
@@ -69,8 +118,12 @@ d'écriture.
 | `server/package.json` | script `migrate:dry-run` |
 | `server/scripts/inspect-legacy-schema.sql` | **nouveau** — inspection **en lecture seule** du schéma réel |
 | `server/tests/fixtures/legacy_production_schema.sql` | **nouveau** — reconstruction du schéma hérité, pour les tests |
-| `server/tests/legacy-migration.test.ts` | **nouveau** — 12 cas sur de vraies bases PostgreSQL |
-| `tests/migration-safety.test.js` | **nouveau** — garde-fous statiques (aucun `DROP`, ordre des migrations, pile Compose) |
+| `server/tests/legacy-migration.test.ts` | 16 cas sur de vraies bases PostgreSQL (4 ajoutés pour le vocabulaire de statuts) |
+| `tests/migration-safety.test.js` | garde-fous statiques (aucun `DROP`, ordre des migrations, pile Compose, **mot de passe jamais dans une URL, aucun secret commité**) |
+| `server/tests/env-database-url.test.ts` | **nouveau** — 7 cas sur l'assemblage de la chaîne de connexion |
+| `server/src/lib/env.ts` | `DATABASE_URL` **ou** `PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE`, assemblés et encodés côté serveur |
+| `deploy/docker-compose.vps.yml` | l'API et le service `migrate` reçoivent les **parties** de la connexion, plus jamais une URL contenant le mot de passe |
+| `deploy/fake.env` | **nouveau** — variables factices versionnées, pour valider le Compose sans lire un secret |
 | `nginx.vps.conf` | `/api` sans slash final est proxifié au lieu de servir la SPA |
 | `.env.selfhosted.example` | sépare explicitement obligatoire / facultatif ; aucune valeur réelle |
 
@@ -82,7 +135,7 @@ comportement du produit est inchangé.
 ## 4. Validation locale (déjà exécutée, à refaire si vous voulez)
 
 ```bash
-# Backend — build + 31 tests, dont 12 sur de vraies bases PostgreSQL
+# Backend — build + 42 tests, dont 16 sur de vraies bases PostgreSQL
 cd server
 npm ci --include=dev
 npm run build
@@ -106,15 +159,26 @@ le message qui le dit. **Ne visez jamais la base de production.**
 Résultats obtenus ici :
 
 ```
-server : # tests 31  # pass 31  # fail 0     (build OK, typecheck OK)
-dépôt  : # tests 170 # pass 170 # fail 0     (build OK, typecheck OK,
+server : # tests 42  # pass 42  # fail 0     (build OK, typecheck OK)
+dépôt  : # tests 172 # pass 172 # fail 0     (build OK, typecheck OK,
                                               lint 0 erreur / 8 warnings
                                               shadcn préexistants)
+docker compose config avec un fichier de variables FACTICE : OK
 ```
 
-Vérifié aussi à la main, contre une base héritée migrée : `POST /api/auth/register`
-→ 201, `POST /api/auth/login` → 200, `GET /api/auth/me` avec le cookie → 200,
-`POST /api/auth/password-reset/request` pour un compte hérité → 200.
+Vérifié aussi à la main, contre une base héritée migrée **portant la contrainte
+`posts_status_check` réelle** :
+
+| Vérification | Résultat |
+|---|---|
+| `npm run migrate:dry-run` sur le schéma hérité complet | `DRY RUN OK — 3 migration(s) would apply cleanly` puis `Rolled back` |
+| `POST /api/auth/register` | 201 |
+| `POST /api/posts` (statut `pending`) | 201 |
+| `POST /api/posts/:id/validate` (statut `validated`) | 200 |
+| Compte hérité, après mise d'un mot de passe : `POST /api/auth/login` | 200 |
+| Ses anciens posts (`published`, `draft`) listés par `GET /api/posts` | visibles, statuts d'origine |
+| API démarrée **sans `DATABASE_URL`**, avec seulement `PGHOST/PGUSER/PGDATABASE` | `/api/health` 200, `/api/posts` 200 |
+| Mot de passe contenant `@ : / # ? & = +` | assemblé, encodé, relu identique par le parseur de `pg` |
 
 ---
 
@@ -133,12 +197,72 @@ docker build -t pro-social-ai-api:$(git rev-parse --short HEAD) server/
 
 # Vérifier le Compose AVANT de démarrer quoi que ce soit
 docker compose -f deploy/docker-compose.vps.yml --env-file .env.selfhosted config
+
+# Le même contrôle SANS toucher à un secret (valeurs factices) :
+docker compose -f deploy/docker-compose.vps.yml --env-file deploy/fake.env config
 ```
 
 Build du frontend sur l'hôte (nginx sert `dist/` en lecture seule) :
 
 ```bash
 npm ci --include=dev && npm run build
+```
+
+---
+
+## 5b. `DATABASE_URL` et le `***` observé
+
+Vous avez vu, dans la sortie de la configuration résolue :
+
+```yaml
+DATABASE_URL: postgres://${POSTGRES_USER}:***@postgres:5432/...
+```
+
+**Le fichier versionné n'a jamais contenu de `***`** : il portait
+`${POSTGRES_PASSWORD}`, une substitution Compose. Les `***` viennent du masquage
+appliqué à la sortie de `docker compose config` par les versions récentes de
+Compose (ou par le journal qui l'a transportée). Un masque dans cette sortie est
+malheureusement **indiscernable** d'un mot de passe littéral `***` dans le
+fichier : impossible de conclure sans rouvrir le fichier — ce qui est exactement
+le temps perdu que cette livraison supprime.
+
+**Ce qui a changé.** Le mot de passe ne voyage plus dans une URL. Compose passe
+les **parties** à l'API et au service `migrate` :
+
+```yaml
+PGHOST: postgres
+PGPORT: 5432
+PGUSER: ${POSTGRES_USER}
+PGPASSWORD: ${POSTGRES_PASSWORD}
+PGDATABASE: ${POSTGRES_DB:-pro_social_ai}
+```
+
+et le serveur assemble la chaîne lui-même (`server/src/lib/env.ts`), en
+encodant chaque partie. Deux bénéfices, dont un qui vous aurait coûté cher :
+
+1. **Plus aucune URL contenant un mot de passe** dans la configuration résolue :
+   il n'y a plus rien à masquer, donc plus d'ambiguïté possible.
+2. **Un mot de passe contenant `@ : / ? # & = +` fonctionne enfin.** L'URL
+   construite par interpolation YAML était silencieusement fausse pour ces
+   caractères : le mot de passe était interprété comme un hôte ou un chemin et
+   l'API échouait à s'authentifier, avec un message pointant à côté de la cause.
+   Si vous générez le mot de passe avec `openssl rand -base64 32`, le cas est
+   courant (`+` et `/` y sont fréquents).
+
+`DATABASE_URL` reste prioritaire si elle est définie : rien ne change pour un
+usage hors Compose.
+
+**Vérifier la configuration sans exposer un secret :**
+
+```bash
+# Valeurs factices versionnées : vérifie la syntaxe, le routage, les volumes.
+docker compose -f deploy/docker-compose.vps.yml --env-file deploy/fake.env config
+
+# Vérifier que les VRAIES variables sont bien lues, sans afficher leur valeur :
+docker compose -f deploy/docker-compose.vps.yml --env-file .env.selfhosted config \
+  | grep -E "PG(HOST|PORT|USER|DATABASE):"
+# puis, une fois la pile démarrée, que l'API est bien connectée :
+curl -fsS https://<domaine>/api/health     # {"ok":true} ⇒ la connexion fonctionne
 ```
 
 ---
@@ -340,6 +464,9 @@ quelles. La restauration de la base reste la voie sûre si un doute subsiste.
 | 2 | `SELECT * FROM legacy_compat_report ORDER BY id;` | le compte rendu de la migration, sans surprise |
 | 3 | `SELECT count(*) FROM profiles WHERE email IS NULL;` | 0, ou un nombre que vous acceptez (ces comptes ne peuvent pas se connecter tant qu'une adresse n'est pas renseignée) |
 | 4 | `SELECT count(*) FROM posts WHERE profile_id IS NULL;` | 0 |
+| 4b | `SELECT status, count(*) FROM posts GROUP BY status;` | les statuts historiques (`draft`, `scheduled`, `published`, `failed`) intacts, avec les mêmes effectifs qu'avant migration |
+| 4c | `SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname='posts_status_check';` | la liste contient les 7 valeurs (héritées + nouvelles) |
+| 4d | `SELECT conname FROM pg_constraint WHERE conrelid='posts'::regclass AND NOT convalidated;` | soit vide, soit des contraintes que le rapport explique (lignes historiques conservées) |
 | 5 | Inscription d'un compte de test depuis l'interface | 201 puis session ouverte |
 | 6 | Connexion d'un compte **hérité** | soit elle fonctionne (mot de passe au format scrypt), soit « mot de passe oublié » envoie un lien — voir le rapport, ligne `identity.password` |
 | 7 | Un post existant est visible dans le tableau de bord de son propriétaire | oui |
@@ -368,6 +495,20 @@ quelles. La restauration de la base reste la voie sûre si un doute subsiste.
    comptes sont concernés.
 3. **Sessions.** La table `sessions` est nouvelle : tout le monde est
    déconnecté après le déploiement. Normal, à annoncer.
+3b. **Anciens statuts dans l'interface.** Le tableau de bord ne connaît que
+   `pending / validated / published / failed` ; il affiche donc un post
+   `draft` ou `scheduled` comme « à valider ». Vérifié : l'utilisateur peut le
+   valider normalement, et il part ensuite en publication. Rien n'est perdu ni
+   bloqué, et **la migration ne réécrit aucun statut**. Si vous préférez que
+   les anciens posts `scheduled` repartent tout seuls, c'est une décision
+   d'exploitation, à faire à la main et réversible :
+
+   ```sql
+   -- OPTIONNEL. Noter les ids avant, pour pouvoir revenir en arrière.
+   SELECT id FROM posts WHERE status = 'scheduled' AND scheduled_for > now();
+   UPDATE posts SET status = 'validated'
+    WHERE status = 'scheduled' AND scheduled_for > now();
+   ```
 4. **Comptes sans adresse.** Un profil hérité dont l'utilisateur n'avait pas
    d'email garde toutes ses données mais ne peut pas se connecter tant qu'une
    adresse n'est pas renseignée (`UPDATE profiles SET email = … WHERE id = …`).

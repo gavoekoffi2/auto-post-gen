@@ -56,10 +56,20 @@ services:
     environment:
       NODE_ENV: production
       PORT: 8080
-      # Composed here so the password lives in exactly one variable. The
-      # hostname is the compose service, not localhost: they are separate
-      # containers.
-      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-pro_social_ai}
+      # The database connection travels as PARTS, never as a URL with the
+      # password inside it. The API assembles and percent-encodes them (see
+      # src/lib/env.ts), which means:
+      #   * `docker compose config` never prints a connection string carrying
+      #     the password — no output anyone has to squint at to tell a real
+      #     value from a masked one;
+      #   * a password containing @ : / ? # works, instead of silently
+      #     producing an unparseable URL and an authentication failure.
+      # The host is the compose service name: separate containers, not localhost.
+      PGHOST: postgres
+      PGPORT: 5432
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:-pro_social_ai}
       MEDIA_ROOT: /app/media
       SESSION_COOKIE_SECRET: ${SESSION_COOKIE_SECRET:?set SESSION_COOKIE_SECRET in .env.selfhosted}
       APP_PUBLIC_URL: ${APP_PUBLIC_URL:?set APP_PUBLIC_URL in .env.selfhosted}
@@ -118,7 +128,13 @@ services:
         condition: service_healthy
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-pro_social_ai}
+      # Same parts as the API, so both reach the same database by the same
+      # rules. Never a URL with the password in it.
+      PGHOST: postgres
+      PGPORT: 5432
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:-pro_social_ai}
       # Read at import time by the shared config module, though migrating does
       # not use it. A placeholder here would be a real value in .env.selfhosted.
       SESSION_COOKIE_SECRET: ${SESSION_COOKIE_SECRET}
