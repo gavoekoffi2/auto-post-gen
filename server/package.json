@@ -12,6 +12,7 @@
     "start": "node dist/src/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "migrate": "npm run build && node dist/src/migrate.js",
+    "migrate:dry-run": "npm run build && node dist/src/migrate.js --dry-run",
     "test": "npm run build && node --test --experimental-strip-types tests/*.test.ts"
   },
   "dependencies": {

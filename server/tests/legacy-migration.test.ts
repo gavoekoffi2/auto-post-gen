@@ -1,0 +1,470 @@
+import test, { after } from "node:test";
+import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import pg from "pg";
+
+// Migration tests against REAL PostgreSQL databases created for the run.
+//
+// The unit under test is the migration set as a whole, applied by the real
+// runner (`node dist/src/migrate.js`) as a child process — the same command
+// the deployment runs. What is asserted is the thing that actually matters on
+// the day: that a database carrying the OLD production shape ends up usable by
+// this build, with every row still there.
+//
+// Nothing here ever touches the database in DATABASE_URL. That connection is
+// used only to CREATE/DROP scratch databases named psa_legacy_test_*, and the
+// suite refuses to run if it is pointed at something that looks like
+// production.
+
+const execFileAsync = promisify(execFile);
+const here = dirname(fileURLToPath(import.meta.url));
+const serverRoot = join(here, "..");
+const migrationsDir = join(serverRoot, "migrations");
+
+const ADMIN_URL = process.env.DATABASE_URL;
+if (!ADMIN_URL) throw new Error("DATABASE_URL is required to run the migration tests.");
+
+// A scratch database is created and dropped for every case; the name makes it
+// obvious in `\l` that it is disposable.
+const created: string[] = [];
+
+function adminUrlFor(dbName: string): string {
+  const url = new URL(ADMIN_URL!);
+  url.pathname = `/${dbName}`;
+  return url.toString();
+}
+
+function maintenanceUrl(): string {
+  const url = new URL(ADMIN_URL!);
+  // Connect to the default maintenance database: CREATE DATABASE cannot run
+  // while connected to the database being created, and must not run against
+  // the application database either.
+  url.pathname = "/postgres";
+  return url.toString();
+}
+
+async function withClient<T>(url: string, fn: (c: pg.Client) => Promise<T>): Promise<T> {
+  const client = new pg.Client({ connectionString: url });
+  await client.connect();
+  try {
+    return await fn(client);
+  } finally {
+    await client.end();
+  }
+}
+
+async function createScratchDatabase(): Promise<string> {
+  const name = `psa_legacy_test_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+  try {
+    await withClient(maintenanceUrl(), (c) => c.query(`CREATE DATABASE ${name}`));
+  } catch (err) {
+    const message = (err as Error).message;
+    throw new Error(
+      `Could not create a scratch database (${message}). The migration tests need a role that ` +
+        `may CREATE DATABASE — e.g. ALTER ROLE <user> CREATEDB. They never modify the database ` +
+        `in DATABASE_URL.`,
+    );
+  }
+  created.push(name);
+  return name;
+}
+
+/** Loads a .sql file into a scratch database. */
+async function loadSql(dbName: string, sql: string): Promise<void> {
+  await withClient(adminUrlFor(dbName), (c) => c.query(sql));
+}
+
+/** Runs the real migration runner against a scratch database. */
+async function runMigrate(
+  dbName: string,
+  args: string[] = [],
+): Promise<{ ok: boolean; output: string }> {
+  try {
+    const { stdout, stderr } = await execFileAsync(
+      process.execPath,
+      [join(serverRoot, "dist/src/migrate.js"), ...args],
+      {
+        cwd: serverRoot,
+        env: {
+          ...process.env,
+          DATABASE_URL: adminUrlFor(dbName),
+          SESSION_COOKIE_SECRET:
+            process.env.SESSION_COOKIE_SECRET ?? "test-secret-that-is-long-enough-for-the-check",
+        },
+      },
+    );
+    return { ok: true, output: stdout + stderr };
+  } catch (err) {
+    const e = err as { stdout?: string; stderr?: string; message: string };
+    return { ok: false, output: (e.stdout ?? "") + (e.stderr ?? "") + e.message };
+  }
+}
+
+async function rows<T extends pg.QueryResultRow = pg.QueryResultRow>(
+  dbName: string,
+  sql: string,
+  params: unknown[] = [],
+): Promise<T[]> {
+  return withClient(adminUrlFor(dbName), async (c) => (await c.query<T>(sql, params)).rows);
+}
+
+const legacyFixture = await readFile(join(here, "fixtures/legacy_production_schema.sql"), "utf8");
+
+after(async () => {
+  for (const name of created) {
+    try {
+      await withClient(maintenanceUrl(), (c) => c.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`));
+    } catch {
+      // A leftover scratch database is noise, not a failure of the code.
+    }
+  }
+});
+
+// ---------------------------------------------------------------------
+// A database that has never been migrated.
+// ---------------------------------------------------------------------
+
+test("an empty database migrates cleanly and ends up with the full schema", async () => {
+  const db = await createScratchDatabase();
+  const result = await runMigrate(db);
+  assert.ok(result.ok, `migration failed:\n${result.output}`);
+
+  const tables = (
+    await rows<{ table_name: string }>(
+      db,
+      `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'`,
+    )
+  ).map((r) => r.table_name);
+
+  for (const expected of [
+    "profiles", "sessions", "one_time_tokens", "posts", "media_assets",
+    "generation_jobs", "generation_usage", "social_connections", "social_comments",
+    "ip_rate_events", "schema_migrations",
+  ]) {
+    assert.ok(tables.includes(expected), `missing table ${expected}`);
+  }
+
+  // 0000 is a no-op here: it may record that it ran, but it must not have
+  // backfilled or relaxed anything, because there is no legacy shape to repair.
+  const [{ count }] = await rows<{ count: string }>(
+    db,
+    `SELECT count(*)::text AS count FROM legacy_compat_report
+      WHERE step IN ('identity.email', 'identity.password', 'write_probe')
+         OR step LIKE 'tenancy.%'
+         OR (step = 'relax_not_null' AND detail NOT LIKE 'no legacy-only%')`,
+  );
+  assert.equal(count, "0", "an empty database has nothing to backfill, relax or probe");
+});
+
+// ---------------------------------------------------------------------
+// The case that blocked the deployment.
+// ---------------------------------------------------------------------
+
+test("the legacy production shape migrates instead of failing on profiles.email", async () => {
+  const db = await createScratchDatabase();
+  await loadSql(db, legacyFixture);
+
+  // Before: this is the exact failure Hermes reported.
+  const emailColumnBefore = await rows(
+    db,
+    `SELECT 1 FROM information_schema.columns
+      WHERE table_name = 'profiles' AND column_name = 'email'`,
+  );
+  assert.equal(emailColumnBefore.length, 0, "the fixture must start WITHOUT profiles.email");
+
+  const result = await runMigrate(db);
+  assert.ok(result.ok, `migration failed on the legacy shape:\n${result.output}`);
+  assert.match(result.output, /identity strategy: profiles_user_id/);
+});
+
+test("no legacy row is lost, and every id is preserved", async () => {
+  const db = await createScratchDatabase();
+  await loadSql(db, legacyFixture);
+  assert.ok((await runMigrate(db)).ok);
+
+  const counts = await rows<{ t: string; n: string }>(
+    db,
+    `SELECT 'users' AS t, count(*)::text AS n FROM users
+     UNION ALL SELECT 'profiles', count(*)::text FROM profiles
+     UNION ALL SELECT 'posts', count(*)::text FROM posts
+     UNION ALL SELECT 'media_assets', count(*)::text FROM media_assets
+     UNION ALL SELECT 'generation_jobs', count(*)::text FROM generation_jobs
+     UNION ALL SELECT 'social_connections', count(*)::text FROM social_connections
+     UNION ALL SELECT 'audit_log', count(*)::text FROM audit_log`,
+  );
+  const byTable = Object.fromEntries(counts.map((r) => [r.t, r.n]));
+  assert.deepEqual(byTable, {
+    users: "2",
+    profiles: "2",
+    posts: "2",
+    media_assets: "1",
+    generation_jobs: "1",
+    social_connections: "1",
+    audit_log: "2",
+  });
+
+  // The legacy tables and columns are kept, not renamed or dropped: a
+  // rollback to the previous image must still find its data.
+  const legacyColumns = await rows<{ table_name: string; column_name: string }>(
+    db,
+    `SELECT table_name, column_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND column_name = 'user_id'
+        AND table_name IN ('profiles','posts','media_assets','generation_jobs','social_connections')`,
+  );
+  assert.equal(legacyColumns.length, 5, "legacy user_id columns must survive the migration");
+
+  const post = await rows<{ id: string; content: string; status: string }>(
+    db,
+    `SELECT id, content, status FROM posts WHERE id = 'bbbbbbbb-1111-1111-1111-111111111111'`,
+  );
+  assert.equal(post.length, 1, "the historical post must still exist under its own id");
+  assert.equal(post[0]!.content, "Contenu historique à préserver");
+  assert.equal(post[0]!.status, "published");
+});
+
+test("the account email is carried over from the legacy users table", async () => {
+  const db = await createScratchDatabase();
+  await loadSql(db, legacyFixture);
+  assert.ok((await runMigrate(db)).ok);
+
+  const profiles = await rows<{ id: string; email: string; company_name: string }>(
+    db,
+    `SELECT id, email::text AS email, company_name FROM profiles ORDER BY company_name`,
+  );
+  assert.equal(profiles[0]!.email, "legacy-one@example.test");
+  assert.equal(profiles[0]!.id, "aaaaaaaa-1111-1111-1111-111111111111");
+  assert.equal(profiles[1]!.email, "Legacy-Two@Example.test");
+
+  // citext: the address is the login identifier and must match case-insensitively.
+  const found = await rows(
+    db,
+    `SELECT 1 FROM profiles WHERE email = 'legacy-two@example.test'`,
+  );
+  assert.equal(found.length, 1, "email lookup must be case-insensitive");
+});
+
+test("a password this build can read is kept; one it cannot is not faked", async () => {
+  const db = await createScratchDatabase();
+  await loadSql(db, legacyFixture);
+  assert.ok((await runMigrate(db)).ok);
+
+  const [bcryptAccount] = await rows<{ password_hash: string | null }>(
+    db,
+    `SELECT password_hash FROM profiles WHERE id = 'aaaaaaaa-1111-1111-1111-111111111111'`,
+  );
+  assert.equal(
+    bcryptAccount!.password_hash,
+    null,
+    "a bcrypt hash must NOT be copied: it would look usable and reject every password",
+  );
+
+  const [scryptAccount] = await rows<{ password_hash: string | null; password_salt: string | null }>(
+    db,
+    `SELECT password_hash, password_salt FROM profiles WHERE id = 'aaaaaaaa-2222-2222-2222-222222222222'`,
+  );
+  assert.equal(scryptAccount!.password_hash, "ab".repeat(64));
+  assert.equal(scryptAccount!.password_salt, "cd".repeat(16));
+
+  // And the migration says so, rather than leaving it to be discovered.
+  const report = await rows<{ detail: string; row_count: string }>(
+    db,
+    `SELECT detail, row_count::text AS row_count FROM legacy_compat_report
+      WHERE step = 'identity.password' AND detail LIKE '%mot de passe oublié%'`,
+  );
+  assert.equal(report.length, 1);
+  assert.equal(report[0]!.row_count, "1");
+});
+
+test("every child row is attached to the profile that owns it", async () => {
+  const db = await createScratchDatabase();
+  await loadSql(db, legacyFixture);
+  assert.ok((await runMigrate(db)).ok);
+
+  const orphans = await rows<{ t: string; n: string }>(
+    db,
+    `SELECT 'posts' AS t, count(*)::text AS n FROM posts WHERE profile_id IS NULL
+     UNION ALL SELECT 'media_assets', count(*)::text FROM media_assets WHERE profile_id IS NULL
+     UNION ALL SELECT 'generation_jobs', count(*)::text FROM generation_jobs WHERE profile_id IS NULL
+     UNION ALL SELECT 'social_connections', count(*)::text FROM social_connections WHERE profile_id IS NULL`,
+  );
+  for (const row of orphans) assert.equal(row.n, "0", `${row.t} still has unattached rows`);
+
+  // Attached to the RIGHT profile, not just to any profile.
+  const [post] = await rows<{ profile_id: string }>(
+    db,
+    `SELECT profile_id FROM posts WHERE id = 'bbbbbbbb-2222-2222-2222-222222222222'`,
+  );
+  assert.equal(post!.profile_id, "aaaaaaaa-2222-2222-2222-222222222222");
+
+  const [media] = await rows<{ profile_id: string }>(
+    db,
+    `SELECT profile_id FROM media_assets WHERE id = 'cccccccc-1111-1111-1111-111111111111'`,
+  );
+  assert.equal(media!.profile_id, "aaaaaaaa-1111-1111-1111-111111111111");
+});
+
+test("the migrated database accepts the writes the API makes", async () => {
+  // The migration can succeed and still leave the product unusable: the legacy
+  // schema declares profiles.user_id NOT NULL, which the new code never sets,
+  // so the first signup would fail with 23502. This is that regression.
+  const db = await createScratchDatabase();
+  await loadSql(db, legacyFixture);
+  assert.ok((await runMigrate(db)).ok);
+
+  await withClient(adminUrlFor(db), async (c) => {
+    const inserted = await c.query<{ id: string }>(
+      `INSERT INTO profiles (email, password_hash, password_salt)
+       VALUES ('new-signup@example.test', 'hash', 'salt') RETURNING id`,
+    );
+    const profileId = inserted.rows[0]!.id;
+    await c.query(
+      `INSERT INTO posts (profile_id, title, content, status, platforms)
+       VALUES ($1, 'Nouveau', 'Contenu', 'pending', ARRAY['LinkedIn']::text[])`,
+      [profileId],
+    );
+    await c.query(
+      `INSERT INTO media_assets (profile_id, kind, storage_path, mime_type, size_bytes)
+       VALUES ($1, 'poster', $2, 'image/png', 1024)`,
+      [profileId, `${profileId}/poster.png`],
+    );
+  });
+
+  const [{ n }] = await rows<{ n: string }>(
+    db,
+    `SELECT count(*)::text AS n FROM profiles WHERE email = 'new-signup@example.test'`,
+  );
+  assert.equal(n, "1");
+});
+
+test("migrating twice changes nothing (runner ledger and file replay)", async () => {
+  const db = await createScratchDatabase();
+  await loadSql(db, legacyFixture);
+  assert.ok((await runMigrate(db)).ok);
+
+  const snapshot = async () =>
+    (
+      await rows<{ t: string; n: string }>(
+        db,
+        `SELECT 'profiles' AS t, count(*)::text AS n FROM profiles
+         UNION ALL SELECT 'posts', count(*)::text FROM posts
+         UNION ALL SELECT 'media_assets', count(*)::text FROM media_assets
+         UNION ALL SELECT 'emails', count(*)::text FROM profiles WHERE email IS NOT NULL
+         ORDER BY 1`,
+      )
+    )
+      .map((r) => `${r.t}=${r.n}`)
+      .join(",");
+
+  const before = await snapshot();
+
+  // 1. The runner skips what it already applied.
+  const second = await runMigrate(db);
+  assert.ok(second.ok, second.output);
+  assert.match(second.output, /skip {5}0000_legacy_production_compat\.sql \(already applied\)/);
+  assert.equal(await snapshot(), before);
+
+  // 2. And the files themselves are replayable: a re-run outside the ledger
+  //    (a manual psql, a restored copy) must not fail or change anything.
+  for (const file of ["0000_legacy_production_compat.sql", "0001_core_schema.sql", "0002_media_public_token.sql"]) {
+    const sql = await readFile(join(migrationsDir, file), "utf8");
+    await withClient(adminUrlFor(db), (c) => c.query(sql));
+  }
+  assert.equal(await snapshot(), before, "replaying the migrations must not change any data");
+});
+
+test("a rehearsal (--dry-run) reports what would happen and writes nothing", async () => {
+  const db = await createScratchDatabase();
+  await loadSql(db, legacyFixture);
+
+  const result = await runMigrate(db, ["--dry-run"]);
+  assert.ok(result.ok, result.output);
+  assert.match(result.output, /DRY RUN OK/);
+  assert.match(result.output, /Rolled back: the database is unchanged/);
+  // The caveats an operator has to know are printed, not swallowed.
+  assert.match(result.output, /\[WARNING\].*password/i);
+
+  const emailColumn = await rows(
+    db,
+    `SELECT 1 FROM information_schema.columns WHERE table_name='profiles' AND column_name='email'`,
+  );
+  assert.equal(emailColumn.length, 0, "a rehearsal must not alter the schema");
+  const ledger = await rows(db, `SELECT 1 FROM schema_migrations`);
+  assert.equal(ledger.length, 0, "a rehearsal must not write the ledger");
+});
+
+// ---------------------------------------------------------------------
+// Refusals. Each one must stop BEFORE touching anything.
+// ---------------------------------------------------------------------
+
+test("an unmappable schema stops the migration and leaves the database untouched", async () => {
+  const db = await createScratchDatabase();
+  await loadSql(
+    db,
+    `CREATE EXTENSION IF NOT EXISTS pgcrypto;
+     CREATE TABLE users (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), email text);
+     CREATE TABLE profiles (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), company_name text);
+     INSERT INTO users (email) VALUES ('someone@example.test');
+     INSERT INTO profiles (company_name) VALUES ('Orpheline SARL');`,
+  );
+
+  const result = await runMigrate(db);
+  assert.equal(result.ok, false, "an ambiguous mapping must not be guessed");
+  assert.match(result.output, /cannot determine where the account email lives/);
+  assert.match(result.output, /inspect-legacy-schema\.sql/);
+
+  const emailColumn = await rows(
+    db,
+    `SELECT 1 FROM information_schema.columns WHERE table_name='profiles' AND column_name='email'`,
+  );
+  assert.equal(emailColumn.length, 0, "nothing may be written when the migration refuses");
+  const profiles = await rows(db, `SELECT 1 FROM profiles`);
+  assert.equal(profiles.length, 1, "the data must still be there");
+});
+
+test("two accounts sharing one address stop the migration with both named", async () => {
+  const db = await createScratchDatabase();
+  await loadSql(
+    db,
+    `CREATE EXTENSION IF NOT EXISTS pgcrypto;
+     CREATE TABLE users (id uuid PRIMARY KEY, email text);
+     CREATE TABLE profiles (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                            user_id uuid REFERENCES users(id), company_name text);
+     INSERT INTO users VALUES
+       ('10000000-0000-0000-0000-000000000001', 'Shared@Example.test'),
+       ('10000000-0000-0000-0000-000000000002', 'shared@example.test');
+     INSERT INTO profiles (user_id, company_name) VALUES
+       ('10000000-0000-0000-0000-000000000001', 'Entreprise A'),
+       ('10000000-0000-0000-0000-000000000002', 'Entreprise B');`,
+  );
+
+  const result = await runMigrate(db);
+  assert.equal(result.ok, false, "a duplicate login identifier must not be migrated silently");
+  assert.match(result.output, /shared by more than one profile/);
+  assert.match(result.output, /shared@example\.test/);
+
+  const emailColumn = await rows(
+    db,
+    `SELECT 1 FROM information_schema.columns WHERE table_name='profiles' AND column_name='email'`,
+  );
+  assert.equal(emailColumn.length, 0, "nothing may be written when the migration refuses");
+});
+
+test("non-uuid identifiers are refused rather than half-converted", async () => {
+  const db = await createScratchDatabase();
+  await loadSql(
+    db,
+    `CREATE TABLE users (id integer PRIMARY KEY, email text);
+     CREATE TABLE profiles (id integer PRIMARY KEY, user_id integer REFERENCES users(id));
+     INSERT INTO users VALUES (1, 'int-id@example.test');
+     INSERT INTO profiles VALUES (1, 1);`,
+  );
+
+  const result = await runMigrate(db);
+  assert.equal(result.ok, false);
+  assert.match(result.output, /primary keys are not uuid/);
+});
