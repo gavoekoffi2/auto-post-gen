@@ -108,3 +108,9 @@ verify_jwt = false
 # requires server-owned app_metadata role=admin/super_admin.
 [functions.admin-api]
 verify_jwt = false
+
+# health-check is cron-only (hourly). Protected by CRON_SECRET, it verifies the
+# secrets, the AI providers' credits and the state of the publishing pipeline,
+# and emails ADMIN_ALERT_EMAIL when something is broken.
+[functions.health-check]
+verify_jwt = false

@@ -17,13 +17,16 @@ type AdminBody = {
 };
 
 function safeUser(user: User) {
+  // GoTrue returns banned_until on the admin API, but the typed User does not
+  // declare it.
+  const bannedUntil = (user as unknown as { banned_until?: string | null }).banned_until;
   return {
     id: user.id,
     email: user.email ?? "",
     createdAt: user.created_at,
     lastSignInAt: user.last_sign_in_at ?? null,
     role: user.app_metadata?.role ?? "user",
-    blocked: !!user.banned_until && new Date(user.banned_until).getTime() > Date.now(),
+    blocked: !!bannedUntil && new Date(bannedUntil).getTime() > Date.now(),
   };
 }
 

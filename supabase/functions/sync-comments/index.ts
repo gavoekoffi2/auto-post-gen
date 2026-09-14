@@ -21,7 +21,8 @@ import {
   type NormalizedComment,
 } from "../_shared/engagement.ts";
 
-type DB = ReturnType<typeof createClient>;
+// deno-lint-ignore no-explicit-any
+type DB = any; // untyped service-role client (no generated Database generic here)
 
 const POSTS_PER_USER = 25;
 const AUTO_REPLY_CAP = 10; // max auto-replies per user per run

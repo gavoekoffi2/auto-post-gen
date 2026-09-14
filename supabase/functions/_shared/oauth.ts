@@ -32,13 +32,16 @@ function base64UrlEncode(bytes: Uint8Array): string {
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
-function base64UrlDecode(s: string): Uint8Array {
+// Returns a standalone ArrayBuffer: WebCrypto's BufferSource requires a view
+// backed by an ArrayBuffer (not the generic ArrayBufferLike a Uint8Array can
+// carry), which `deno check` rejects.
+function base64UrlDecode(s: string): ArrayBuffer {
   const pad = s.length % 4;
   if (pad) s += "=".repeat(4 - pad);
   const bin = atob(s.replace(/-/g, "+").replace(/_/g, "/"));
-  const out = new Uint8Array(bin.length);
+  const out = new Uint8Array(new ArrayBuffer(bin.length));
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
+  return out.buffer;
 }
 
 async function getHmacKey(): Promise<CryptoKey> {
@@ -59,7 +62,7 @@ export async function signState(payload: Record<string, unknown>): Promise<strin
   );
   const key = await getHmacKey();
   const sig = new Uint8Array(
-    await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body)),
+    await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body).buffer as ArrayBuffer),
   );
   return `${body}.${base64UrlEncode(sig)}`;
 }
@@ -75,7 +78,7 @@ export async function verifyState(
     "HMAC",
     key,
     base64UrlDecode(sig),
-    new TextEncoder().encode(body),
+    new TextEncoder().encode(body).buffer as ArrayBuffer,
   );
   if (!ok) throw new Error("Invalid state signature");
   const payload = JSON.parse(new TextDecoder().decode(base64UrlDecode(body))) as
