@@ -621,3 +621,26 @@ test("0001's own constraints never abort on rows that predate them", async () =>
     );
   });
 });
+
+test("the migration output stays readable: bookkeeping hidden, warnings never", async () => {
+  // Every guarded statement emits a "does not exist / already exists, skipping"
+  // NOTICE when its guard fires — dozens of lines around the handful that
+  // matter. A real WARNING scrolling past unnoticed in that is the failure this
+  // output exists to prevent.
+  const db = await createScratchDatabase();
+  await loadSql(db, legacyFixture);
+
+  const result = await runMigrate(db, ["--dry-run"]);
+  assert.ok(result.ok, result.output);
+
+  assert.doesNotMatch(result.output, /does not exist, skipping/, "bookkeeping must be filtered");
+  assert.doesNotMatch(result.output, /already exists, skipping/);
+  // Filtered, not silently: the count is stated.
+  assert.match(result.output, /notice\(s\) hidden/);
+
+  // And everything that carries meaning is still there.
+  assert.match(result.output, /\[WARNING\].*password/i, "a WARNING is never filtered");
+  assert.match(result.output, /\[NOTICE\] \[0000\] identity strategy/);
+  assert.match(result.output, /\[NOTICE\] \[0000\] write probe passed/);
+  assert.match(result.output, /posts_status_check now accepts/);
+});

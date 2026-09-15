@@ -114,11 +114,11 @@ d'écriture.
 | Fichier | Nature |
 |---|---|
 | `server/migrations/0000_legacy_production_compat.sql` | **nouveau** — migration de compatibilité (préflight, mise en forme, identité, tenancy, contraintes, sonde d'écriture, rapport) |
-| `server/src/migrate.ts` | affiche les `NOTICE`/`WARNING` de PostgreSQL ; ajoute `--dry-run` (répétition générale annulée par `ROLLBACK`) |
+| `server/src/migrate.ts` | affiche les `NOTICE`/`WARNING` de PostgreSQL (la comptabilité `IF EXISTS` est masquée et comptée, jamais un WARNING) ; ajoute `--dry-run` (répétition générale annulée par `ROLLBACK`) |
 | `server/package.json` | script `migrate:dry-run` |
 | `server/scripts/inspect-legacy-schema.sql` | **nouveau** — inspection **en lecture seule** du schéma réel |
 | `server/tests/fixtures/legacy_production_schema.sql` | **nouveau** — reconstruction du schéma hérité, pour les tests |
-| `server/tests/legacy-migration.test.ts` | 16 cas sur de vraies bases PostgreSQL (4 ajoutés pour le vocabulaire de statuts) |
+| `server/tests/legacy-migration.test.ts` | 17 cas sur de vraies bases PostgreSQL (4 pour le vocabulaire de statuts, 1 pour la lisibilité de la sortie) |
 | `tests/migration-safety.test.js` | garde-fous statiques (aucun `DROP`, ordre des migrations, pile Compose, **mot de passe jamais dans une URL, aucun secret commité**) |
 | `server/tests/env-database-url.test.ts` | **nouveau** — 7 cas sur l'assemblage de la chaîne de connexion |
 | `server/src/lib/env.ts` | `DATABASE_URL` **ou** `PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE`, assemblés et encodés côté serveur |
@@ -135,7 +135,7 @@ comportement du produit est inchangé.
 ## 4. Validation locale (déjà exécutée, à refaire si vous voulez)
 
 ```bash
-# Backend — build + 42 tests, dont 16 sur de vraies bases PostgreSQL
+# Backend — build + 43 tests, dont 17 sur de vraies bases PostgreSQL
 cd server
 npm ci --include=dev
 npm run build
@@ -159,7 +159,7 @@ le message qui le dit. **Ne visez jamais la base de production.**
 Résultats obtenus ici :
 
 ```
-server : # tests 42  # pass 42  # fail 0     (build OK, typecheck OK)
+server : # tests 43  # pass 43  # fail 0     (build OK, typecheck OK)
 dépôt  : # tests 172 # pass 172 # fail 0     (build OK, typecheck OK,
                                               lint 0 erreur / 8 warnings
                                               shadcn préexistants)

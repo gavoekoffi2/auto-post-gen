@@ -35,11 +35,34 @@ async function main(): Promise<void> {
 
   // The server's own reports. `notice` carries NOTICE, WARNING and the rest;
   // the severity is kept so a warning does not read like a progress line.
+  //
+  // DDL bookkeeping is dropped. Every guarded statement in 0000 (ALTER TABLE
+  // IF EXISTS, ADD COLUMN IF NOT EXISTS, CREATE ... IF NOT EXISTS) emits one
+  // "already exists / does not exist, skipping" NOTICE when its guard fires —
+  // about ninety lines on a fresh database, around the three that matter.
+  // Losing a real WARNING in that is precisely what this output exists to
+  // prevent, so ONLY notice-level bookkeeping is filtered: a WARNING or worse
+  // is always printed, whatever it says. The count is reported at the end, so
+  // the filtering is visible rather than silent.
+  let bookkeeping = 0;
   client.on("notice", (msg) => {
-    const severity = msg.severity ?? "NOTICE";
+    const severity = (msg.severity ?? "NOTICE").toUpperCase();
+    const message = (msg.message ?? "").trim();
+    if (severity === "NOTICE" && /(already exists|does not exist), skipping$/.test(message)) {
+      bookkeeping++;
+      return;
+    }
     const text = [msg.message, msg.detail, msg.hint].filter(Boolean).join(" | ");
     console.log(`  [${severity}] ${text}`);
   });
+  const reportBookkeeping = () => {
+    if (bookkeeping > 0) {
+      console.log(
+        `  (${bookkeeping} "already exists / does not exist" notice(s) hidden: guarded statements that did nothing)`,
+      );
+      bookkeeping = 0;
+    }
+  };
 
   try {
     if (dryRun) {
@@ -80,6 +103,7 @@ async function main(): Promise<void> {
           await client.query(await readFile(join(migrationsDir, file), "utf8"));
           await client.query(`INSERT INTO schema_migrations (filename) VALUES ($1)`, [file]);
         }
+        reportBookkeeping();
         console.log(`\nDRY RUN OK — ${pending.length} migration(s) would apply cleanly.`);
       } catch (err) {
         console.error(`DRY RUN FAILED: ${(err as Error).message}`);
@@ -111,6 +135,7 @@ async function main(): Promise<void> {
       }
     }
 
+    reportBookkeeping();
     console.log(count === 0 ? "Schema already up to date." : `Applied ${count} migration(s).`);
   } finally {
     client.release();
