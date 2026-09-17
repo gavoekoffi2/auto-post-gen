@@ -239,7 +239,15 @@ export default function Auth() {
                 </Button>
 
                 <p className="text-xs text-muted-foreground text-center">
-                  En créant un compte, vous acceptez nos conditions d'utilisation
+                  En créant un compte, vous acceptez nos{" "}
+                  <Link to="/terms" className="underline hover:text-primary transition-colors">
+                    conditions d'utilisation
+                  </Link>{" "}
+                  et notre{" "}
+                  <Link to="/privacy" className="underline hover:text-primary transition-colors">
+                    politique de confidentialité
+                  </Link>
+                  .
                 </p>
               </form>
             </TabsContent>
