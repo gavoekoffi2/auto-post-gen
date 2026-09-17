@@ -20,7 +20,7 @@ Le produit aide une petite entreprise à :
 - OpenRouter pour la génération IA de **texte**
 - Graphiste GPT pour les **affiches/images** (moteur exclusif, pas de repli)
 - Zernio / Postiz / Ayrshare / OAuth direct pour la publication sociale
-- Netlify pour le frontend (déployé par GitHub Actions)
+- VPS (Docker + Nginx + Traefik) pour le frontend — voir `docker-compose.vps.yml`
 
 ## Développement local
 
@@ -65,9 +65,9 @@ Obligatoires :
 OPENROUTER_API_KEY=...        # texte IA
 GRAPHISTE_GPT_API_KEY=...     # affiches IA — SANS elle : texte OK mais JAMAIS d'image
 CRON_SECRET=...
-ALLOWED_ORIGINS=https://votre-domaine.netlify.app
-APP_BASE_URL=https://votre-domaine.netlify.app
-APP_PUBLIC_URL=https://votre-domaine.netlify.app
+ALLOWED_ORIGINS=https://auto-post-gen.76.13.129.252.sslip.io
+APP_BASE_URL=https://auto-post-gen.76.13.129.252.sslip.io
+APP_PUBLIC_URL=https://auto-post-gen.76.13.129.252.sslip.io
 APP_NAME="Pro Social AI"
 ```
 
@@ -98,20 +98,26 @@ La recherche web fonctionne déjà gratuitement sans Tavily/Brave grâce à Goog
 
 ## Déploiement
 
-Frontend Netlify :
+Frontend — VPS :
 
 ```bash
-npm run build
+npm run build                      # produit dist/
+docker compose -f docker-compose.vps.yml up -d
 ```
 
-Netlify publie le dossier `dist` et redirige toutes les routes React vers `index.html` via `netlify.toml`.
+Nginx sert `dist/` et renvoie toutes les routes React vers `index.html`
+(`nginx.vps.conf`, qui porte aussi la CSP et les en-têtes de sécurité).
+Origine publique : https://auto-post-gen.76.13.129.252.sslip.io
+
+Le fichier `netlify.toml` est conservé pour un éventuel retour à Netlify mais
+n'est plus utilisé en production.
 
 Edge Functions Supabase — le déploiement normal passe par la CI : tout push
 sur `main` touchant `supabase/functions/**` déploie **toutes** les fonctions
 (`.github/workflows/deploy-functions.yml`). En manuel si besoin :
 
 ```bash
-supabase functions deploy --project-ref ixinojsmymqovekgkbdg
+supabase functions deploy --project-ref tktoyntaeajgsuplhntd
 ```
 
 ## Cron Supabase à configurer

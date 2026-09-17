@@ -26,6 +26,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - name: Verify Supabase access token
         run: |
           if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then
@@ -114,41 +118,9 @@ jobs:
           done
           echo "Graphiste GPT is configured for poster generation; OpenRouter is configured for text generation."
 
-      - name: Apply the current editorial-mix migration
+      - name: Apply pending database migrations
         shell: bash
-        run: |
-          set -euo pipefail
-          migration="supabase/migrations/20260721000000_editorial_mix.sql"
-          jq -Rs '{query: .}' < "$migration" > /tmp/editorial-mix-query.json
-          curl --fail-with-body -sS -X POST \
-            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
-            -H "Content-Type: application/json" \
-            --data-binary @/tmp/editorial-mix-query.json \
-            "https://api.supabase.com/v1/projects/$PROJECT_REF/database/query" >/dev/null
-
-      - name: Apply audience-targeting migration
-        shell: bash
-        run: |
-          set -euo pipefail
-          migration="supabase/migrations/20260722000000_target_audiences.sql"
-          jq -Rs '{query: .}' < "$migration" > /tmp/audience-targets-query.json
-          curl --fail-with-body -sS -X POST \
-            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
-            -H "Content-Type: application/json" \
-            --data-binary @/tmp/audience-targets-query.json \
-            "https://api.supabase.com/v1/projects/$PROJECT_REF/database/query" >/dev/null
-
-      - name: Apply poster footer text migration
-        shell: bash
-        run: |
-          set -euo pipefail
-          migration="supabase/migrations/20260723000000_poster_footer_text.sql"
-          jq -Rs '{query: .}' < "$migration" > /tmp/poster-footer-text-query.json
-          curl --fail-with-body -sS -X POST \
-            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
-            -H "Content-Type: application/json" \
-            --data-binary @/tmp/poster-footer-text-query.json \
-            "https://api.supabase.com/v1/projects/$PROJECT_REF/database/query" >/dev/null
+        run: node scripts/apply-migrations.mjs
 
       - name: Deploy all edge functions
         run: supabase functions deploy --project-ref "$PROJECT_REF"

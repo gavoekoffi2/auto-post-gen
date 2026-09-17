@@ -63,7 +63,8 @@ environment variables in the Supabase dashboard before deploying.
 
 `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_SUPABASE_PROJECT_ID`
 must be set. Copy `.env.example` to `.env.local` and fill them in (no `.env`
-is committed; in CI/Netlify they come from GitHub Actions secrets).
+is committed; in CI they come from GitHub Actions secrets and are baked into the
+bundle served by the VPS).
 
 ### Cron jobs (Supabase Scheduler)
 

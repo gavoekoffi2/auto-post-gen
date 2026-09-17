@@ -12,12 +12,14 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { AudienceEditor } from "@/components/AudienceEditor";
 import { AudienceSegment, normalizeAudienceSegments } from "@/lib/audiences";
+import { functionErrorMessage } from "@/lib/functionError";
 
 export default function Onboarding() {
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [analyzingAudiences, setAnalyzingAudiences] = useState(false);
+  const [audienceAnalysisFailed, setAudienceAnalysisFailed] = useState(false);
   const [formData, setFormData] = useState({
     companyName: "",
     posterFooterText: "",
@@ -70,6 +72,12 @@ export default function Onboarding() {
     checkAuth();
   }, [navigate]);
 
+  // Best-effort AI suggestion of audience segments. It must NEVER block
+  // onboarding: the analysis depends on an external AI provider, and a missing
+  // key / quota / outage would otherwise lock a brand-new user out of the
+  // product forever (they could not reach step 4, so never reach the
+  // dashboard). On failure we fall back to manual entry, which the
+  // AudienceEditor already supports.
   const analyzeAudiences = async (): Promise<boolean> => {
     setAnalyzingAudiences(true);
     try {
@@ -89,11 +97,16 @@ export default function Onboarding() {
         audienceSuggestions: audiences,
         selectedAudienceIds: [],
       }));
+      setAudienceAnalysisFailed(false);
       toast.success("Vos cibles recommandées sont prêtes. Sélectionnez celles que vous souhaitez toucher.");
       return true;
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : "Analyse indisponible";
-      toast.error(`Impossible d'analyser vos cibles : ${message}`);
+      const message = await functionErrorMessage(error, "Analyse indisponible");
+      setAudienceAnalysisFailed(true);
+      toast.error(
+        `Analyse automatique indisponible (${message}). Décrivez vos cibles vous-même : vous pourrez relancer l'analyse plus tard.`,
+        { duration: 10000 },
+      );
       return false;
     } finally {
       setAnalyzingAudiences(false);
@@ -103,8 +116,8 @@ export default function Onboarding() {
   const handleNext = async () => {
     if (step === 3) {
       if (formData.audienceSuggestions.length === 0) {
-        const analyzed = await analyzeAudiences();
-        if (!analyzed) return;
+        // Failure is not fatal: step 4 lets the user add targets manually.
+        await analyzeAudiences();
       }
       setStep(4);
     } else if (step < 8) {
@@ -337,9 +350,13 @@ export default function Onboarding() {
           {step === 4 && (
             <div className="space-y-6">
               <div>
-                <h2 className="text-2xl font-bold mb-2">Cibles recommandées</h2>
+                <h2 className="text-2xl font-bold mb-2">
+                  {audienceAnalysisFailed ? "Vos cibles" : "Cibles recommandées"}
+                </h2>
                 <p className="text-muted-foreground">
-                  Claude a analysé votre activité. Sélectionnez au moins une cible parmi les personnes que vos contenus doivent aider et convaincre.
+                  {audienceAnalysisFailed
+                    ? "L'analyse automatique n'a pas abouti. Ajoutez vous-même au moins une cible (bouton « Ajouter une cible personnalisée ») ou relancez l'analyse — vous pourrez la modifier à tout moment depuis votre profil."
+                    : "Claude a analysé votre activité. Sélectionnez au moins une cible parmi les personnes que vos contenus doivent aider et convaincre."}
                 </p>
               </div>
               <AudienceEditor

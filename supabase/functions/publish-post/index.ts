@@ -3,11 +3,18 @@
 // publish-post: publishes a single post (manual trigger from the dashboard)
 // or a batch of due posts (cron trigger).
 //
-// Implements LinkedIn (UGC API with image upload via the assets API),
-// Facebook Pages (feed/photos), Instagram (Graph API media + media_publish
-// via the connected Facebook Page) and Twitter/X (v2 tweets, text-only in
-// this version). TikTok is intentionally not implemented because the
-// Content Posting API is in limited access.
+// Publishing goes through Zernio ONLY: Zernio holds the social tokens and fans
+// a post out to every account connected under the user's Zernio profile, so the
+// product has a single, predictable social backend.
+//
+// The direct per-platform OAuth publishers (LinkedIn UGC, Facebook Pages,
+// Instagram Graph, Twitter v2) and the Ayrshare / Postiz paths used to live
+// here but had been UNREACHABLE since the switch to Zernio-only — dead weight
+// that also made the file read as if four more providers were supported. They
+// were removed; `git log` still has them if a second provider is ever
+// reinstated, and any reinstated version MUST route image fetches through
+// _shared/safeFetch.ts (the old LinkedIn path used a raw fetch(), bypassing the
+// SSRF guard every other image path in this codebase goes through).
 //
 // Concurrency: before doing any external API call, we atomically flip the
 // post status from 'validated' to 'publishing' so concurrent cron + manual
@@ -16,28 +23,10 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { buildCorsHeaders } from "../_shared/cors.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
-import {
-  postizCreatePost,
-  postizListIntegrations,
-  postizUploadFromUrl,
-  toPostizIdentifier,
-} from "../_shared/postiz.ts";
 import { zernioCreatePost, zernioListAccounts } from "../_shared/zernio.ts";
 import { resumePosterJob } from "../_shared/graphiste.ts";
 import { fetchImageBytes } from "../_shared/safeFetch.ts";
 
-
-interface SocialConnection {
-  id: string;
-  user_id: string;
-  platform: string;
-  account_id: string;
-  account_username: string | null;
-  access_token: string;
-  refresh_token: string | null;
-  token_expires_at: string | null;
-  meta: any;
-}
 
 type DbClient = SupabaseClient<any, "public", any>;
 
@@ -65,176 +54,6 @@ interface PublishResult {
   externalId?: string;
   externalUrl?: string;
   message?: string;
-}
-
-async function publishToLinkedIn(
-  connection: SocialConnection,
-  content: string,
-  imageUrl: string | null,
-): Promise<PublishResult> {
-  try {
-    const personUrn = `urn:li:person:${connection.account_id}`;
-
-    // 1. If we have an image URL, register and upload it first.
-    let mediaAsset: string | null = null;
-    if (imageUrl) {
-      const registerResp = await fetch(
-        "https://api.linkedin.com/v2/assets?action=registerUpload",
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${connection.access_token}`,
-            "Content-Type": "application/json",
-            "X-Restli-Protocol-Version": "2.0.0",
-          },
-          body: JSON.stringify({
-            registerUploadRequest: {
-              owner: personUrn,
-              recipes: ["urn:li:digitalmediaRecipe:feedshare-image"],
-              serviceRelationships: [
-                {
-                  identifier: "urn:li:userGeneratedContent",
-                  relationshipType: "OWNER",
-                },
-              ],
-            },
-          }),
-        },
-      );
-
-      if (registerResp.ok) {
-        const registerData = await registerResp.json();
-        mediaAsset = registerData?.value?.asset || null;
-        const uploadMech =
-          registerData?.value?.uploadMechanism?.[
-            "com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest"
-          ];
-        const uploadUrl = uploadMech?.uploadUrl;
-        // LinkedIn returns the http method in the upload mechanism. The
-        // current API uses PUT for the binary upload, but read it back
-        // defensively in case LinkedIn ever advertises a different one.
-        const uploadMethod = (uploadMech?.method as string) || "PUT";
-        if (uploadUrl) {
-          const imgResp = await fetch(imageUrl);
-          if (!imgResp.ok) {
-            return {
-              platform: "linkedin",
-              status: "error",
-              message: `Image download failed: ${imgResp.status}`,
-            };
-          }
-          const blob = await imgResp.arrayBuffer();
-          const uploadResp = await fetch(uploadUrl, {
-            method: uploadMethod,
-            headers: {
-              Authorization: `Bearer ${connection.access_token}`,
-              "Content-Type": imgResp.headers.get("content-type") || "application/octet-stream",
-            },
-            body: blob,
-          });
-          if (!uploadResp.ok) {
-            return {
-              platform: "linkedin",
-              status: "error",
-              message: `LinkedIn upload ${uploadResp.status}: ${(await uploadResp.text()).slice(0, 200)}`,
-            };
-          }
-        } else {
-          // Unable to obtain an upload URL — fall back to text-only post
-          // rather than failing the whole publish.
-          mediaAsset = null;
-        }
-      } else {
-        // registerUpload failed — fall back to text-only post.
-        console.error(
-          "LinkedIn registerUpload failed:",
-          registerResp.status,
-          (await registerResp.text()).slice(0, 200),
-        );
-        mediaAsset = null;
-      }
-    }
-
-    const ugcBody: Record<string, unknown> = {
-      author: personUrn,
-      lifecycleState: "PUBLISHED",
-      specificContent: {
-        "com.linkedin.ugc.ShareContent": {
-          shareCommentary: { text: content },
-          shareMediaCategory: mediaAsset ? "IMAGE" : "NONE",
-          ...(mediaAsset
-            ? {
-                media: [
-                  {
-                    status: "READY",
-                    media: mediaAsset,
-                  },
-                ],
-              }
-            : {}),
-        },
-      },
-      visibility: { "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC" },
-    };
-
-    const postResp = await fetch("https://api.linkedin.com/v2/ugcPosts", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${connection.access_token}`,
-        "Content-Type": "application/json",
-        "X-Restli-Protocol-Version": "2.0.0",
-      },
-      body: JSON.stringify(ugcBody),
-    });
-
-    if (!postResp.ok) {
-      const text = await postResp.text();
-      return { platform: "linkedin", status: "error", message: `LinkedIn ${postResp.status}: ${text}` };
-    }
-
-    const id = postResp.headers.get("x-restli-id") || undefined;
-    return { platform: "linkedin", status: "ok", externalId: id };
-  } catch (err) {
-    return {
-      platform: "linkedin",
-      status: "error",
-      message: err instanceof Error ? err.message : String(err),
-    };
-  }
-}
-
-async function publishToFacebook(
-  connection: SocialConnection,
-  content: string,
-  imageUrl: string | null,
-): Promise<PublishResult> {
-  // Facebook Pages: POST /{page-id}/feed or /{page-id}/photos
-  // Requires the page-scoped access token stored in connection.access_token.
-  try {
-    const pageId = connection.account_id;
-    const endpoint = imageUrl
-      ? `https://graph.facebook.com/v19.0/${pageId}/photos`
-      : `https://graph.facebook.com/v19.0/${pageId}/feed`;
-
-    const body = new URLSearchParams();
-    body.set("access_token", connection.access_token);
-    body.set("message", content);
-    if (imageUrl) body.set("url", imageUrl);
-
-    const resp = await fetch(endpoint, { method: "POST", body });
-    if (!resp.ok) {
-      const text = await resp.text();
-      return { platform: "facebook", status: "error", message: `FB ${resp.status}: ${text}` };
-    }
-    const data = await resp.json();
-    return { platform: "facebook", status: "ok", externalId: data.id || data.post_id };
-  } catch (err) {
-    return {
-      platform: "facebook",
-      status: "error",
-      message: err instanceof Error ? err.message : String(err),
-    };
-  }
 }
 
 async function ensurePublicImage(
@@ -284,103 +103,6 @@ async function ensurePublicImage(
   return data.publicUrl;
 }
 
-async function publishToInstagram(
-  connection: SocialConnection,
-  content: string,
-  imageUrl: string | null,
-): Promise<PublishResult> {
-  if (!imageUrl) {
-    return { platform: "instagram", status: "error", message: "Instagram requires an image" };
-  }
-  try {
-    const igUserId = connection.meta?.ig_user_id || connection.account_id;
-    const createUrl = `https://graph.facebook.com/v19.0/${igUserId}/media`;
-    const createBody = new URLSearchParams();
-    createBody.set("image_url", imageUrl);
-    createBody.set("caption", content);
-    createBody.set("access_token", connection.access_token);
-    const createResp = await fetch(createUrl, { method: "POST", body: createBody });
-    if (!createResp.ok) {
-      const text = await createResp.text();
-      return { platform: "instagram", status: "error", message: `IG create ${createResp.status}: ${text}` };
-    }
-    const createData = await createResp.json();
-    const creationId = createData.id;
-
-    const publishUrl = `https://graph.facebook.com/v19.0/${igUserId}/media_publish`;
-    const publishBody = new URLSearchParams();
-    publishBody.set("creation_id", creationId);
-    publishBody.set("access_token", connection.access_token);
-    const publishResp = await fetch(publishUrl, { method: "POST", body: publishBody });
-    if (!publishResp.ok) {
-      const text = await publishResp.text();
-      return { platform: "instagram", status: "error", message: `IG publish ${publishResp.status}: ${text}` };
-    }
-    const publishData = await publishResp.json();
-    return { platform: "instagram", status: "ok", externalId: publishData.id };
-  } catch (err) {
-    return {
-      platform: "instagram",
-      status: "error",
-      message: err instanceof Error ? err.message : String(err),
-    };
-  }
-}
-
-async function publishToTwitter(
-  connection: SocialConnection,
-  content: string,
-  _imageUrl: string | null,
-): Promise<PublishResult> {
-  try {
-    const resp = await fetch("https://api.twitter.com/2/tweets", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${connection.access_token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ text: content.slice(0, 280) }),
-    });
-    if (!resp.ok) {
-      const text = await resp.text();
-      return { platform: "twitter", status: "error", message: `Twitter ${resp.status}: ${text}` };
-    }
-    const data = await resp.json();
-    return { platform: "twitter", status: "ok", externalId: data?.data?.id };
-  } catch (err) {
-    return {
-      platform: "twitter",
-      status: "error",
-      message: err instanceof Error ? err.message : String(err),
-    };
-  }
-}
-
-async function publishToTikTok(
-  _connection: SocialConnection,
-  _content: string,
-  _imageUrl: string | null,
-): Promise<PublishResult> {
-  // TikTok Content Posting API requires app review + restricted scopes.
-  return {
-    platform: "tiktok",
-    status: "not_implemented",
-    message:
-      "TikTok publishing requires the Content Posting API (limited access). Not yet implemented.",
-  };
-}
-
-const PUBLISHERS: Record<
-  string,
-  (c: SocialConnection, t: string, i: string | null) => Promise<PublishResult>
-> = {
-  linkedin: publishToLinkedIn,
-  facebook: publishToFacebook,
-  instagram: publishToInstagram,
-  twitter: publishToTwitter,
-  tiktok: publishToTikTok,
-};
-
 function normalisePlatform(label: string): string {
   const map: Record<string, string> = {
     Instagram: "instagram",
@@ -392,137 +114,6 @@ function normalisePlatform(label: string): string {
     TikTok: "tiktok",
   };
   return map[label] || label.toLowerCase();
-}
-
-// Ayrshare publish: a single API call posts to every social account
-// the user has linked through their Ayrshare profile.
-//
-// When profileKey is null we're in "shared mode" (the operator's free
-// or Premium plan doesn't support per-user profiles) — we omit the
-// Profile-Key header and post via the API key owner's main account.
-async function publishViaAyrshare(
-  profileKey: string | null,
-  content: string,
-  imageUrl: string | null,
-  platforms: string[],
-): Promise<{ results: PublishResult[]; providerPostId: string | null }> {
-  const apiKey = Deno.env.get("AYRSHARE_API_KEY");
-  if (!apiKey) {
-    return {
-      results: platforms.map((p) => ({
-        platform: p,
-        status: "error" as const,
-        message: "AYRSHARE_API_KEY not configured",
-      })),
-      providerPostId: null,
-    };
-  }
-  try {
-    const ayrPlatforms = platforms.map(normalisePlatform);
-    const headers: Record<string, string> = {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    };
-    if (profileKey) headers["Profile-Key"] = profileKey;
-    const resp = await fetch("https://app.ayrshare.com/api/post", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        post: content,
-        platforms: ayrPlatforms,
-        mediaUrls: imageUrl ? [imageUrl] : undefined,
-      }),
-    });
-    if (!resp.ok) {
-      const text = await resp.text();
-      return {
-        results: ayrPlatforms.map((p) => ({
-          platform: p,
-          status: "error" as const,
-          message: `Ayrshare ${resp.status}: ${text.slice(0, 200)}`,
-        })),
-        providerPostId: null,
-      };
-    }
-    const data = await resp.json();
-    const postIds = data?.postIds || {};
-    const errors = data?.errors || [];
-    const results = ayrPlatforms.map((p) => {
-      const err = errors.find((e: any) => e.platform === p);
-      if (err) {
-        return { platform: p, status: "error" as const, message: err.message || "Ayrshare error" };
-      }
-      return {
-        platform: p,
-        status: "ok" as const,
-        externalId: postIds[p] || data?.id,
-      };
-    });
-    // data.id is Ayrshare's umbrella post id — the handle the Comments API
-    // (GET/POST /api/comments/:id) expects to read & reply to engagement.
-    return { results, providerPostId: data?.id ?? null };
-  } catch (err) {
-    return {
-      results: platforms.map((p) => ({
-        platform: p,
-        status: "error" as const,
-        message: err instanceof Error ? err.message : String(err),
-      })),
-      providerPostId: null,
-    };
-  }
-}
-
-// Postiz publish: fan out to every connected Postiz channel whose
-// identifier matches a requested platform. Postiz holds the social tokens,
-// so a single API call covers all of them.
-async function publishViaPostiz(
-  platforms: string[],
-  content: string,
-  imageUrl: string | null,
-): Promise<{ results: PublishResult[]; providerPostId: string | null }> {
-  const results: PublishResult[] = [];
-  try {
-    const integrations = await postizListIntegrations();
-    const chosen: { id: string; platform: string }[] = [];
-    for (const raw of platforms) {
-      const platform = normalisePlatform(raw);
-      const ident = toPostizIdentifier(platform);
-      const match = integrations.find(
-        (i) => (i.identifier || "").toLowerCase() === ident && !i.disabled,
-      );
-      if (match) chosen.push({ id: match.id, platform });
-      else results.push({ platform, status: "not_connected" });
-    }
-    if (chosen.length === 0) return { results, providerPostId: null };
-
-    // Best-effort image upload; degrades to text-only on failure.
-    let imageId: string | null = null;
-    if (imageUrl) imageId = await postizUploadFromUrl(imageUrl);
-
-    const res = await postizCreatePost({
-      integrationIds: chosen.map((c) => c.id),
-      content,
-      imageId,
-    });
-    for (const c of chosen) {
-      results.push(
-        res.ok
-          ? { platform: c.platform, status: "ok", externalId: res.id }
-          : { platform: c.platform, status: "error", message: res.error },
-      );
-    }
-    return { results, providerPostId: res.ok ? (res.id ?? null) : null };
-  } catch (err) {
-    return {
-      results: platforms.map((p) => ({
-        platform: normalisePlatform(p),
-        status: "error" as const,
-        message: err instanceof Error ? err.message : String(err),
-      })),
-      providerPostId: null,
-    };
-  }
 }
 
 // Zernio publish: map requested platforms to the accounts connected under
@@ -569,7 +160,8 @@ async function publishViaZernio(
           : {
               platform: result.platform,
               status: "error",
-              message: result.error || res.error || "Zernio publish failed",
+              // Bounded: persisted on the post row and rendered to the user.
+              message: (result.error || res.error || "Zernio publish failed").slice(0, 300),
             },
       );
     }

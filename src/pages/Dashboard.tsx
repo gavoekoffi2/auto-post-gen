@@ -10,6 +10,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { getSocialImageSpec } from "@/lib/socialImageSpecs";
+import { fromLocalDateTimeInput, toLocalDateInput, toLocalTimeInput } from "@/lib/datetime";
+import { functionErrorMessage } from "@/lib/functionError";
 import { useNavigate } from "react-router-dom";
 import SettingsDialog from "@/components/SettingsDialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -109,7 +111,12 @@ async function generatePosterImage(
       break;
     }
     const { data, error } = raced;
-    if (error) throw error;
+    if (error) {
+      // Surface the edge function's own JSON error (missing Graphiste key,
+      // credits exhausted, 429…) instead of the SDK's generic
+      // "non-2xx status code" sentence, which tells a user nothing.
+      return { error: await functionErrorMessage(error, "Erreur de génération d'image") };
+    }
     if (data?.error) return { error: data.error as string, detail: data.detail as string | undefined };
     if (data?.imageUrl) return { imageUrl: data.imageUrl as string };
     if (data?.status === "processing" && (data.jobId || data.statusUrl)) {
@@ -143,6 +150,7 @@ export default function Dashboard() {
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
   const [generatingImageIds, setGeneratingImageIds] = useState<Set<string>>(new Set());
   const [regeneratingContentIds, setRegeneratingContentIds] = useState<Set<string>>(new Set());
+  const [savingEdit, setSavingEdit] = useState(false);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [hasConnection, setHasConnection] = useState<boolean | null>(null);
 
@@ -197,10 +205,8 @@ export default function Dashboard() {
         return {
           ...post,
           platform: post.platforms?.[0] || 'Instagram',
-          date: post.scheduled_for ? new Date(post.scheduled_for).toISOString().split('T')[0] : '',
-          time: post.scheduled_for
-            ? new Date(post.scheduled_for).toTimeString().substring(0, 5)
-            : '',
+          date: toLocalDateInput(post.scheduled_for),
+          time: toLocalTimeInput(post.scheduled_for),
           status,
         };
       });
@@ -295,7 +301,7 @@ export default function Dashboard() {
         body: { postId: post.id },
       });
       toast.dismiss(loadingToast);
-      if (error) throw error;
+      if (error) throw new Error(await functionErrorMessage(error, "Erreur lors de la publication"));
       const results = (data?.results || []) as Array<{ status: string; platform: string; message?: string; externalUrl?: string }>;
       const anyOk = results.some((r) => r.status === "ok");
       const anyPending = results.some((r) => r.status === "pending");
@@ -380,29 +386,56 @@ export default function Dashboard() {
 
   const handleSaveEdit = async () => {
     if (!editingPost) return;
+
+    if (!editingPost.content?.trim()) {
+      toast.error("Le contenu du post ne peut pas être vide.");
+      return;
+    }
+    if (!editingPost.platforms || editingPost.platforms.length === 0) {
+      toast.error("Sélectionnez au moins une plateforme de publication.");
+      return;
+    }
+    // A half-filled schedule (date without time, or the reverse) silently
+    // unscheduled the post before: say so instead.
+    if (Boolean(editingPost.date) !== Boolean(editingPost.time)) {
+      toast.error("Indiquez la date ET l'heure de publication, ou laissez les deux vides.");
+      return;
+    }
+
+    const scheduledFor = fromLocalDateTimeInput(editingPost.date, editingPost.time);
+    // Same guard as the calendar: the cron only publishes posts whose schedule
+    // is due, so a past date would fire immediately on the next tick.
+    if (scheduledFor && new Date(scheduledFor).getTime() < Date.now()) {
+      toast.error("L'heure de publication est déjà passée. Choisissez une date future.");
+      return;
+    }
+
+    setSavingEdit(true);
     try {
       const { error } = await supabase
         .from('posts')
         .update({
           title: editingPost.title,
           content: editingPost.content,
-          platforms: editingPost.platforms || ['Instagram'],
-          scheduled_for: editingPost.date && editingPost.time
-            ? `${editingPost.date}T${editingPost.time}:00`
-            : null,
+          platforms: editingPost.platforms,
+          scheduled_for: scheduledFor,
         })
         .eq('id', editingPost.id);
 
       if (error) throw error;
 
+      const savedPost: Post = { ...editingPost, scheduled_for: scheduledFor ?? undefined };
       setPosts((prev) => prev.map(post =>
-        post.id === editingPost.id ? editingPost : post
+        post.id === savedPost.id ? savedPost : post
       ));
       setIsEditDialogOpen(false);
       setEditingPost(null);
       toast.success("Post modifié !");
-    } catch (_error) {
-      toast.error('Erreur lors de la modification');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Erreur lors de la modification";
+      toast.error(message);
+    } finally {
+      setSavingEdit(false);
     }
   };
 
@@ -422,7 +455,7 @@ export default function Dashboard() {
 
       if (error) {
         console.error('Edge function error:', error);
-        throw error;
+        throw new Error(await functionErrorMessage(error, "Erreur lors de la génération"));
       }
       if (!data || !data.content) {
         throw new Error('Aucun contenu reçu de la génération');
@@ -466,13 +499,25 @@ export default function Dashboard() {
       const transformedPost: Post = {
         ...savedPost,
         platform: savedPost.platforms?.[0] || 'Instagram',
-        date: savedPost.scheduled_for ? new Date(savedPost.scheduled_for).toISOString().split('T')[0] : '',
-        time: savedPost.scheduled_for ? new Date(savedPost.scheduled_for).toTimeString().substring(0, 5) : '',
+        date: toLocalDateInput(savedPost.scheduled_for),
+        time: toLocalTimeInput(savedPost.scheduled_for),
         status,
       };
 
       setPosts((prev) => [transformedPost, ...prev]);
-      toast.success("Post enrichi par recherche web généré. L'image est en cours...");
+      if (data.fallback) {
+        // generate-content answers 200 with generic filler when the AI provider
+        // is unreachable (missing key, no credit, rate limit). Saying nothing
+        // would let a first user publish placeholder text believing the AI
+        // wrote it for their business.
+        console.warn("generate-content fallback:", data.warning);
+        toast.warning(
+          "Texte générique : l'IA de rédaction est indisponible pour le moment. Relisez et modifiez ce post avant de le valider, ou réessayez plus tard.",
+          { duration: 12000 },
+        );
+      } else {
+        toast.success("Post enrichi par recherche web généré. L'image est en cours...");
+      }
 
       // 2. Kick off image generation asynchronously. Don't block the UI.
       //    Mark the post as generating-image so the card can show a
@@ -575,8 +620,15 @@ export default function Dashboard() {
           userPreferences: userProfile,
         },
       });
-      if (error) throw error;
+      if (error) throw new Error(await functionErrorMessage(error, "Erreur de régénération du contenu"));
       if (!data?.content) throw new Error("Aucun contenu reçu");
+      if (data.fallback) {
+        console.warn("generate-content fallback:", data.warning);
+        toast.warning(
+          "Texte générique : l'IA de rédaction est indisponible pour le moment. Relisez ce post avant de le valider.",
+          { duration: 12000 },
+        );
+      }
 
       const updatedPost: Post = {
         ...post,
@@ -1280,9 +1332,10 @@ export default function Dashboard() {
                 </Button>
                 <Button
                   onClick={handleSaveEdit}
+                  disabled={savingEdit}
                   className="bg-gradient-to-r from-primary to-secondary flex-1"
                 >
-                  Enregistrer
+                  {savingEdit ? "Enregistrement…" : "Enregistrer"}
                 </Button>
               </div>
             </ScrollArea>

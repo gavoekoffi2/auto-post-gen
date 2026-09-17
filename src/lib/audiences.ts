@@ -1,4 +1,9 @@
-export interface AudienceSegment {
+// A *type alias* rather than an interface on purpose: only type aliases get an
+// implicit index signature, which is what makes AudienceSegment[] assignable to
+// the generated `Json` column type of profiles.audience_suggestions /
+// profiles.target_audiences. With an interface, every write to those columns
+// fails to type-check.
+export type AudienceSegment = {
   id: string;
   name: string;
   description: string;
@@ -8,7 +13,7 @@ export interface AudienceSegment {
   buying_triggers: string[];
   preferred_tone?: string;
   priority?: number;
-}
+};
 
 const strings = (value: unknown) =>
   Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];

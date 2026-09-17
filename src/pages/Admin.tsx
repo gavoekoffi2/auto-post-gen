@@ -17,6 +17,8 @@ type AdminUser = {
   lastSignInAt: string | null;
   role: "user" | "admin" | "super_admin";
   blocked: boolean;
+  /** Owner account: cannot be demoted, blocked or deleted (enforced server-side). */
+  protectedOwner?: boolean;
   profile: { company_name?: string | null; sector?: string | null; plan?: string | null } | null;
   posts: { total: number; published: number };
   generations: number;
@@ -150,7 +152,7 @@ export default function Admin() {
             <div className="divide-y">
               {users.map((user) => {
                 const isBusy = busy === user.id;
-                const protectedOwner = user.email.toLowerCase() === "c1domefa@gmail.com";
+                const protectedOwner = user.protectedOwner;
                 return <div key={user.id} className="p-5 hover:bg-muted/20">
                   <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
                     <div className="min-w-0 flex-1">

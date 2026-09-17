@@ -33,23 +33,26 @@ chaque PR : si ça passe en local, ça passera en CI.
 
 ### En production
 
-Il n'y a **ni VPS, ni serveur à administrer, ni n8n**. Tout est géré :
+Le **frontend est hébergé sur un VPS** (Docker + Nginx derrière Traefik) ;
+le backend (base, auth, storage, fonctions) reste **managé par Supabase**.
+Il n'y a pas de n8n.
 
 | Quoi | Où | Déclencheur |
 |---|---|---|
-| Frontend (SPA React) | **Netlify** | push sur `main` touchant `src/**` → `.github/workflows/deploy-netlify.yml` |
-| Edge Functions (23) | **Supabase** (projet `ixinojsmymqovekgkbdg`) | push sur `main` touchant `supabase/functions/**` → `.github/workflows/deploy-functions.yml` (déploie TOUT) |
-| Base de données | **Supabase Postgres** | migrations dans `supabase/migrations/` (`supabase db push`) |
+| Frontend (SPA React) | **VPS** (Docker + Nginx derrière Traefik) | build `npm run build` puis `docker compose -f docker-compose.vps.yml up -d` sur le VPS |
+| Edge Functions (23) | **Supabase** (projet `tktoyntaeajgsuplhntd`) | push sur `main` touchant `supabase/functions/**` → `.github/workflows/deploy-functions.yml` (déploie TOUT) |
+| Base de données | **Supabase Postgres** | migrations dans `supabase/migrations/`, appliquées automatiquement par `scripts/apply-migrations.mjs` depuis la CI |
 | Tâches planifiées | **Supabase Scheduler** (dashboard) | voir cadences dans `DEPLOYMENT.md` §Cron |
 
-Déployer = merger sur `main`. Rien d'autre.
+Déployer le backend = merger sur `main`. Le frontend se redéploie sur le VPS
+(`npm run build` puis `docker compose -f docker-compose.vps.yml up -d`).
 
 ---
 
 ## 2. Architecture réelle (vérifiée, pas théorique)
 
 ```
-Navigateur ── SPA React/Vite (Netlify, CSP stricte, headers sécurité)
+Navigateur ── SPA React/Vite (VPS Nginx, CSP stricte, headers sécurité)
     │  supabase-js (anon key + RLS)
     ▼
 Supabase ──┬─ Auth (sessions JWT, localStorage, autoRefresh)
@@ -139,7 +142,7 @@ Supabase ──┬─ Auth (sessions JWT, localStorage, autoRefresh)
 | Auth edge functions | ✅ | JWT vérifié en fonction (`getUserIdFromAuthHeader`/`auth.getUser`) partout où un utilisateur appelle ; `CRON_SECRET` fail-closed pour les fonctions cron ; state OAuth signé HMAC-SHA256 avec expiration 30 min. |
 | CORS | ✅ (corrigé) | 9 copies locales divergentes unifiées vers `_shared/cors.ts` (fail-closed) le 13/07 ; un test empêche la dérive de revenir. |
 | Dépendances | ✅ 0 vulnérabilité | `npm audit` : 0 (prod ET dev) depuis la migration Vite 7. |
-| Headers front | ✅ | CSP stricte, HSTS, X-Frame-Options DENY, etc. via `netlify.toml`. |
+| Headers front | ✅ | CSP stricte, HSTS, X-Frame-Options DENY, etc. via `nginx.vps.conf`. |
 
 Notes mineures (acceptées, pas des trous) :
 - La comparaison du `CRON_SECRET` est un `!==` simple (pas timing-safe). Avec
@@ -199,7 +202,7 @@ Notes mineures (acceptées, pas des trous) :
    sur main est bonne à reprendre à cette occasion.
 9. **`src/integrations/supabase/types.ts` est généré** : après toute
    migration, regénérer (`supabase gen types typescript --project-id
-   ixinojsmymqovekgkbdg > src/integrations/supabase/types.ts`).
+   tktoyntaeajgsuplhntd > src/integrations/supabase/types.ts`).
 10. **`deno check` des edge functions n'est pas dans la CI** (Deno absent du
     runner CI actuel). L'ajouter éviterait qu'une erreur de type edge ne se
     découvre qu'au déploiement.
@@ -210,12 +213,12 @@ Notes mineures (acceptées, pas des trous) :
 
 | Accès | Où le trouver / le mettre |
 |---|---|
-| Secrets des edge functions (OpenRouter, Graphiste, Zernio, Resend, CRON_SECRET…) | **Supabase Dashboard → Project Settings → Edge Functions → Secrets** (projet `ixinojsmymqovekgkbdg`). Liste de référence : DEPLOYMENT.md §2. |
+| Secrets des edge functions (OpenRouter, Graphiste, Zernio, Resend, CRON_SECRET…) | **Supabase Dashboard → Project Settings → Edge Functions → Secrets** (projet `tktoyntaeajgsuplhntd`). Liste de référence : DEPLOYMENT.md §2. |
 | Variables front (VITE_*) | Local : `.env.local` (jamais commité). CI/prod : **GitHub → repo → Settings → Secrets and variables → Actions** (`VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, + `NETLIFY_AUTH_TOKEN`, `NETLIFY_SITE_ID`, `SUPABASE_ACCESS_TOKEN`). |
 | Compte Graphiste GPT (clé + crédits) | Compte Graphiste GPT du propriétaire ; solde vérifiable via `GET /v1/account/credits` ou le script de diagnostic. |
 | Zernio | https://zernio.com/dashboard/api-keys (clé `sk_` + 64 hex). |
 | Resend (email) | https://resend.com → API Keys + Domains (vérification SPF/DKIM). |
-| Netlify | Compte Netlify du propriétaire (site id dans les secrets GitHub). |
+| VPS frontend | Accès SSH au VPS du propriétaire ; Traefik + Let's Encrypt gèrent le TLS. |
 | Base de données / SQL | Supabase Dashboard → SQL Editor. Attribution manuelle d'un plan : `UPDATE public.profiles SET plan='pro' WHERE id='<uuid>';` (service role uniquement — depuis le dashboard ça marche). |
 
 ### Runbook email (SPF / DKIM / DMARC) — à faire une fois
@@ -262,7 +265,7 @@ Cochez dans l'ordre. Chaque étape a un résultat observable.
 ### C. Vérifier la configuration de production
 - [ ] 6. Secrets Supabase tous présents (liste DEPLOYMENT.md §2 ; minimum :
       OPENROUTER_API_KEY, GRAPHISTE_GPT_API_KEY, ZERNIO_API_KEY, CRON_SECRET,
-      ALLOWED_ORIGINS=<origine Netlify exacte>, APP_BASE_URL, RESEND_API_KEY,
+      ALLOWED_ORIGINS=<origine VPS exacte>, APP_BASE_URL, RESEND_API_KEY,
       RESEND_FROM).
 - [ ] 7. Secrets GitHub Actions présents (VITE_*, NETLIFY_*, SUPABASE_ACCESS_TOKEN)
       → les 3 workflows verts dans l'onglet Actions après le merge.

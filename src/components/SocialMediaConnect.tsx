@@ -11,6 +11,7 @@ import { Card } from "@/components/ui/card";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Check, Link2, RefreshCw, X } from "lucide-react";
+import { functionErrorMessage } from "@/lib/functionError";
 
 type SocialMediaConnectProps = {
   isOpen: boolean;
@@ -53,19 +54,6 @@ const ZERNIO_PLATFORMS = [
 
 function normalisePlatform(platform: string) {
   return platform.toLowerCase().trim();
-}
-
-async function functionErrorMessage(error: unknown, fallback: string) {
-  const functionError = error as { context?: Response; message?: string } | null;
-  if (functionError?.context) {
-    try {
-      const payload = await functionError.context.clone().json();
-      if (typeof payload?.error === "string" && payload.error.trim()) return payload.error;
-    } catch {
-      // Keep the SDK message when the response is not JSON.
-    }
-  }
-  return functionError?.message || fallback;
 }
 
 export function SocialMediaConnect({

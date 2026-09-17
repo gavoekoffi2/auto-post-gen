@@ -2,7 +2,11 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, type User } from "https://esm.sh/@supabase/supabase-js@2.74.0";
 import { buildCorsHeaders, jsonResponse } from "../_shared/cors.ts";
 
-const FOUNDER_EMAIL = "c1domefa@gmail.com";
+// Canonical owner account, overridable without a code change. Keep the default
+// so an existing deployment behaves identically when the secret is not set.
+const FOUNDER_EMAIL = (Deno.env.get("FOUNDER_EMAIL") || "c1domefa@gmail.com")
+  .trim()
+  .toLowerCase();
 const VALID_PLANS = new Set(["starter", "pro", "enterprise"]);
 
 type AdminBody = {
@@ -24,6 +28,10 @@ function safeUser(user: User) {
     lastSignInAt: user.last_sign_in_at ?? null,
     role: user.app_metadata?.role ?? "user",
     blocked: !!user.banned_until && new Date(user.banned_until).getTime() > Date.now(),
+    // The owner account cannot be demoted, blocked or deleted (enforced below).
+    // Sent to the admin UI so it does not have to embed the owner's email
+    // address in the public JS bundle to grey out those controls.
+    protectedOwner: (user.email ?? "").toLowerCase() === FOUNDER_EMAIL,
   };
 }
 
@@ -169,6 +177,12 @@ serve(async (req) => {
       const { error } = await admin.auth.admin.updateUserById(targetId, { ban_duration: body.blocked ? "876000h" : "none" });
       if (error) throw error;
     } else if (action === "reset_password") {
+      // Blocking and deleting the owner are already refused; resetting its
+      // password was not, which left any other super admin a one-click
+      // takeover of the owner account. Only the owner may reset its own.
+      if (targetIsFounder && targetId !== actor.id) {
+        return jsonResponse({ error: "Le mot de passe du propriétaire principal ne peut être réinitialisé que par lui-même" }, { status: 403, cors: corsHeaders });
+      }
       if (!body.password || body.password.length < 8) return jsonResponse({ error: "Le mot de passe doit contenir au moins 8 caractères" }, { status: 400, cors: corsHeaders });
       const { error } = await admin.auth.admin.updateUserById(targetId, { password: body.password });
       if (error) throw error;

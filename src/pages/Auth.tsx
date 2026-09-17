@@ -82,7 +82,25 @@ export default function Auth() {
       }
 
       toast.success("Connexion réussie !");
-      navigate(authData.user?.email?.toLowerCase() === "c1domefa@gmail.com" ? "/admin" : "/dashboard");
+      // Where to land is decided by the SERVER, from the account's role. The
+      // previous version compared the signed-in email to a hardcoded founder
+      // address, which shipped that personal address to every visitor inside
+      // the public JS bundle. admin-api answers 403 for everyone else, so a
+      // failure here simply means "not an admin".
+      let destination = "/dashboard";
+      try {
+        const { data: adminData, error: adminError } = await supabase.functions.invoke(
+          "admin-api",
+          { body: { action: "me" } },
+        );
+        const role = adminData?.user?.role;
+        if (!adminError && (role === "admin" || role === "super_admin")) {
+          destination = "/admin";
+        }
+      } catch {
+        // Not an admin (or admin-api unavailable) — the dashboard is correct.
+      }
+      navigate(destination);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Erreur lors de la connexion";
       toast.error(message);
