@@ -23,12 +23,13 @@ npm run dev                       # http://localhost:8080
 Vérifications avant tout commit :
 
 ```bash
-npm test        # 73 tests — DOIVENT tous passer
-npm run lint    # 0 erreur (7 warnings shadcn/fast-refresh connus, non bloquants)
-npm run build   # build Vite 7
+npm test         # 103 tests — DOIVENT tous passer
+npm run lint     # 0 erreur (7 warnings shadcn/fast-refresh connus, non bloquants)
+npm run typecheck # tsc : `vite build` NE typecheck PAS, d'où ce gate séparé
+npm run build    # build Vite 7
 ```
 
-La CI (`.github/workflows/ci.yml`) exécute exactement ces trois commandes sur
+La CI (`.github/workflows/ci.yml`) exécute exactement ces quatre commandes sur
 chaque PR : si ça passe en local, ça passera en CI.
 
 ### En production
@@ -184,11 +185,19 @@ Notes mineures (acceptées, pas des trous) :
    emails de validation finiront en spam. Runbook §6.
 
 ### P1 — fiabilité d'exploitation
-5. **Observabilité : il n'y en a AUCUNE.** Les erreurs partent en
-   `console.error` (logs Supabase) et personne n'est alerté si un cron échoue.
-   Minimum viable : Sentry sur le front + un cron de « health check » qui
-   appelle `scripts/diagnose-graphiste.mjs` et alerte (email) si la clé/les
-   crédits tombent. C'est la prochaine vraie dette.
+5. **Observabilité : partiellement traitée (16/09/2026).** Le centre de
+   contrôle `/admin` expose désormais un panneau **« État de la plateforme »**
+   (`admin-api`, action `health`, code dans `supabase/functions/_shared/health.ts`)
+   qui vérifie à la demande : présence de chaque secret obligatoire, validité
+   et crédits d'OpenRouter / Graphiste GPT / Zernio, et les signaux du
+   pipeline (posts en retard de publication = cron mort, posts bloqués en
+   `publishing`, affiches en attente > 6 h, génération hebdomadaire
+   silencieuse). Chaque ligne en défaut porte sa correction.
+
+   **Reste à faire** pour clore la dette : l'alerte *poussée*. Aujourd'hui il
+   faut ouvrir la page pour voir la panne. Brancher un cron qui appelle
+   `health` et envoie un email (Resend est déjà configuré) dès que `status`
+   vaut `error`, et/ou Sentry sur le front pour les erreurs navigateur.
 6. **Routage image par plan** (GPT Image 2 prioritaire pour Pro/Enterprise) :
    documenté et budgété dans PRICING.md §1, PAS encore codé.
 7. **Fonctionnalité vidéo IA** : affichée « bientôt disponible » sur la page

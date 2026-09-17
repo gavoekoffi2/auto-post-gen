@@ -12,6 +12,7 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from '@/integrations/supabase/client';
 import { AudienceEditor } from '@/components/AudienceEditor';
 import { AudienceSegment, normalizeAudienceSegments } from '@/lib/audiences';
+import { functionErrorMessage } from "@/lib/functionError";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -158,7 +159,7 @@ export default function Profile() {
           contentTypes: profile.content_types,
         },
       });
-      if (error) throw error;
+      if (error) throw new Error(await functionErrorMessage(error, "Analyse indisponible"));
       const audiences = normalizeAudienceSegments(data?.audiences);
       if (audiences.length < 2) throw new Error("Analyse incomplète");
       setProfile((current) => ({

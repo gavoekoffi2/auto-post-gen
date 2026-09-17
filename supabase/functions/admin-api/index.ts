@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, type User } from "https://esm.sh/@supabase/supabase-js@2.74.0";
 import { buildCorsHeaders, jsonResponse } from "../_shared/cors.ts";
+import { runHealthChecks } from "../_shared/health.ts";
 
 // Canonical owner account, overridable without a code change. Keep the default
 // so an existing deployment behaves identically when the secret is not set.
@@ -82,6 +83,14 @@ serve(async (req) => {
   try {
     if (action === "me") {
       return jsonResponse({ user: { ...safeUser(actor), role: actorRole } }, { cors: corsHeaders });
+    }
+
+    // Operational self-diagnosis: configuration, live provider probes and
+    // pipeline signals (overdue publications, stuck jobs, silent cron). The
+    // platform had no observability at all before this; an expired key or a
+    // cron that stopped firing was only discovered through a user complaint.
+    if (action === "health") {
+      return jsonResponse(await runHealthChecks(admin), { cors: corsHeaders });
     }
 
     if (action === "overview") {

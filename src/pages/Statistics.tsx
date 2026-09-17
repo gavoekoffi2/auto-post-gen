@@ -36,9 +36,12 @@ export default function Statistics() {
         return;
       }
 
+      // Only the columns the charts actually aggregate. `select('*')` pulled
+      // every post's full text and image URLs on each visit — hundreds of KB
+      // for an active account, to compute counters.
       const { data: posts, error } = await supabase
         .from('posts')
-        .select('*')
+        .select('status, platforms, created_at')
         .eq('user_id', session.user.id);
 
       if (error) throw error;

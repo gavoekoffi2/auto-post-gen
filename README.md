@@ -44,6 +44,8 @@ Les secrets backend ne doivent jamais être mis dans `.env.local` : ils vont dan
 
 ```bash
 npm run lint
+npm run typecheck   # tsc ne tourne PAS pendant `vite build` : sans ça, des erreurs de type passent en prod
+npm test
 npm run build
 ```
 
@@ -96,6 +98,24 @@ BRAVE_SEARCH_API_KEY=...
 
 La recherche web fonctionne déjà gratuitement sans Tavily/Brave grâce à Google News RSS + Wikipedia + DuckDuckGo.
 
+## Diagnostic de la plateforme (à utiliser en premier en cas de panne)
+
+Le centre de contrôle (`/admin`, réservé aux comptes admin) affiche un panneau
+**« État de la plateforme »** qui répond en un clic aux deux questions
+d'exploitation :
+
+- **est-ce configuré ?** — présence de chaque secret obligatoire (jamais sa
+  valeur), avec l'impact précis de son absence ;
+- **est-ce cassé en ce moment ?** — clés et crédits OpenRouter / Graphiste GPT /
+  Zernio testés en direct, plus les signaux du pipeline : posts dont l'heure de
+  publication est dépassée (= le cron `publish-post` ne tourne plus), posts
+  bloqués en cours de publication, affiches en attente depuis des heures,
+  génération hebdomadaire silencieuse.
+
+Chaque ligne en défaut indique la correction à appliquer. C'est le premier
+réflexe avant d'ouvrir les logs : la panne historique (« seul le texte se
+génère ») y apparaît immédiatement.
+
 ## Déploiement
 
 Frontend — VPS :
@@ -114,7 +134,21 @@ n'est plus utilisé en production.
 
 Edge Functions Supabase — le déploiement normal passe par la CI : tout push
 sur `main` touchant `supabase/functions/**` déploie **toutes** les fonctions
-(`.github/workflows/deploy-functions.yml`). En manuel si besoin :
+(`.github/workflows/deploy-functions.yml`).
+
+Les migrations SQL sont appliquées par le même workflow via
+`scripts/apply-migrations.mjs` : un registre en base note ce qui a déjà tourné,
+les migrations déjà en production sont enregistrées sans être rejouées, et
+seules les nouvelles sont exécutées. Ajouter un fichier dans
+`supabase/migrations/` suffit — plus besoin de toucher au workflow. Pour voir
+ce qui serait appliqué sans rien exécuter :
+
+```bash
+SUPABASE_ACCESS_TOKEN=... PROJECT_REF=tktoyntaeajgsuplhntd \
+  node scripts/apply-migrations.mjs --dry-run
+```
+
+En manuel si besoin :
 
 ```bash
 supabase functions deploy --project-ref tktoyntaeajgsuplhntd

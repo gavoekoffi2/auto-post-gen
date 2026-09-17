@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { Activity, BarChart3, Ban, CheckCircle2, KeyRound, LogOut, Plus, RefreshCw, Search, Send, ShieldCheck, Trash2, Unplug, Users } from "lucide-react";
+import { Activity, AlertTriangle, BarChart3, Ban, CheckCircle2, HeartPulse, KeyRound, LogOut, Plus, RefreshCw, Search, Send, ShieldCheck, Trash2, Unplug, Users, XCircle } from "lucide-react";
 
 type AdminUser = {
   id: string;
@@ -25,6 +25,22 @@ type AdminUser = {
   connections: number;
 };
 
+type CheckStatus = "ok" | "warn" | "error" | "skipped";
+
+type HealthCheck = {
+  id: string;
+  label: string;
+  status: CheckStatus;
+  detail: string;
+  remedy?: string;
+};
+
+type Health = {
+  status: CheckStatus;
+  checkedAt: string;
+  checks: HealthCheck[];
+};
+
 type Overview = {
   actor: AdminUser;
   stats: { users: number; active: number; blocked: number; admins: number; posts: number; published: number; generations: number; connections: number };
@@ -32,6 +48,13 @@ type Overview = {
 };
 
 const defaultCreate = { email: "", password: "", companyName: "", plan: "enterprise", role: "user" };
+
+const HEALTH_TONE: Record<CheckStatus, { icon: typeof CheckCircle2; text: string; badge: string; summary: string }> = {
+  ok: { icon: CheckCircle2, text: "text-green-600", badge: "bg-green-500/15 text-green-600", summary: "Tout est opérationnel" },
+  warn: { icon: AlertTriangle, text: "text-amber-600", badge: "bg-amber-500/15 text-amber-600", summary: "Points d'attention" },
+  error: { icon: XCircle, text: "text-destructive", badge: "bg-destructive/15 text-destructive", summary: "Action requise" },
+  skipped: { icon: AlertTriangle, text: "text-muted-foreground", badge: "bg-muted text-muted-foreground", summary: "Diagnostic partiel" },
+};
 
 export default function Admin() {
   const navigate = useNavigate();
@@ -41,6 +64,8 @@ export default function Admin() {
   const [query, setQuery] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState(defaultCreate);
+  const [health, setHealth] = useState<Health | null>(null);
+  const [healthLoading, setHealthLoading] = useState(false);
 
   const invoke = async (body: Record<string, unknown>) => {
     const { data: response, error } = await supabase.functions.invoke("admin-api", { body });
@@ -60,10 +85,24 @@ export default function Admin() {
     }
   };
 
+  // Live diagnosis of the whole platform: secrets, AI/publishing providers and
+  // the scheduled pipeline. Separate from the overview because it makes
+  // outbound calls to third parties and is therefore slower.
+  const loadHealth = async () => {
+    setHealthLoading(true);
+    try {
+      setHealth(await invoke({ action: "health" }));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Diagnostic indisponible");
+    } finally {
+      setHealthLoading(false);
+    }
+  };
+
   // The admin API client is stable for the lifetime of this page; run the
   // initial overview exactly once and let explicit actions refresh it later.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { void load(); void loadHealth(); }, []);
 
   const users = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -142,6 +181,53 @@ export default function Admin() {
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {cards.map(({ label, value, icon: Icon, detail }) => <Card key={label} className="p-5"><div className="mb-4 flex items-center justify-between"><p className="text-sm text-muted-foreground">{label}</p><Icon className="h-5 w-5 text-primary" /></div><p className="text-3xl font-bold">{value}</p><p className="mt-1 text-xs text-muted-foreground">{detail}</p></Card>)}
         </section>
+
+        <Card className="overflow-hidden">
+          <div className="flex flex-col gap-3 border-b p-5 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <span className={`mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-lg ${HEALTH_TONE[health?.status ?? "skipped"].badge}`}>
+                <HeartPulse className="h-5 w-5" />
+              </span>
+              <div>
+                <h2 className="font-semibold text-xl">État de la plateforme</h2>
+                <p className="text-sm text-muted-foreground">
+                  {healthLoading
+                    ? "Diagnostic en cours…"
+                    : health
+                      ? `${HEALTH_TONE[health.status].summary} · vérifié à ${new Date(health.checkedAt).toLocaleTimeString("fr-FR")}`
+                      : "Diagnostic non exécuté"}
+                </p>
+              </div>
+            </div>
+            <Button variant="outline" size="sm" onClick={loadHealth} disabled={healthLoading}>
+              <RefreshCw className={`mr-2 h-4 w-4 ${healthLoading ? "animate-spin" : ""}`} />
+              Relancer le diagnostic
+            </Button>
+          </div>
+
+          {health && (
+            <div className="grid gap-px bg-border sm:grid-cols-2 xl:grid-cols-3">
+              {health.checks.map((check) => {
+                const tone = HEALTH_TONE[check.status];
+                const Icon = tone.icon;
+                return (
+                  <div key={check.id} className="bg-background p-4">
+                    <div className="flex items-start gap-2">
+                      <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${tone.text}`} />
+                      <div className="min-w-0">
+                        <p className="font-medium text-sm break-all">{check.label}</p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">{check.detail}</p>
+                        {check.remedy && (
+                          <p className={`mt-1.5 text-xs ${tone.text}`}>→ {check.remedy}</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </Card>
 
         <Card className="overflow-hidden">
           <div className="flex flex-col gap-4 border-b p-5 sm:flex-row sm:items-center sm:justify-between">

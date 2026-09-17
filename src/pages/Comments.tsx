@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
+import { functionErrorMessage } from "@/lib/functionError";
 import {
   ArrowLeft,
   Bot,
@@ -98,7 +99,7 @@ const Comments = () => {
       }
       await loadComments();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Erreur de synchronisation");
+      toast.error(await functionErrorMessage(err, "Erreur de synchronisation"));
     } finally {
       setSyncing(false);
     }
@@ -117,7 +118,7 @@ const Comments = () => {
       if (data?.error) throw new Error(data.error);
       setDrafts((prev) => ({ ...prev, [c.id]: data?.reply || "" }));
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Erreur IA");
+      toast.error(await functionErrorMessage(err, "Erreur IA"));
     } finally {
       setRowBusy(c.id, false);
     }
@@ -143,7 +144,7 @@ const Comments = () => {
         ),
       );
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Échec de l'envoi");
+      toast.error(await functionErrorMessage(err, "Échec de l'envoi"));
     } finally {
       setRowBusy(c.id, false);
     }
