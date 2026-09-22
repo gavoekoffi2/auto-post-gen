@@ -1,5 +1,6 @@
 import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
+import { PLAN_LIMITS } from "@/lib/plans";
 import {
   Accordion,
   AccordionContent,
@@ -16,7 +17,7 @@ const faqs = [
   {
     question: "Sur quels réseaux sociaux puis-je publier ?",
     answer:
-      "Pro Social AI supporte Instagram, Facebook, Twitter/X, LinkedIn et TikTok. Vous pouvez sélectionner les plateformes de votre choix dans votre profil.",
+      "La connexion passe par Zernio, qui couvre LinkedIn, Facebook, Instagram, X/Twitter, TikTok, YouTube, Pinterest, Threads, Bluesky, Reddit et Telegram. Le nombre de comptes que vous pouvez connecter dépend de votre forfait.",
   },
   {
     question: "Puis-je modifier le contenu généré ?",
@@ -31,7 +32,7 @@ const faqs = [
   {
     question: "Quelle est la fréquence de publication ?",
     answer:
-      "Vous choisissez votre fréquence : de 1 à 7 posts par semaine selon votre abonnement. Vous pouvez aussi définir vos jours de publication préférés.",
+      `Vous choisissez votre fréquence, jusqu'à la limite de votre forfait : ${PLAN_LIMITS.starter.postsPerWeek} posts par semaine en ${PLAN_LIMITS.starter.label}, ${PLAN_LIMITS.pro.postsPerWeek} en ${PLAN_LIMITS.pro.label} et ${PLAN_LIMITS.enterprise.postsPerWeek} en ${PLAN_LIMITS.enterprise.label}. Vous pouvez aussi définir vos jours et votre heure de publication préférés.`,
   },
   {
     question: "Le contenu est-il vraiment personnalisé ?",
@@ -39,9 +40,9 @@ const faqs = [
       "Absolument ! L'IA prend en compte votre secteur d'activité, votre ton préféré, la description de votre entreprise et même vos exemples de style pour créer du contenu unique et cohérent avec votre marque.",
   },
   {
-    question: "Puis-je annuler mon abonnement ?",
+    question: "Puis-je supprimer mon compte et récupérer mes données ?",
     answer:
-      "Oui, vous pouvez annuler à tout moment depuis votre espace client. Votre accès reste actif jusqu'à la fin de votre période de facturation.",
+      "Oui. Depuis Profil › Mon compte, vous pouvez télécharger l'ensemble de vos données au format JSON, et supprimer définitivement votre compte — profil, posts, images et comptes connectés compris.",
   },
   {
     question: "Les posts sont-ils publiés automatiquement ?",

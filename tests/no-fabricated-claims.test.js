@@ -79,3 +79,17 @@ test("the privacy policy names the processors that actually receive data", () =>
   }
   assert.match(privacy, /hors de l'Union européenne/);
 });
+
+test("the FAQ describes the product that exists", () => {
+  const faq = read("src/pages/FAQ.tsx");
+
+  // It promised cancelling a subscription "depuis votre espace client".
+  // There is no billing in the product at all, so that page does not exist.
+  assert.doesNotMatch(faq, /annuler à tout moment depuis votre espace client/);
+  assert.doesNotMatch(faq, /période de facturation/);
+
+  // It quoted "de 1 à 7 posts par semaine", matching no plan that is sold.
+  assert.doesNotMatch(faq, /de 1 à 7 posts par semaine/);
+  assert.match(faq, /PLAN_LIMITS\.starter\.postsPerWeek/);
+  assert.match(faq, /PLAN_LIMITS\.enterprise\.postsPerWeek/);
+});
