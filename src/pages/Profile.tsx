@@ -13,6 +13,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { AudienceEditor } from '@/components/AudienceEditor';
 import { AudienceSegment, normalizeAudienceSegments } from '@/lib/audiences';
 import { functionErrorMessage } from "@/lib/functionError";
+import { PLAN_LIMITS, isPlanId, type PlanId } from "@/lib/plans";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -46,6 +47,10 @@ export default function Profile() {
   const [userEmail, setUserEmail] = useState("");
   const [autoPublishConfirmOpen, setAutoPublishConfirmOpen] = useState(false);
   const [autoPublishAcknowledged, setAutoPublishAcknowledged] = useState(false);
+  // The plan drives what this screen is ALLOWED to offer (weekly volume,
+  // networks). It is read-only here: `plan` is trigger-protected server-side.
+  const [plan, setPlan] = useState<PlanId>("starter");
+  const limits = PLAN_LIMITS[plan];
   const [profile, setProfile] = useState({
     company_name: "",
     logo_url: "",
@@ -101,6 +106,7 @@ export default function Profile() {
       if (error) throw error;
 
       if (data) {
+        setPlan(isPlanId(data.plan) ? data.plan : "starter");
         setProfile({
           company_name: data.company_name || "",
           logo_url: data.logo_url || "",
@@ -195,7 +201,7 @@ export default function Profile() {
           sector: profile.sector,
           content_types: profile.content_types,
           tone: profile.tone,
-          post_frequency: profile.post_frequency,
+          post_frequency: Math.min(profile.post_frequency, limits.postsPerWeek),
           description: profile.description,
           style_example: profile.style_example,
           platforms: profile.platforms,
@@ -522,10 +528,13 @@ export default function Profile() {
               <div className="space-y-4">
                 <div className="space-y-2">
                   <Label>Fréquence de publication (posts/semaine)</Label>
-                  <Select 
-                    value={profile.post_frequency.toString()} 
+                  <Select
+                    value={Math.min(profile.post_frequency, limits.postsPerWeek).toString()}
                     onValueChange={(v) => {
-                      const frequency = parseInt(v);
+                      // Clamped to the plan: the weekly cron applies the same
+                      // ceiling server-side, so offering more here would only
+                      // promise a volume that never arrives.
+                      const frequency = Math.min(parseInt(v), limits.postsPerWeek);
                       const promo = Math.min(profile.promo_posts_per_week, frequency);
                       setProfile({
                         ...profile,
@@ -542,13 +551,19 @@ export default function Profile() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="1">1 post/semaine</SelectItem>
-                      <SelectItem value="2">2 posts/semaine</SelectItem>
-                      <SelectItem value="3">3 posts/semaine</SelectItem>
-                      <SelectItem value="5">5 posts/semaine</SelectItem>
-                      <SelectItem value="7">7 posts/semaine</SelectItem>
+                      {Array.from({ length: limits.postsPerWeek }, (_, i) => i + 1).map((n) => (
+                        <SelectItem key={n} value={n.toString()}>
+                          {n} post{n > 1 ? "s" : ""}/semaine
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Forfait {limits.label} : jusqu'à {limits.postsPerWeek} posts/semaine,{" "}
+                    {limits.socialAccounts} réseau{limits.socialAccounts > 1 ? "x" : ""} social
+                    {limits.socialAccounts > 1 ? "aux" : ""}, {limits.monthlyTextGenerations} textes
+                    et {limits.monthlyImageGenerations} affiches IA par mois.
+                  </p>
                 </div>
 
                 <div className="space-y-2">

@@ -1,4 +1,5 @@
 import { ArrowLeft } from "lucide-react";
+import { SUPPORT_EMAIL } from "@/lib/appConfig";
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
 
@@ -71,7 +72,7 @@ export default function Privacy() {
             <h2 className="text-2xl font-semibold text-foreground mb-4">6. Contact</h2>
             <p>
               Pour toute question concernant cette politique de confidentialité ou pour exercer vos droits, 
-              contactez-nous à : contact@prosocialai.com
+              contactez-nous à : {SUPPORT_EMAIL}
             </p>
           </section>
         </div>

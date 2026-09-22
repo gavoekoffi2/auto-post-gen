@@ -1,4 +1,5 @@
 import { ArrowLeft } from "lucide-react";
+import { SUPPORT_EMAIL } from "@/lib/appConfig";
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
 
@@ -83,7 +84,7 @@ export default function Terms() {
             <h2 className="text-2xl font-semibold text-foreground mb-4">8. Contact</h2>
             <p>
               Pour toute question concernant ces conditions d'utilisation, contactez-nous à : 
-              contact@prosocialai.com
+              {SUPPORT_EMAIL}
             </p>
           </section>
         </div>

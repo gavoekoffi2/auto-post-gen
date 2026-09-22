@@ -3,6 +3,12 @@ import { Button } from "@/components/ui/button";
 import { Upload, X, Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import {
+  ACCEPTED_IMAGE_TYPES,
+  buildAssetPath,
+  deleteAssetByUrl,
+  validateImageFile,
+} from "@/lib/userAssets";
 
 interface LogoUploadProps {
   currentLogoUrl?: string;
@@ -17,15 +23,9 @@ export const LogoUpload = ({ currentLogoUrl, onUpload, onRemove }: LogoUploadPro
     const file = event.target.files?.[0];
     if (!file) return;
 
-    // Validate file type
-    if (!file.type.startsWith('image/')) {
-      toast.error("Veuillez sélectionner une image");
-      return;
-    }
-
-    // Validate file size (max 5MB)
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error("L'image ne doit pas dépasser 5 Mo");
+    const validationError = validateImageFile(file);
+    if (validationError) {
+      toast.error(validationError);
       return;
     }
 
@@ -34,12 +34,12 @@ export const LogoUpload = ({ currentLogoUrl, onUpload, onRemove }: LogoUploadPro
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error("Non authentifié");
 
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${session.user.id}/logo-${Date.now()}.${fileExt}`;
+      const previousUrl = currentLogoUrl;
+      const fileName = buildAssetPath(session.user.id, "logo", file.type);
 
       const { error: uploadError } = await supabase.storage
         .from('user-assets')
-        .upload(fileName, file, { upsert: true });
+        .upload(fileName, file, { contentType: file.type, upsert: true });
 
       if (uploadError) throw uploadError;
 
@@ -48,13 +48,24 @@ export const LogoUpload = ({ currentLogoUrl, onUpload, onRemove }: LogoUploadPro
         .getPublicUrl(fileName);
 
       onUpload(publicUrl);
+      // The bucket is public: an old logo left behind stays downloadable by
+      // anyone holding its URL, and accumulates on every change.
+      if (previousUrl && previousUrl !== publicUrl) await deleteAssetByUrl(previousUrl);
       toast.success("Logo téléchargé avec succès");
     } catch (error) {
       console.error('Upload error:', error);
-      toast.error("Erreur lors du téléchargement");
+      toast.error(error instanceof Error ? error.message : "Erreur lors du téléchargement");
     } finally {
       setUploading(false);
+      // Let the user re-pick the same file after a failure.
+      event.target.value = "";
     }
+  };
+
+  const handleRemove = async () => {
+    const previousUrl = currentLogoUrl;
+    onRemove();
+    await deleteAssetByUrl(previousUrl);
   };
 
   return (
@@ -70,7 +81,7 @@ export const LogoUpload = ({ currentLogoUrl, onUpload, onRemove }: LogoUploadPro
             size="icon"
             variant="destructive"
             className="absolute -top-2 -right-2 h-6 w-6"
-            onClick={onRemove}
+            onClick={handleRemove}
           >
             <X className="h-4 w-4" />
           </Button>
@@ -84,7 +95,7 @@ export const LogoUpload = ({ currentLogoUrl, onUpload, onRemove }: LogoUploadPro
       <div>
         <input
           type="file"
-          accept="image/*"
+          accept={ACCEPTED_IMAGE_TYPES.join(",")}
           onChange={handleUpload}
           className="hidden"
           id="logo-upload"

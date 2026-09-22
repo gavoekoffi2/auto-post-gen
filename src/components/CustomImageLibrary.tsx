@@ -7,6 +7,13 @@ import { Switch } from "@/components/ui/switch";
 import { Upload, X, ImagePlus, Trash2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import {
+  ACCEPTED_IMAGE_TYPES,
+  MAX_CUSTOM_IMAGES,
+  buildAssetPath,
+  deleteAssetByUrl,
+  validateImageFile,
+} from "@/lib/userAssets";
 
 interface CustomImageLibraryProps {
   images: string[];
@@ -27,6 +34,22 @@ export function CustomImageLibrary({
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
+    const remainingSlots = MAX_CUSTOM_IMAGES - images.length;
+    if (remainingSlots <= 0) {
+      toast.error(
+        `Votre bibliothèque contient déjà ${MAX_CUSTOM_IMAGES} images. Supprimez-en avant d'en ajouter.`,
+      );
+      e.target.value = "";
+      return;
+    }
+
+    const picked = Array.from(files);
+    if (picked.length > remainingSlots) {
+      toast.warning(
+        `Seules les ${remainingSlots} premières images seront ajoutées (limite : ${MAX_CUSTOM_IMAGES}).`,
+      );
+    }
+
     setUploading(true);
     const newUrls: string[] = [];
 
@@ -34,23 +57,18 @@ export function CustomImageLibrary({
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error("Non authentifié");
 
-      for (const file of Array.from(files)) {
-        if (!file.type.startsWith("image/")) {
-          toast.error(`${file.name} n'est pas une image`);
+      for (const file of picked.slice(0, remainingSlots)) {
+        const validationError = validateImageFile(file);
+        if (validationError) {
+          toast.error(validationError);
           continue;
         }
 
-        if (file.size > 5 * 1024 * 1024) {
-          toast.error(`${file.name} dépasse 5MB`);
-          continue;
-        }
-
-        const fileExt = file.name.split(".").pop();
-        const fileName = `${session.user.id}/${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
+        const fileName = buildAssetPath(session.user.id, "custom", file.type);
 
         const { error: uploadError } = await supabase.storage
           .from("user-assets")
-          .upload(fileName, file);
+          .upload(fileName, file, { contentType: file.type });
 
         if (uploadError) throw uploadError;
 
@@ -70,23 +88,15 @@ export function CustomImageLibrary({
       toast.error(message);
     } finally {
       setUploading(false);
+      // Without this, re-picking the same file after an error does nothing.
+      e.target.value = "";
     }
   };
 
   const handleRemove = async (urlToRemove: string) => {
-    try {
-      // Extract file path from URL
-      const urlParts = urlToRemove.split("/user-assets/");
-      if (urlParts.length > 1) {
-        const filePath = urlParts[1];
-        await supabase.storage.from("user-assets").remove([filePath]);
-      }
-      
-      onImagesChange(images.filter((url) => url !== urlToRemove));
-      toast.success("Image supprimée");
-    } catch (_error) {
-      toast.error("Erreur lors de la suppression");
-    }
+    onImagesChange(images.filter((url) => url !== urlToRemove));
+    await deleteAssetByUrl(urlToRemove);
+    toast.success("Image supprimée");
   };
 
   return (
@@ -116,7 +126,7 @@ export function CustomImageLibrary({
       <div className="relative mb-6">
         <Input
           type="file"
-          accept="image/*"
+          accept={ACCEPTED_IMAGE_TYPES.join(",")}
           multiple
           onChange={handleUpload}
           disabled={uploading}
@@ -132,7 +142,7 @@ export function CustomImageLibrary({
             {uploading ? "Upload en cours..." : "Cliquez ou glissez vos images ici"}
           </span>
           <span className="text-xs text-muted-foreground mt-1">
-            PNG, JPG jusqu'à 5MB
+            JPG, PNG, WEBP, GIF ou AVIF · 5 Mo max · {images.length}/{MAX_CUSTOM_IMAGES}
           </span>
         </label>
       </div>

@@ -11,8 +11,10 @@ import {
   getZernioKey,
   zernioConnectUrl,
   zernioCreateProfile,
+  zernioListAccounts,
   zernioListProfiles,
 } from "../_shared/zernio.ts";
+import { planLimits } from "../_shared/plans.ts";
 
 const SUPPORTED = [
   "linkedin",
@@ -100,11 +102,51 @@ serve(async (req) => {
     );
     if (upErr) console.error("zernio-connect upsert:", upErr);
 
+    // How many networks this plan includes, read server-side.
+    const { data: planRow } = await admin
+      .from("profiles")
+      .select("plan")
+      .eq("id", userId)
+      .maybeSingle();
+    const limits = planLimits(planRow?.plan);
+
     if (!platform) {
-      return jsonResponse({ supported: SUPPORTED, profileId }, { cors });
+      return jsonResponse(
+        { supported: SUPPORTED, profileId, plan: limits.id, maxAccounts: limits.socialAccounts },
+        { cors },
+      );
     }
     if (!SUPPORTED.includes(platform)) {
       return jsonResponse({ error: `Plateforme non supportée: ${platform}` }, { status: 400, cors });
+    }
+
+    // Enforce the number of connected accounts the plan actually includes.
+    // Reconnecting a network already linked is always allowed (it is a repair,
+    // not a new account), so only genuinely NEW platforms hit the ceiling.
+    let connected: Awaited<ReturnType<typeof zernioListAccounts>> = [];
+    try {
+      connected = await zernioListAccounts(profileId);
+    } catch (listErr) {
+      // Never block a connection because the count could not be read.
+      console.error("zernio-connect: account count unavailable:", listErr);
+    }
+    const activeCount = connected.filter((a) => a.isActive !== false).length;
+    const alreadyLinked = connected.some(
+      (a) => (a.platform || "").toLowerCase() === platform && a.isActive !== false,
+    );
+    if (!alreadyLinked && activeCount >= limits.socialAccounts) {
+      return jsonResponse(
+        {
+          error:
+            `Votre forfait ${limits.label} inclut ${limits.socialAccounts} réseau(x) social(aux) ` +
+            `et vous en avez déjà ${activeCount}. Déconnectez un réseau ou passez à un forfait supérieur.`,
+          code: "plan_limit_reached",
+          plan: limits.id,
+          maxAccounts: limits.socialAccounts,
+          connectedAccounts: activeCount,
+        },
+        { status: 403, cors },
+      );
     }
 
     const connectUrl = await zernioConnectUrl(platform, profileId);

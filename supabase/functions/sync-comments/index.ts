@@ -11,6 +11,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { buildCorsHeaders, jsonResponse } from "../_shared/cors.ts";
+import { planLimits } from "../_shared/plans.ts";
 import {
   ayrshareGetComments,
   ayrsharePostReply,
@@ -25,14 +26,12 @@ type DB = ReturnType<typeof createClient>;
 
 const POSTS_PER_USER = 25;
 const AUTO_REPLY_CAP = 10; // max auto-replies per user per run
-// AI auto-reply is an Enterprise-plan feature. The DB column is protected from
-// client self-upgrade (see migration), so this read is authoritative.
-const AUTO_REPLY_PLANS = new Set(["enterprise"]);
-
-// A user gets AI auto-replies only if they enabled it AND are on a plan that
-// includes the feature.
+// A user gets AI auto-replies only if they enabled it AND their plan includes
+// the feature. `plan` is trigger-protected from client writes (see migration),
+// so this read is authoritative. The entitlement itself lives in
+// _shared/plans.ts so every limit is defined in exactly one place.
 function canAutoReply(profile: { auto_reply_enabled?: boolean; plan?: string } | null): boolean {
-  return !!profile?.auto_reply_enabled && AUTO_REPLY_PLANS.has(profile?.plan ?? "");
+  return !!profile?.auto_reply_enabled && planLimits(profile?.plan).aiAutoReply;
 }
 
 type SyncResult = { fetched: number; inserted: number; replied: number; note?: string };

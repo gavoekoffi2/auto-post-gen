@@ -4,6 +4,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { CheckCircle2, XCircle, Loader2, Sparkles } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { functionErrorMessage } from "@/lib/functionError";
 
 type Status = "confirm" | "loading" | "success" | "error";
 
@@ -26,7 +27,10 @@ export default function ValidatePost() {
       });
       if (error) {
         setStatus("error");
-        setMessage(error.message || "Erreur de validation.");
+        // The edge function explains WHY (expired link, already used, post no
+        // longer pending). Without unwrapping it the user only saw the SDK's
+        // "Edge Function returned a non-2xx status code".
+        setMessage(await functionErrorMessage(error, "Erreur de validation."));
         return;
       }
       if (data?.success) {

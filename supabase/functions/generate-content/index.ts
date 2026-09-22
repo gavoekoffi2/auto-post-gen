@@ -21,14 +21,15 @@ import { AIQuotaError, chatCompletion, getOpenRouterKey, getTextModel } from "..
 import { buildAudiencePrompt, normalizeAudiences } from "../_shared/audience.ts";
 import { ensurePostEngagement } from "../_shared/post-engagement.ts";
 import { buildInspirationBlock, researchInspiration } from "../_shared/research.ts";
+import { planLimits } from "../_shared/plans.ts";
 
 
 // Per-user rate limit
 const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 const RATE_LIMIT_MAX = 20;
-// Soft monthly cap per user (cost control for the free beta).
+// Rolling-30-day ceiling, per plan (see _shared/plans.ts). A flat cap used to
+// give every tier the same AI budget regardless of what they paid.
 const MONTHLY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
-const MONTHLY_LIMIT_MAX = 200;
 const MAX_PAYLOAD_BYTES = 64 * 1024;
 
 // Pool of post structures. One is picked at random per generation to
@@ -173,8 +174,14 @@ serve(async (req) => {
     const prompt = typeof body.prompt === "string" ? body.prompt.slice(0, 2000) : "";
     const userPreferences: UserPreferences = body.userPreferences || {};
 
-    // Soft monthly cap (cost control for the free beta), checked before the
-    // hourly atomic reservation below.
+    // Monthly ceiling for the user's PLAN, read server-side: `plan` is
+    // trigger-protected from client writes, so this cannot be self-upgraded.
+    const { data: planRow } = await supabase
+      .from("profiles")
+      .select("plan")
+      .eq("id", userId)
+      .maybeSingle();
+    const limits = planLimits(planRow?.plan);
     const monthSince = new Date(Date.now() - MONTHLY_WINDOW_MS).toISOString();
     const { count: monthCount } = await supabase
       .from("generation_usage")
@@ -182,9 +189,16 @@ serve(async (req) => {
       .eq("user_id", userId)
       .eq("function_name", "generate-content")
       .gte("created_at", monthSince);
-    if ((monthCount ?? 0) >= MONTHLY_LIMIT_MAX) {
+    if ((monthCount ?? 0) >= limits.monthlyTextGenerations) {
       return new Response(
-        JSON.stringify({ error: `Limite mensuelle de ${MONTHLY_LIMIT_MAX} générations atteinte.` }),
+        JSON.stringify({
+          error:
+            `Limite mensuelle du forfait ${limits.label} atteinte ` +
+            `(${limits.monthlyTextGenerations} générations de texte). ` +
+            `Passez à un forfait supérieur ou attendez le renouvellement.`,
+          code: "plan_limit_reached",
+          plan: limits.id,
+        }),
         { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }

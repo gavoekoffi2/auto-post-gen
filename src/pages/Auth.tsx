@@ -9,6 +9,7 @@ import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { MIN_PASSWORD_LENGTH, PASSWORD_RULE_HINT, validatePassword } from "@/lib/password";
 
 export default function Auth() {
   const navigate = useNavigate();
@@ -19,6 +20,13 @@ export default function Auth() {
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    const passwordError = validatePassword(password);
+    if (passwordError) {
+      toast.error(passwordError);
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -225,9 +233,10 @@ export default function Auth() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
-                    minLength={6}
+                    minLength={MIN_PASSWORD_LENGTH}
                     className="glass-card"
                   />
+                  <p className="text-xs text-muted-foreground">{PASSWORD_RULE_HINT}</p>
                 </div>
 
                 <Button

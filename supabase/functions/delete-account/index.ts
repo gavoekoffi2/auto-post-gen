@@ -32,14 +32,24 @@ serve(async (req) => {
   const userId = userData.user.id;
 
   try {
-    // 1. Best-effort: wipe storage objects under the user's folder.
+    // 1. Wipe storage objects under the user's folder. The bucket is PUBLIC,
+    //    so anything left behind stays downloadable by URL after the account
+    //    is gone. A single list() call caps at 1000 entries, which a heavy
+    //    account exceeds (every generated poster is re-hosted here), so page
+    //    through until the folder is empty.
     try {
-      const { data: files } = await admin.storage
-        .from("user-assets")
-        .list(userId, { limit: 1000 });
-      if (files && files.length > 0) {
+      const PAGE = 100;
+      for (let page = 0; page < 200; page++) {
+        const { data: files, error: listError } = await admin.storage
+          .from("user-assets")
+          .list(userId, { limit: PAGE, offset: 0 });
+        if (listError) throw listError;
+        if (!files || files.length === 0) break;
         const paths = files.map((f) => `${userId}/${f.name}`);
-        await admin.storage.from("user-assets").remove(paths);
+        const { error: removeError } = await admin.storage.from("user-assets").remove(paths);
+        if (removeError) throw removeError;
+        // Always re-list from offset 0: the removals shift the listing.
+        if (files.length < PAGE) break;
       }
     } catch (storageError) {
       console.error("Storage cleanup failed for", userId, storageError);

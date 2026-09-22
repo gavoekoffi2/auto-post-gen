@@ -171,10 +171,15 @@ test('email validation requires an explicit click (no auto-validate on load)', (
 test('AI comment auto-reply is gated to the Enterprise plan (server-side)', () => {
   const sync = read('supabase/functions/sync-comments/index.ts');
   const planMig = read('supabase/migrations/20260623000000_user_plan.sql');
-  // The executor checks the plan, not just the enabled flag.
-  assert.match(sync, /AUTO_REPLY_PLANS/);
-  assert.match(sync, /enterprise/);
+  // The executor checks the plan, not just the enabled flag. The entitlement
+  // itself now lives in _shared/plans.ts, so assert the gate is wired to it
+  // rather than to a constant that used to be inlined here.
+  const plans = read('supabase/functions/_shared/plans.ts');
+  assert.match(sync, /planLimits\(profile\?\.plan\)\.aiAutoReply/);
   assert.match(sync, /canAutoReply/);
+  assert.match(plans, /enterprise:[\s\S]*?aiAutoReply: true/);
+  assert.match(plans, /starter:[\s\S]*?aiAutoReply: false/);
+  assert.match(plans, /pro:[\s\S]*?aiAutoReply: false/);
   // Both provider paths use the gate; the bare auto_reply_enabled check is gone.
   assert.equal(/if \(profile && \(profile as any\)\.auto_reply_enabled\)/.test(sync), false);
   assert.equal((sync.match(/canAutoReply\(profile as any\)/g) || []).length, 2);
@@ -188,10 +193,17 @@ test('AI comment auto-reply is gated to the Enterprise plan (server-side)', () =
   assert.match(commentsUi, /isEnterprise \? autoReply : false/);
 });
 
-test('free-beta monthly usage caps exist for text and image generation', () => {
-  assert.match(genContent, /MONTHLY_LIMIT_MAX/);
+test('monthly usage caps exist for text and image generation, driven by the plan', () => {
+  // These are the cost ceilings. They used to be one flat number for every
+  // tier; they now come from the paying customer's plan, read server-side.
+  assert.match(genContent, /limits\.monthlyTextGenerations/);
   assert.match(genContent, /Limite mensuelle/);
-  assert.match(genImage, /IMAGE_MONTHLY_MAX/);
+  assert.match(genImage, /limits\.monthlyImageGenerations/);
+  for (const source of [genContent, genImage]) {
+    assert.match(source, /planLimits\(planRow\?\.plan\)/);
+    // Never trust a plan supplied by the caller.
+    assert.doesNotMatch(source, /planLimits\(body/);
+  }
 });
 
 test('TikTok is gated as "coming soon" in the platform pickers', () => {

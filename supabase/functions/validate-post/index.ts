@@ -5,7 +5,13 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { clientIp, hitIpRateLimit } from "../_shared/rateLimit.ts";
 
 
-const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+// The validation email is sent by a weekly cron, and people read their mail on
+// their own schedule. A 24h window measured from post CREATION (the previous
+// behaviour) could be half spent before the email even went out, and a user
+// opening it the next day hit a dead link with no way to ask for another one.
+// One week, counted from when the email was actually sent, matches the weekly
+// cadence of the product.
+const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 serve(async (req) => {
   const corsHeaders = buildCorsHeaders(req.headers.get("origin"));
@@ -32,7 +38,7 @@ serve(async (req) => {
 
     if (!token || typeof token !== "string") {
       return new Response(
-        JSON.stringify({ error: "Token is required" }),
+        JSON.stringify({ error: "Lien invalide : jeton manquant." }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
@@ -56,30 +62,39 @@ serve(async (req) => {
 
     const { data: post, error } = await supabase
       .from("posts")
-      .select("id,status,validation_token_created_at,validation_token_used_at")
+      .select("id,status,validation_token_created_at,validation_token_used_at,validation_email_sent_at")
       .eq("validation_token", token)
       .maybeSingle();
 
     if (error) throw error;
     if (!post) {
       return new Response(
-        JSON.stringify({ error: "Invalid token" }),
+        JSON.stringify({ error: "Lien de validation inconnu ou déjà annulé." }),
         { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
     if (post.validation_token_used_at) {
       return new Response(
-        JSON.stringify({ error: "Token already used", postId: post.id }),
+        JSON.stringify({
+          error: "Ce lien a déjà été utilisé : le post est validé.",
+          postId: post.id,
+        }),
         { status: 410, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
-    if (post.validation_token_created_at) {
-      const ageMs = Date.now() - new Date(post.validation_token_created_at).getTime();
+    // Count the lifetime from the moment the email left, falling back to the
+    // token's creation date for posts predating that column.
+    const issuedAt = post.validation_email_sent_at || post.validation_token_created_at;
+    if (issuedAt) {
+      const ageMs = Date.now() - new Date(issuedAt).getTime();
       if (ageMs > TOKEN_TTL_MS) {
         return new Response(
-          JSON.stringify({ error: "Token expired" }),
+          JSON.stringify({
+            error:
+              "Ce lien de validation a expiré. Ouvrez votre tableau de bord pour valider le post directement.",
+          }),
           { status: 410, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
@@ -91,7 +106,10 @@ serve(async (req) => {
     if (post.status !== "pending") {
       return new Response(
         JSON.stringify({
-          error: `Post is in state '${post.status}', cannot be validated via email link`,
+          error:
+            post.status === "published"
+              ? "Ce post est déjà publié."
+              : "Ce post n'est plus en attente de validation. Consultez votre tableau de bord.",
           postId: post.id,
         }),
         { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
@@ -113,7 +131,7 @@ serve(async (req) => {
     if (updateError) throw updateError;
     if (!updated) {
       return new Response(
-        JSON.stringify({ error: "Post status changed concurrently", postId: post.id }),
+        JSON.stringify({ error: "Le post vient d'être modifié ailleurs. Rechargez la page.", postId: post.id }),
         { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }

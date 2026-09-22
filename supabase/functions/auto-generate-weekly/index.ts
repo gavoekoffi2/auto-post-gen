@@ -5,6 +5,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { chatText, getOpenRouterKey, getTextModel } from "../_shared/ai.ts";
 import { buildAudiencePrompt, normalizeAudiences } from "../_shared/audience.ts";
 import { ensurePostEngagement } from "../_shared/post-engagement.ts";
+import { planLimits } from "../_shared/plans.ts";
 import { buildInspirationBlock, researchInspiration } from "../_shared/research.ts";
 import { rehostToUserAssets, startPosterJob } from "../_shared/graphiste.ts";
 
@@ -131,8 +132,13 @@ serve(async (req) => {
 
     for (const profile of profiles || []) {
       try {
+        // The weekly volume the customer PAID for. post_frequency is written
+        // by the client, so it is a request, not an entitlement: a Starter
+        // account setting it to 10 used to receive the Enterprise volume.
+        const limits = planLimits(profile.plan);
         const postsNeeded = Math.min(
           HARD_MAX_POSTS_PER_RUN,
+          limits.postsPerWeek,
           Math.max(1, profile.post_frequency || 2),
         );
 

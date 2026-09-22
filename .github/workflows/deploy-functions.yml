@@ -80,9 +80,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # password_min_length mirrors MIN_PASSWORD_LENGTH in src/lib/password.ts
+          # so the rule is enforced by the auth service, not only in the browser.
           jq -n \
             --arg origin "$APP_ORIGIN" \
-            '{mailer_autoconfirm: true, site_url: $origin, uri_allow_list: ($origin + "/**")}' \
+            '{mailer_autoconfirm: true, site_url: $origin, uri_allow_list: ($origin + "/**"), password_min_length: 8}' \
             > /tmp/auth-config.json
           curl --fail-with-body -sS -X PATCH \
             -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \

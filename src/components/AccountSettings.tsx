@@ -17,6 +17,8 @@ import {
 import { Lock, Trash2, Mail, Download } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { functionErrorMessage } from "@/lib/functionError";
+import { PASSWORD_RULE_HINT, validatePassword } from "@/lib/password";
 import { useNavigate } from "react-router-dom";
 
 interface AccountSettingsProps {
@@ -48,8 +50,7 @@ export function AccountSettings({ userEmail }: AccountSettingsProps) {
       URL.revokeObjectURL(url);
       toast.success("Vos données ont été téléchargées.");
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : "Erreur lors de l'export";
-      toast.error(message);
+      toast.error(await functionErrorMessage(error, "Erreur lors de l'export"));
     } finally {
       setExporting(false);
     }
@@ -60,13 +61,9 @@ export function AccountSettings({ userEmail }: AccountSettingsProps) {
       toast.error("Veuillez saisir votre mot de passe actuel");
       return;
     }
-    if (newPassword.length < 8) {
-      toast.error("Le nouveau mot de passe doit contenir au moins 8 caractères");
-      return;
-    }
-
-    if (newPassword !== confirmPassword) {
-      toast.error("Les mots de passe ne correspondent pas");
+    const passwordError = validatePassword(newPassword, confirmPassword);
+    if (passwordError) {
+      toast.error(passwordError);
       return;
     }
 
@@ -117,8 +114,7 @@ export function AccountSettings({ userEmail }: AccountSettingsProps) {
       toast.success("Compte supprimé. Au revoir !");
       navigate("/");
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : "Erreur lors de la suppression";
-      toast.error(message);
+      toast.error(await functionErrorMessage(error, "Erreur lors de la suppression"));
     } finally {
       setDeleting(false);
     }
@@ -167,6 +163,7 @@ export function AccountSettings({ userEmail }: AccountSettingsProps) {
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
             />
+            <p className="text-xs text-muted-foreground">{PASSWORD_RULE_HINT}</p>
           </div>
           <div className="space-y-2">
             <Label>Confirmer le mot de passe</Label>

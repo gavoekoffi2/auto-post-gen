@@ -9,6 +9,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { buildCorsHeaders } from "../_shared/cors.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { getSocialImageSpec, type SocialImageSpec } from "../_shared/socialImageSpecs.ts";
+import { planLimits } from "../_shared/plans.ts";
 // Image generation for Pro Social AI must produce real poster layouts.
 // Keep this endpoint dedicated to Graphiste GPT poster output rather than
 // generic image providers. The chosen output format always follows the post's
@@ -22,8 +23,8 @@ const MAX_PAYLOAD_BYTES = 64 * 1024;
 // operation. Cap how many a single user can mint per hour (covers normal use
 // plus a few regenerations). Enforced atomically via consume_generation_quota.
 const IMAGE_RATE_LIMIT_MAX = 30;
-// Soft monthly cap per user (cost control for the free beta).
-const IMAGE_MONTHLY_MAX = 200;
+// Rolling-30-day poster ceiling comes from the user's plan (_shared/plans.ts);
+// a flat cap gave every tier the same paid-poster budget.
 
 const GRAPHISTE_GPT_DEFAULT_URL =
   "https://bbfzfgcdioewzbmlgaqy.supabase.co/functions/v1/api-v1/v1/posters/generate";
@@ -617,7 +618,14 @@ serve(async (req) => {
       if (!r.imageUrl) return await stillProcessing(resumeJobId, resumeStatusUrl);
       imageUrl = r.imageUrl;
     } else {
-      // Soft monthly cap (cost control for the free beta).
+      // Monthly poster ceiling for the user's PLAN. Each poster is a paid
+      // premium 2K render, so this is the main cost control.
+      const { data: planRow } = await supabase
+        .from("profiles")
+        .select("plan")
+        .eq("id", userId)
+        .maybeSingle();
+      const limits = planLimits(planRow?.plan);
       const monthSince = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
       const { count: monthCount } = await supabase
         .from("generation_usage")
@@ -625,9 +633,17 @@ serve(async (req) => {
         .eq("user_id", userId)
         .eq("function_name", "generate-image")
         .gte("created_at", monthSince);
-      if ((monthCount ?? 0) >= IMAGE_MONTHLY_MAX) {
+      if ((monthCount ?? 0) >= limits.monthlyImageGenerations) {
         return jsonResponse(
-          { error: `Limite mensuelle de ${IMAGE_MONTHLY_MAX} images atteinte.`, code: "rate_limited", format },
+          {
+            error:
+              `Limite mensuelle du forfait ${limits.label} atteinte ` +
+              `(${limits.monthlyImageGenerations} affiches). ` +
+              `Passez à un forfait supérieur ou attendez le renouvellement.`,
+            code: "plan_limit_reached",
+            plan: limits.id,
+            format,
+          },
           429,
         );
       }

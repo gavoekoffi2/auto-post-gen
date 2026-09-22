@@ -7,6 +7,7 @@ import { Sparkles, Lock, CheckCircle } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { MIN_PASSWORD_LENGTH, PASSWORD_RULE_HINT, validatePassword } from "@/lib/password";
 
 export default function ResetPassword() {
   const navigate = useNavigate();
@@ -52,13 +53,9 @@ export default function ResetPassword() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (password.length < 6) {
-      toast.error("Le mot de passe doit contenir au moins 6 caractères");
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      toast.error("Les mots de passe ne correspondent pas");
+    const passwordError = validatePassword(password, confirmPassword);
+    if (passwordError) {
+      toast.error(passwordError);
       return;
     }
 
@@ -141,10 +138,12 @@ export default function ResetPassword() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
-                    minLength={6}
+                    minLength={MIN_PASSWORD_LENGTH}
                     className="glass-card"
                   />
                 </div>
+
+                <p className="text-xs text-muted-foreground -mt-4">{PASSWORD_RULE_HINT}</p>
 
                 <div className="space-y-2">
                   <Label htmlFor="confirm-password">Confirmer le mot de passe</Label>
@@ -155,7 +154,7 @@ export default function ResetPassword() {
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     required
-                    minLength={6}
+                    minLength={MIN_PASSWORD_LENGTH}
                     className="glass-card"
                   />
                 </div>

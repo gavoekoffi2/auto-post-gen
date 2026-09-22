@@ -8,8 +8,8 @@ import { ArrowLeft, Mail, MessageSquare, Send } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { SUPPORT_EMAIL } from "@/lib/appConfig";
 
-const SUPPORT_EMAIL = "contact@prosocialai.com";
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function Contact() {
@@ -93,7 +93,7 @@ export default function Contact() {
                 </div>
                 <div>
                   <h3 className="font-semibold">Email</h3>
-                  <p className="text-sm text-muted-foreground">contact@prosocialai.com</p>
+                  <p className="text-sm text-muted-foreground">{SUPPORT_EMAIL}</p>
                 </div>
               </div>
             </Card>

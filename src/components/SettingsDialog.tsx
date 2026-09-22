@@ -10,6 +10,12 @@ import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Upload, X } from "lucide-react";
+import {
+  MAX_CUSTOM_IMAGES,
+  buildAssetPath,
+  deleteAssetByUrl,
+  validateImageFile,
+} from "@/lib/userAssets";
 
 type UserProfileLike = {
   sector?: string | null;
@@ -68,6 +74,30 @@ export default function SettingsDialog({ isOpen, onOpenChange, userProfile, onPr
   }, [userProfile]);
 
   const handleSave = async () => {
+    // sector / tone / content_types are what ProtectedRoute uses to decide the
+    // profile is complete. Saving them empty from this quick dialog silently
+    // bounced the user back into onboarding on their next navigation.
+    if (!formData.sector) {
+      toast.error("Choisissez un secteur d'activité.");
+      return;
+    }
+    if (!formData.tone) {
+      toast.error("Choisissez une tonalité.");
+      return;
+    }
+    if (!formData.contentType && (userProfile?.content_types || []).length === 0) {
+      toast.error("Choisissez un type de contenu.");
+      return;
+    }
+    if (formData.useStyleExample && !formData.styleExample.trim()) {
+      toast.error("Renseignez votre exemple de style ou désactivez l'option.");
+      return;
+    }
+    if (formData.useCustomImages && formData.customImageUrls.length === 0) {
+      toast.error("Ajoutez au moins une image ou désactivez « Utiliser mes images ».");
+      return;
+    }
+
     setLoading(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -124,22 +154,19 @@ export default function SettingsDialog({ isOpen, onOpenChange, userProfile, onPr
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.user) throw new Error("Non authentifié");
 
-      if (!file.type.startsWith("image/")) {
-        toast.error("Veuillez sélectionner une image");
-        return;
-      }
-      if (file.size > 5 * 1024 * 1024) {
-        toast.error("L'image ne doit pas dépasser 5 Mo");
+      const validationError = validateImageFile(file);
+      if (validationError) {
+        toast.error(validationError);
         return;
       }
 
-      const fileExt = file.name.split('.').pop();
+      const previousUrl = formData.logoUrl;
       // RLS requires the first folder segment to equal the user id.
-      const filePath = `${session.user.id}/logo-${Date.now()}.${fileExt}`;
+      const filePath = buildAssetPath(session.user.id, "logo", file.type);
 
       const { error: uploadError } = await supabase.storage
         .from('user-assets')
-        .upload(filePath, file, { upsert: true });
+        .upload(filePath, file, { contentType: file.type, upsert: true });
 
       if (uploadError) throw uploadError;
 
@@ -148,6 +175,7 @@ export default function SettingsDialog({ isOpen, onOpenChange, userProfile, onPr
         .getPublicUrl(filePath);
 
       setFormData({ ...formData, logoUrl: publicUrl });
+      if (previousUrl && previousUrl !== publicUrl) await deleteAssetByUrl(previousUrl);
       toast.success("Logo uploadé !");
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Erreur lors de l'upload du logo";
@@ -163,20 +191,21 @@ export default function SettingsDialog({ isOpen, onOpenChange, userProfile, onPr
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.user) throw new Error("Non authentifié");
 
-      const uploadPromises = Array.from(files).map(async (file) => {
-        if (!file.type.startsWith("image/")) {
-          throw new Error(`${file.name} n'est pas une image`);
-        }
-        if (file.size > 5 * 1024 * 1024) {
-          throw new Error(`${file.name} dépasse 5 Mo`);
-        }
-        const fileExt = file.name.split('.').pop();
+      const remainingSlots = MAX_CUSTOM_IMAGES - formData.customImageUrls.length;
+      if (remainingSlots <= 0) {
+        toast.error(`Limite de ${MAX_CUSTOM_IMAGES} images atteinte.`);
+        return;
+      }
+
+      const uploadPromises = Array.from(files).slice(0, remainingSlots).map(async (file) => {
+        const validationError = validateImageFile(file);
+        if (validationError) throw new Error(validationError);
         // RLS requires the first folder segment to equal the user id.
-        const filePath = `${session.user.id}/custom-${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
+        const filePath = buildAssetPath(session.user.id, "custom", file.type);
 
         const { error: uploadError } = await supabase.storage
           .from('user-assets')
-          .upload(filePath, file);
+          .upload(filePath, file, { contentType: file.type });
 
         if (uploadError) throw uploadError;
 

@@ -13,6 +13,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { AudienceEditor } from "@/components/AudienceEditor";
 import { AudienceSegment, normalizeAudienceSegments } from "@/lib/audiences";
 import { functionErrorMessage } from "@/lib/functionError";
+import { PLAN_LIMITS } from "@/lib/plans";
 
 export default function Onboarding() {
   const navigate = useNavigate();
@@ -26,7 +27,7 @@ export default function Onboarding() {
     sector: "",
     contentType: "",
     tone: "",
-    frequency: "2",
+    frequency: String(PLAN_LIMITS.starter.postsPerWeek),
     description: "",
     styleExample: "",
     platforms: [] as string[],
@@ -140,7 +141,13 @@ export default function Onboarding() {
               sector: formData.sector,
               content_types: [formData.contentType],
               tone: formData.tone,
-              post_frequency: parseInt(formData.frequency),
+              // Every new account starts on `starter` (DB default, enforced by
+              // the guard_profile_plan trigger), so clamp to what that plan
+              // includes instead of persisting a number the cron will ignore.
+              post_frequency: Math.min(
+                parseInt(formData.frequency),
+                PLAN_LIMITS.starter.postsPerWeek,
+              ),
               description: formData.description,
               style_example: formData.styleExample,
               platforms: formData.platforms.length > 0 ? formData.platforms : ['Instagram'],
@@ -313,9 +320,14 @@ export default function Onboarding() {
                     <SelectValue placeholder="Nombre de posts par semaine" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="2">2 posts/semaine (Starter)</SelectItem>
-                    <SelectItem value="5">5 posts/semaine (Pro)</SelectItem>
-                    <SelectItem value="10">10 posts/semaine (Enterprise)</SelectItem>
+                    {/* Must mirror the published pricing: the previous 2/5/10
+                        options matched no plan that is actually sold, and the
+                        weekly cron clamps to the plan's real ceiling anyway. */}
+                    {Object.values(PLAN_LIMITS).map((plan) => (
+                      <SelectItem key={plan.id} value={plan.postsPerWeek.toString()}>
+                        {plan.postsPerWeek} posts/semaine ({plan.label})
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
