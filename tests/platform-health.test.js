@@ -66,3 +66,12 @@ test("the diagnosis is also pushed, not only displayed", () => {
   assert.match(alert, /provided !== expectedSecret/);
   assert.match(config, /\[functions\.health-alert\]/);
 });
+
+test("the weekly-generation check looks only at the accounts it is about", () => {
+  const health = readFileSync("supabase/functions/_shared/health.ts", "utf8");
+  // Counting posts platform-wide would let one manual generation by any other
+  // account mask a dead cron — reporting healthy in exactly the situation the
+  // check exists to catch.
+  assert.match(health, /\.eq\("auto_publish", true\)/);
+  assert.match(health, /q\.in\("user_id", autoIds\)/);
+});

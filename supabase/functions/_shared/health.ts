@@ -341,12 +341,21 @@ async function pipelineChecks(supabase: any): Promise<HealthCheck[]> {
   });
 
   // 4. Weekly generation actually ran for the auto-publish users.
+  //
+  //    Scoped to THOSE users' rows on purpose. Counting posts platform-wide
+  //    would let a single manual generation by any other account mask a dead
+  //    cron — the check would report healthy in exactly the situation it
+  //    exists to catch.
   try {
-    const { count: autoUsers } = await supabase
+    const { data: autoProfiles, error: autoError } = await supabase
       .from("profiles")
-      .select("id", { count: "exact", head: true })
-      .eq("auto_publish", true);
-    if ((autoUsers ?? 0) === 0) {
+      .select("id")
+      .eq("auto_publish", true)
+      .limit(500);
+    if (autoError) throw autoError;
+    const autoIds = (autoProfiles || []).map((row: { id: string }) => row.id);
+
+    if (autoIds.length === 0) {
       checks.push({
         id: "pipeline:weekly",
         label: "Génération hebdomadaire",
@@ -356,20 +365,20 @@ async function pipelineChecks(supabase: any): Promise<HealthCheck[]> {
     } else {
       const weekAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
       const upcoming = await count((q) =>
-        q.in("status", ["pending", "validated"]).gte("scheduled_for", nowIso),
+        q.in("user_id", autoIds).in("status", ["pending", "validated"]).gte("scheduled_for", nowIso),
       );
-      const recent = await count((q) => q.gte("created_at", weekAgo));
+      const recent = await count((q) => q.in("user_id", autoIds).gte("created_at", weekAgo));
       const healthy = (upcoming ?? 0) > 0 || (recent ?? 0) > 0;
       checks.push({
         id: "pipeline:weekly",
         label: "Génération hebdomadaire",
         status: healthy ? "ok" : "error",
         detail: healthy
-          ? `${autoUsers} compte(s) en automatique · ${upcoming ?? 0} post(s) à venir`
-          : `${autoUsers} compte(s) en automatique mais aucun post créé depuis 8 jours`,
+          ? `${autoIds.length} compte(s) en automatique · ${upcoming ?? 0} post(s) à venir`
+          : `${autoIds.length} compte(s) en automatique mais aucun post créé depuis 8 jours`,
         remedy: healthy
           ? undefined
-          : "Vérifiez le cron auto-generate-weekly (lundi 06:00 UTC, header x-cron-secret).",
+          : "Vérifiez le cron auto-generate-weekly (quotidien 06:00 UTC, header x-cron-secret).",
       });
     }
   } catch {
