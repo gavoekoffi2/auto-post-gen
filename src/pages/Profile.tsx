@@ -79,6 +79,12 @@ export default function Profile() {
     audienceSuggestions: [] as AudienceSegment[],
     selectedAudienceIds: [] as string[],
   });
+  // The plan caps the weekly volume, and promo must never take every slot of
+  // it — the cron applies the same rule, so offering more here would promise
+  // a mix the user will not get.
+  const effectiveFrequency = Math.min(profile.post_frequency, limits.postsPerWeek);
+  const effectivePromoMax = effectiveFrequency > 1 ? effectiveFrequency - 1 : effectiveFrequency;
+
   const [newStyleLabel, setNewStyleLabel] = useState("");
   const [newStyleContent, setNewStyleContent] = useState("");
 
@@ -201,14 +207,20 @@ export default function Profile() {
           sector: profile.sector,
           content_types: profile.content_types,
           tone: profile.tone,
+          // The whole mix is clamped to the plan, not just the total: saving
+          // promo=3 against a Starter week of 3 would hand the cron an
+          // all-advertising week.
           post_frequency: Math.min(profile.post_frequency, limits.postsPerWeek),
           description: profile.description,
           style_example: profile.style_example,
           platforms: profile.platforms,
           preferred_days: profile.preferred_days,
           preferred_time: profile.preferred_time,
-          promo_posts_per_week: profile.promo_posts_per_week,
-          research_posts_per_week: profile.research_posts_per_week,
+          promo_posts_per_week: Math.min(profile.promo_posts_per_week, effectivePromoMax),
+          research_posts_per_week: Math.min(
+            profile.research_posts_per_week,
+            Math.max(0, effectiveFrequency - Math.min(profile.promo_posts_per_week, effectivePromoMax)),
+          ),
           auto_publish: profile.auto_publish,
           image_people_type: profile.image_people_type,
           use_custom_images: profile.use_custom_images,
@@ -603,15 +615,15 @@ export default function Profile() {
                 <div className="space-y-2">
                   <Label>Posts orientés service (promo) par semaine</Label>
                   <Select
-                    value={profile.promo_posts_per_week.toString()}
+                    value={Math.min(profile.promo_posts_per_week, effectivePromoMax).toString()}
                     onValueChange={(v) => {
-                      const promo = parseInt(v);
+                      const promo = Math.min(parseInt(v), effectivePromoMax);
                       setProfile({
                         ...profile,
                         promo_posts_per_week: promo,
                         research_posts_per_week: Math.min(
                           profile.research_posts_per_week,
-                          Math.max(0, profile.post_frequency - promo),
+                          Math.max(0, effectiveFrequency - promo),
                         ),
                       });
                     }}
@@ -620,24 +632,37 @@ export default function Profile() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="0">0 (que de la valeur)</SelectItem>
-                      <SelectItem value="1">1 post promo</SelectItem>
-                      <SelectItem value="2">2 posts promo</SelectItem>
-                      <SelectItem value="3">3 posts promo</SelectItem>
+                      {/* Capped at frequency - 1: the options offered must be
+                          options the cron will honour, and it never lets promo
+                          take every slot of the week. */}
+                      {Array.from({ length: effectivePromoMax + 1 }, (_, n) => n).map((n) => (
+                        <SelectItem key={n} value={n.toString()}>
+                          {n === 0 ? "0 (que de la valeur)" : `${n} post${n > 1 ? "s" : ""} promo`}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground">
                     Le reste de vos posts apporte uniquement de la valeur, sans promotion de
-                    l'entreprise. Si ce nombre dépasse votre fréquence, il est ajusté automatiquement.
+                    l'entreprise. Au moins un post par semaine reste non promotionnel.
                   </p>
                 </div>
 
                 <div className="space-y-2">
                   <Label>Posts d’actualité et de recherche par semaine</Label>
                   <Select
-                    value={profile.research_posts_per_week.toString()}
+                    value={Math.min(
+                      profile.research_posts_per_week,
+                      Math.max(0, effectiveFrequency - profile.promo_posts_per_week),
+                    ).toString()}
                     onValueChange={(v) =>
-                      setProfile({ ...profile, research_posts_per_week: parseInt(v) })
+                      setProfile({
+                        ...profile,
+                        research_posts_per_week: Math.min(
+                          parseInt(v),
+                          Math.max(0, effectiveFrequency - profile.promo_posts_per_week),
+                        ),
+                      })
                     }
                   >
                     <SelectTrigger className="glass-card w-full md:w-48">
@@ -646,10 +671,12 @@ export default function Profile() {
                     <SelectContent>
                       {Array.from(
                         {
+                          // Built from the PLAN-clamped frequency: using the raw
+                          // stored value offered slots the cron would never fill.
                           length:
                             Math.max(
                               0,
-                              profile.post_frequency - profile.promo_posts_per_week,
+                              effectiveFrequency - profile.promo_posts_per_week,
                             ) + 1,
                         },
                         (_, value) => (

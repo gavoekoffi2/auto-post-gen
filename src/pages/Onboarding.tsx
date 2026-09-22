@@ -320,16 +320,25 @@ export default function Onboarding() {
                     <SelectValue placeholder="Nombre de posts par semaine" />
                   </SelectTrigger>
                   <SelectContent>
-                    {/* Must mirror the published pricing: the previous 2/5/10
-                        options matched no plan that is actually sold, and the
-                        weekly cron clamps to the plan's real ceiling anyway. */}
-                    {Object.values(PLAN_LIMITS).map((plan) => (
-                      <SelectItem key={plan.id} value={plan.postsPerWeek.toString()}>
-                        {plan.postsPerWeek} posts/semaine ({plan.label})
+                    {/* Only what a brand-new account can actually receive.
+                        Every signup starts on Starter (DB default + trigger),
+                        so offering the Pro and Enterprise volumes here meant
+                        the choice was silently rewritten on save. */}
+                    {Array.from(
+                      { length: PLAN_LIMITS.starter.postsPerWeek },
+                      (_, i) => i + 1,
+                    ).map((n) => (
+                      <SelectItem key={n} value={n.toString()}>
+                        {n} post{n > 1 ? "s" : ""}/semaine
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                <p className="text-xs text-muted-foreground">
+                  Votre compte démarre sur le forfait {PLAN_LIMITS.starter.label} (jusqu'à{" "}
+                  {PLAN_LIMITS.starter.postsPerWeek} posts/semaine). Vous pourrez en recevoir
+                  davantage en changeant de forfait, depuis votre profil.
+                </p>
               </div>
             </div>
           )}

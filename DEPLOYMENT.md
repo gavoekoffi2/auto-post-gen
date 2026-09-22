@@ -100,26 +100,26 @@ publier manuellement").
 
 ### What you still need to do
 
-The full OAuth start + callback edge functions are now implemented for
-LinkedIn, Meta (Facebook + Instagram) and Twitter/X. To turn them on:
+**Publishing is Zernio-only.** The direct per-platform OAuth start and
+callback functions described in earlier versions of this document were
+removed: they were unreachable from the app and are no longer deployed. You do
+not need a LinkedIn, Meta or Twitter developer app, you do not need to
+register any redirect URI, and the `OAUTH_*` secrets are not read by anything
+— delete them from the Supabase project.
 
-1. Create a developer app on each platform:
-   - **LinkedIn**: https://www.linkedin.com/developers/apps — enable
-     "Sign In with LinkedIn using OpenID Connect" + "Share on LinkedIn".
-   - **Meta** (Facebook + Instagram): https://developers.facebook.com/apps —
-     add the Pages and Instagram Graph products. Request the
-     `pages_manage_posts`, `instagram_content_publish`, etc. permissions
-     via App Review (mandatory before launch).
-   - **Twitter/X**: https://developer.twitter.com/en/portal — create an
-     OAuth 2.0 app with PKCE, request `tweet.write`.
-2. Set the OAuth redirect URI in each app to the URLs **with the `?apikey=<ANON_KEY>` query parameter** — this is required because Supabase Edge Functions enforce the `apikey` check at the gateway and OAuth providers can't add custom headers when they redirect:
-   - LinkedIn: `https://<project>.supabase.co/functions/v1/oauth-callback-linkedin?apikey=<ANON_KEY>`
-   - Meta: `https://<project>.supabase.co/functions/v1/oauth-callback-meta?apikey=<ANON_KEY>`
-   - Twitter: `https://<project>.supabase.co/functions/v1/oauth-callback-twitter?apikey=<ANON_KEY>`
-   The anon key is the public `VITE_SUPABASE_PUBLISHABLE_KEY` (safe to expose). The start endpoints automatically include it in the `redirect_uri` they send to the provider.
-3. Set the `OAUTH_*` secrets listed in §2 in the Supabase dashboard.
-4. The `SocialMediaConnect` dialog will now open the correct OAuth flow
-   when users click "Connecter".
+To connect a user's social accounts:
+
+1. Set `ZERNIO_API_KEY` in the Supabase secrets (get it at
+   https://zernio.com/dashboard/api-keys).
+2. In the app: **Tableau de bord → Gérer les réseaux sociaux**, then click a
+   network. Zernio hosts the authorisation window; the platform only stores a
+   reference to the user's Zernio profile.
+3. The number of networks a user may connect is enforced from their plan (see
+   `supabase/functions/_shared/plans.ts`), and the dialog shows the count
+   against that ceiling.
+
+Zernio handles the platform review, tokens and refreshes, which is the reason
+the direct OAuth route was dropped.
 
 ### Can we use "private" APIs to avoid OAuth?
 

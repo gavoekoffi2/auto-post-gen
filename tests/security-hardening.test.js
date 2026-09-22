@@ -188,9 +188,10 @@ test('AI comment auto-reply is gated to the Enterprise plan (server-side)', () =
   assert.match(plans, /enterprise:[\s\S]*?aiAutoReply: true/);
   assert.match(plans, /starter:[\s\S]*?aiAutoReply: false/);
   assert.match(plans, /pro:[\s\S]*?aiAutoReply: false/);
-  // Both provider paths use the gate; the bare auto_reply_enabled check is gone.
+  // The gate is used, and the bare auto_reply_enabled check is gone. One call
+  // site now, not two: the second provider path was unreachable and removed.
   assert.equal(/if \(profile && \(profile as any\)\.auto_reply_enabled\)/.test(sync), false);
-  assert.equal((sync.match(/canAutoReply\(profile as any\)/g) || []).length, 2);
+  assert.equal((sync.match(/canAutoReply\(profile as any\)/g) || []).length, 1);
   // The plan column exists and is protected from client self-upgrade.
   assert.match(planMig, /ADD COLUMN IF NOT EXISTS plan/);
   assert.match(planMig, /guard_profile_plan/);

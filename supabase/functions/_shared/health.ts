@@ -383,11 +383,21 @@ async function pipelineChecks(supabase: any): Promise<HealthCheck[]> {
         detail: "aucun compte en publication automatique",
       });
     } else {
+      // Only rows the CRON produced count. `week_number` is written at insert
+      // by auto-generate-weekly and by nothing else, so a user clicking
+      // "Générer un post" once a week can no longer keep this green while the
+      // cron is dead — which is the one scenario the check exists for.
       const weekAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
       const upcoming = await count((q) =>
-        q.in("user_id", autoIds).in("status", ["pending", "validated"]).gte("scheduled_for", nowIso),
+        q
+          .in("user_id", autoIds)
+          .not("week_number", "is", null)
+          .in("status", ["pending", "validated"])
+          .gte("scheduled_for", nowIso),
       );
-      const recent = await count((q) => q.in("user_id", autoIds).gte("created_at", weekAgo));
+      const recent = await count((q) =>
+        q.in("user_id", autoIds).not("week_number", "is", null).gte("created_at", weekAgo),
+      );
       const healthy = (upcoming ?? 0) > 0 || (recent ?? 0) > 0;
       checks.push({
         id: "pipeline:weekly",

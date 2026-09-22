@@ -83,6 +83,44 @@ test("the production web server compresses and never caches index.html", () => {
   assert.equal(depth, 0, "unclosed block");
 });
 
+test("every location that sets a header still sets the security headers", () => {
+  // nginx does NOT append: add_header directives are inherited from the parent
+  // level ONLY when the current level declares none. So a location that adds a
+  // Cache-Control silently drops CSP, HSTS, X-Frame-Options and the rest —
+  // which is exactly what happened to /index.html, the one HTML document the
+  // whole app is served from. There is no "inherit and extend" mode; the set
+  // has to be repeated, and this test is what keeps the copies in step.
+  const conf = read("nginx.vps.conf").replace(/#.*$/gm, "");
+  const security = [
+    "X-Frame-Options",
+    "X-Content-Type-Options",
+    "Referrer-Policy",
+    "Permissions-Policy",
+    "Strict-Transport-Security",
+    "Content-Security-Policy",
+  ];
+
+  const blocks = [...conf.matchAll(/location[^{]*\{(.*?)\n {2}\}/gs)].map((m) => m[1]);
+  assert.ok(blocks.length >= 4, "expected the location blocks to be found");
+
+  let withHeaders = 0;
+  for (const block of blocks) {
+    if (!block.includes("add_header")) continue; // inherits the server block
+    withHeaders++;
+    for (const header of security) {
+      assert.ok(block.includes(header), `a location sets add_header but drops ${header}`);
+    }
+  }
+  assert.ok(withHeaders >= 3, "expected the cache-policy locations to be checked");
+
+  // The document that matters most: GET / resolves to it by internal redirect.
+  const indexBlock = blocks.find((b) => b.includes("no-store"));
+  assert.ok(indexBlock, "the index.html location must exist");
+  for (const header of security) {
+    assert.ok(indexBlock.includes(header), `index.html would be served without ${header}`);
+  }
+});
+
 test("container logs cannot fill the VPS disk", () => {
   const compose = read("docker-compose.vps.yml");
   // A full disk takes down every other service on the box, not just this one.

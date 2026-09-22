@@ -119,6 +119,15 @@ async function main() {
     REVOKE ALL ON public.ci_applied_migrations FROM anon, authenticated;
   `);
 
+  // The ledger as it stands BEFORE seeding: an empty one means this is either
+  //    a first run against production or a database that never had the
+  //    baseline at all, and step 3 tells those two apart.
+  const applied0 = new Set(
+    ((await query("SELECT filename FROM public.ci_applied_migrations;")) || []).map(
+      (row) => row.filename,
+    ),
+  );
+
   // 2. Every baseline file must still exist: a missing one means the list and
   //    the repository have diverged, and we would rather stop than guess.
   const missing = [...BASELINE].filter((name) => !files.includes(name));
@@ -130,6 +139,26 @@ async function main() {
 
   // 3. Seed the baseline once: these are already live in production, so they
   //    are recorded without being executed.
+  //
+  //    That assumption only holds for the production project. Pointed at a
+  //    fresh or staging database the seed would mark 25 migrations as applied
+  //    against an empty schema, and the deploy would "succeed" with no tables.
+  //    A table that every baseline migration guarantees is the canary.
+  const baselineAlreadyRecorded = applied0.size > 0;
+  if (!baselineAlreadyRecorded) {
+    const probe = await query(
+      "SELECT to_regclass('public.profiles') IS NOT NULL AS has_schema;",
+    );
+    const hasSchema = Array.isArray(probe) && probe[0]?.has_schema === true;
+    if (!hasSchema) {
+      throw new Error(
+        "Refusing to seed the baseline: public.profiles does not exist, so this " +
+          "database has not had the baseline migrations applied. Point PROJECT_REF " +
+          "at production, or bootstrap this database from supabase/migrations first.",
+      );
+    }
+  }
+
   const baseline = files.filter((name) => BASELINE.has(name));
   if (baseline.length > 0) {
     await query(

@@ -93,11 +93,31 @@ test("every advertised limit is enforced server-side, not just in the UI", () =>
   }
 });
 
-test("the onboarding frequency choices come from the plan table", () => {
+test("onboarding offers only the volumes a new account will actually receive", () => {
   const onboarding = readFileSync("src/pages/Onboarding.tsx", "utf8");
-  // They used to be a hardcoded 2/5/10 that matched no plan actually sold.
-  assert.match(onboarding, /Object\.values\(PLAN_LIMITS\)/);
+  // First they were a hardcoded 2/5/10 matching no plan sold; then all three
+  // plan volumes, of which two were silently rewritten on save because every
+  // signup starts on Starter. Offering a choice and discarding it is worse
+  // than not offering it.
+  assert.match(onboarding, /PLAN_LIMITS\.starter\.postsPerWeek/);
   assert.doesNotMatch(onboarding, /2 posts\/semaine \(Starter\)/);
+  assert.doesNotMatch(onboarding, /Object\.values\(PLAN_LIMITS\)\.map/);
+  // And the ceiling is explained rather than left as a silent cap.
+  assert.match(onboarding, /Votre compte démarre sur le forfait/);
+});
+
+test("the editorial mix can never fill a whole week with advertising", () => {
+  const weekly = readFileSync("supabase/functions/auto-generate-weekly/index.ts", "utf8");
+  const profile = readFileSync("src/pages/Profile.tsx", "utf8");
+  // promo takes its slots first. With promo_posts_per_week equal to the
+  // plan-clamped weekly volume, every post that week was an advertisement.
+  assert.match(weekly, /const maxPromo = postsNeeded > 1 \? postsNeeded - 1 : postsNeeded/);
+  assert.match(weekly, /promoTarget = Math\.min\(\s*Math\.max\(0, profile\.promo_posts_per_week \?\? 1\),\s*maxPromo,/);
+  // The UI offers and saves the same ceiling, built from the PLAN-clamped
+  // frequency rather than the raw stored value.
+  assert.match(profile, /effectivePromoMax/);
+  assert.match(profile, /effectiveFrequency = Math\.min\(profile\.post_frequency, limits\.postsPerWeek\)/);
+  assert.doesNotMatch(profile, /profile\.post_frequency - profile\.promo_posts_per_week,\s*\) \+ 1/);
 });
 
 test("the network limit is visible before it is hit, not only when refused", () => {

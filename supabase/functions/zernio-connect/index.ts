@@ -6,7 +6,7 @@
 // Requires ZERNIO_API_KEY in the Supabase secrets.
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { buildCorsHeaders, jsonResponse } from "../_shared/cors.ts";
-import { getSupabaseAdmin, getUserIdFromAuthHeader } from "../_shared/oauth.ts";
+import { getSupabaseAdmin, getUserIdFromAuthHeader } from "../_shared/supabaseAdmin.ts";
 import {
   getZernioKey,
   zernioConnectUrl,

@@ -71,8 +71,8 @@ test('importing comments survives a concurrent sync instead of losing the batch'
   assert.equal(sync.includes('.insert(toInsert)'), false);
   assert.equal(
     (sync.match(/onConflict: "user_id,platform,external_comment_id"/g) || []).length,
-    2,
-    'both provider paths must upsert on the real unique key',
+    1,
+    'the import must upsert on the real unique key',
   );
   assert.match(sync, /ignoreDuplicates: true/);
   // A failed import must at least be visible in the logs.

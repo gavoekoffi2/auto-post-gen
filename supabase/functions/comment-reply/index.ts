@@ -6,7 +6,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { buildCorsHeaders, jsonResponse } from "../_shared/cors.ts";
-import { ayrsharePostReply, draftReply, zernioReply } from "../_shared/engagement.ts";
+import { draftReply, zernioReply } from "../_shared/engagement.ts";
 
 // AI drafts per user per hour. Generous for real inbox work (a busy account
 // answers a few dozen comments a day), low enough to bound the cost of abuse.
@@ -100,40 +100,24 @@ serve(async (req) => {
       const reply = (body.reply || "").trim();
       if (!reply) return jsonResponse({ error: "reply vide" }, { status: 400, cors });
 
-      let res: { ok: boolean; id?: string; error?: string };
-      if (comment.provider === "zernio") {
-        // Zernio reply needs the post + account handles stashed at sync time.
-        const raw = (comment.raw || {}) as { zPostId?: string; zAccountId?: string };
-        if (!raw.zPostId || !raw.zAccountId) {
-          return jsonResponse(
-            { error: "Informations Zernio manquantes pour répondre à ce commentaire." },
-            { status: 400, cors },
-          );
-        }
-        res = await zernioReply(raw.zPostId, raw.zAccountId, reply, comment.external_comment_id);
-      } else {
-        // Ayrshare: reply via the umbrella post id.
-        const providerPostId = post?.provider_post_id;
-        if (!providerPostId) {
-          return jsonResponse(
-            { error: "Ce commentaire n'est pas rattaché à une publication synchronisable." },
-            { status: 400, cors },
-          );
-        }
-        const { data: conn } = await supabase
-          .from("social_connections")
-          .select("profile_key")
-          .eq("user_id", userId)
-          .eq("provider", "ayrshare")
-          .maybeSingle();
-        res = await ayrsharePostReply(
-          providerPostId,
-          comment.external_comment_id,
-          comment.platform,
-          reply,
-          conn?.profile_key ?? null,
+      // Zernio is the only provider that can hold a comment: the alternative
+      // connector was removed with the switch to Zernio-only, so nothing can
+      // create a comment from anywhere else.
+      if (comment.provider !== "zernio") {
+        return jsonResponse(
+          { error: "Ce commentaire provient d'un fournisseur qui n'est plus pris en charge." },
+          { status: 400, cors },
         );
       }
+      // Zernio reply needs the post + account handles stashed at sync time.
+      const raw = (comment.raw || {}) as { zPostId?: string; zAccountId?: string };
+      if (!raw.zPostId || !raw.zAccountId) {
+        return jsonResponse(
+          { error: "Informations Zernio manquantes pour répondre à ce commentaire." },
+          { status: 400, cors },
+        );
+      }
+      const res = await zernioReply(raw.zPostId, raw.zAccountId, reply, comment.external_comment_id);
       if (!res.ok) return jsonResponse({ error: res.error }, { status: 502, cors });
 
       await supabase

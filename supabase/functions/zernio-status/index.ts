@@ -2,7 +2,7 @@
 // Zernio profile so the dashboard can render per-platform indicators.
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { buildCorsHeaders, jsonResponse } from "../_shared/cors.ts";
-import { getSupabaseAdmin, getUserIdFromAuthHeader } from "../_shared/oauth.ts";
+import { getSupabaseAdmin, getUserIdFromAuthHeader } from "../_shared/supabaseAdmin.ts";
 import { getZernioKey, zernioListAccounts } from "../_shared/zernio.ts";
 import { planLimits } from "../_shared/plans.ts";
 

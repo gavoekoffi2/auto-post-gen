@@ -124,7 +124,14 @@ serve(async (req) => {
         admin.from("generation_usage").select("id", { count: "exact", head: true }),
         admin.from("social_connections").select("id", { count: "exact", head: true }),
       ]);
-      for (const result of [profilesResult, postsResult, usageResult, connectionsResult]) {
+      // The count queries belong in this guard too. Left out, a failed count
+      // became `?? 0` or fell back to the length of the truncated sample — the
+      // dashboard would report "0 published" for a platform with thousands,
+      // silently, which is the exact failure this pair of queries replaced.
+      for (const result of [
+        profilesResult, postsResult, usageResult, connectionsResult,
+        postsTotal, publishedTotal, usageTotal, connectionsTotal,
+      ]) {
         if (result.error) throw result.error;
       }
       // True once a per-user column is computed from a truncated sample, so
@@ -159,10 +166,12 @@ serve(async (req) => {
           active: enriched.filter((u) => !u.blocked).length,
           blocked: enriched.filter((u) => u.blocked).length,
           admins: enriched.filter((u) => u.role === "admin" || u.role === "super_admin").length,
-          posts: postsTotal.count ?? (postsResult.data || []).length,
+          // Exact counts; the guard above means a failure surfaces as an
+          // error rather than as a plausible-looking wrong number.
+          posts: postsTotal.count ?? 0,
           published: publishedTotal.count ?? 0,
-          generations: usageTotal.count ?? (usageResult.data || []).length,
-          connections: connectionsTotal.count ?? (connectionsResult.data || []).length,
+          generations: usageTotal.count ?? 0,
+          connections: connectionsTotal.count ?? 0,
         },
         perUserTruncated,
         users: enriched,

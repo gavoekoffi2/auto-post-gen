@@ -38,13 +38,33 @@ test("the baseline is an explicit list, and every entry still exists", () => {
 test("new migrations are the ones that actually run", () => {
   const baseline = new Set(baselineList());
   const pending = migrations.filter((name) => !baseline.has(name));
-  // Everything added after the baseline must be left for the runner to apply.
+
+  // Whatever is not in the baseline is pending — including a backdated
+  // filename, which is precisely what the explicit list buys over the old
+  // "everything up to X" threshold. Asserting that pending files sort after
+  // the baseline would re-impose the rule the runner was changed to drop.
+  assert.ok(pending.length >= 0);
   for (const name of pending) {
-    assert.ok(name > [...baseline].sort().pop(), `${name} sorts before the baseline and would never run`);
+    assert.ok(name.endsWith(".sql"), `${name} is not a migration file`);
   }
+
   // Each migration is recorded in the same transaction that runs it, so a
   // failure is never recorded as applied.
   assert.match(runner, /BEGIN;/);
   assert.match(runner, /COMMIT;/);
   assert.match(runner, /INSERT INTO public\.ci_applied_migrations/);
+  // Applied in filename order, so dependencies between migrations hold.
+  assert.match(runner, /\.sort\(\)/);
+});
+
+test("the runner refuses to seed a baseline against the wrong database", () => {
+  // The baseline records 25 migrations as applied WITHOUT executing them.
+  // That is correct for production, where they already ran. Pointed at a
+  // fresh or staging database it would mark the schema as present against an
+  // empty one, and the deploy would report success with no tables at all.
+  assert.match(runner, /to_regclass\('public\.profiles'\)/);
+  assert.match(runner, /Refusing to seed the baseline/);
+  // Only checked on a first run: once the ledger has rows, the question is
+  // settled and the probe would be a pointless round-trip on every deploy.
+  assert.match(runner, /const baselineAlreadyRecorded = applied0\.size > 0/);
 });

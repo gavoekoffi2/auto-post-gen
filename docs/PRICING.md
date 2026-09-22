@@ -69,7 +69,8 @@ Comparatif des modèles vidéo recherchés (tous disponibles via OpenRouter) :
 | Kling v3.0 Standard | ~$0,126/s | 3–15 s, 16:9 / 9:16 / 1:1 |
 
 Implémentation future recommandée (non codée aujourd'hui) : reprendre le même schéma de
-chaîne de repli que `getImageModels()` dans `_shared/ai.ts` — `google/veo-3.1-lite` en
+chaîne de repli (la vidéo n'est pas développée ; `_shared/ai.ts` ne fait plus
+que du texte) — `google/veo-3.1-lite` en
 priorité, puis `minimax/hailuo-2.3` en repli si le premier échoue.
 
 **Allocation par plan**, calculée pour rester rentable même en phase de lancement :

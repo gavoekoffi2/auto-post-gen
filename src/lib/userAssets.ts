@@ -58,7 +58,15 @@ export function assetPathFromPublicUrl(publicUrl: string): string | null {
   const index = publicUrl.indexOf(marker);
   if (index < 0) return null;
   const path = publicUrl.slice(index + marker.length).split("?")[0];
-  return path ? decodeURIComponent(path) : null;
+  if (!path) return null;
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    // A stray '%' makes decodeURIComponent throw. Older object keys took
+    // their name from the user's filename, so such keys exist; the raw path
+    // is the right thing to try, and it must not take the caller down.
+    return path;
+  }
 }
 
 /**
@@ -68,9 +76,12 @@ export function assetPathFromPublicUrl(publicUrl: string): string | null {
  */
 export async function deleteAssetByUrl(publicUrl: string | null | undefined): Promise<void> {
   if (!publicUrl) return;
-  const path = assetPathFromPublicUrl(publicUrl);
-  if (!path) return;
+  // Everything is inside the try, including parsing the URL: this function
+  // promises never to throw, and its callers rely on that — they update the UI
+  // first and delete afterwards, with no catch of their own.
   try {
+    const path = assetPathFromPublicUrl(publicUrl);
+    if (!path) return;
     await supabase.storage.from("user-assets").remove([path]);
   } catch (error) {
     console.warn("Could not remove the previous asset:", error);

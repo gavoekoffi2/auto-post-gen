@@ -13,8 +13,6 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { buildCorsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { planLimits } from "../_shared/plans.ts";
 import {
-  ayrshareGetComments,
-  ayrsharePostReply,
   draftReply,
   zernioGetPostComments,
   zernioListCommentedPosts,
@@ -36,17 +34,17 @@ function canAutoReply(profile: { auto_reply_enabled?: boolean; plan?: string } |
 
 type SyncResult = { fetched: number; inserted: number; replied: number; note?: string };
 
-// Dispatch to the user's engagement provider (Zernio preferred, else Ayrshare).
+// Zernio is the only engagement provider. A second branch for the previous
+// provider used to sit here; no connection to it can exist any more, since
+// its connector was removed with the switch to Zernio-only.
 async function syncUser(supabase: DB, userId: string): Promise<SyncResult> {
   const { data: conns } = await supabase
     .from("social_connections")
     .select("provider, profile_key")
     .eq("user_id", userId)
-    .in("provider", ["zernio", "ayrshare"]);
-  const zernio = (conns as any[] || []).find((c) => c.provider === "zernio");
-  const ayrshare = (conns as any[] || []).find((c) => c.provider === "ayrshare");
+    .eq("provider", "zernio");
+  const zernio = (conns as any[] || [])[0];
   if (zernio) return await syncUserZernio(supabase, userId, zernio.profile_key ?? null);
-  if (ayrshare) return await syncUserAyrshare(supabase, userId, ayrshare.profile_key ?? null);
   return { fetched: 0, inserted: 0, replied: 0, note: "no_comment_provider" };
 }
 
@@ -188,145 +186,6 @@ async function syncUserZernio(
   return { fetched, inserted, replied };
 }
 
-// --- Ayrshare: per-post Comments API (provider_post_id required). ---
-async function syncUserAyrshare(
-  supabase: DB,
-  userId: string,
-  profileKeyArg: string | null,
-): Promise<SyncResult> {
-  const profileKey = profileKeyArg;
-
-  const { data: posts } = await supabase
-    .from("posts")
-    .select("id, content, provider_post_id")
-    .eq("user_id", userId)
-    .eq("status", "published")
-    .not("provider_post_id", "is", null)
-    .order("published_at", { ascending: false })
-    .limit(POSTS_PER_USER);
-
-  let fetched = 0;
-  let inserted = 0;
-  let replied = 0;
-  const newRows: Array<{
-    id: string;
-    message: string | null;
-    platform: string;
-    external_comment_id: string;
-    postContent: string | null;
-    providerPostId: string;
-  }> = [];
-
-  for (const post of (posts as any[]) || []) {
-    let comments: NormalizedComment[] = [];
-    try {
-      comments = await ayrshareGetComments(post.provider_post_id, profileKey);
-    } catch (_e) {
-      continue; // skip this post; keep syncing the rest
-    }
-    fetched += comments.length;
-    if (comments.length === 0) continue;
-
-    const ids = comments.map((c) => c.externalCommentId);
-    const { data: existing } = await supabase
-      .from("social_comments")
-      .select("external_comment_id")
-      .eq("user_id", userId)
-      .in("external_comment_id", ids);
-    const existingSet = new Set((existing as any[] || []).map((e) => e.external_comment_id));
-
-    const toInsert = comments
-      .filter((c) => !existingSet.has(c.externalCommentId))
-      .map((c) => ({
-        user_id: userId,
-        post_id: post.id,
-        provider: "ayrshare",
-        platform: c.platform,
-        external_comment_id: c.externalCommentId,
-        parent_comment_id: c.parentId ?? null,
-        author_name: c.author ?? null,
-        author_handle: c.handle ?? null,
-        author_avatar_url: c.avatar ?? null,
-        message: c.message ?? null,
-        comment_created_at: c.createdAt ?? null,
-        status: "new",
-        raw: c.raw ?? {},
-      }));
-
-    if (toInsert.length > 0) {
-      const { data: insertedRows, error } = await supabase
-        .from("social_comments")
-        .upsert(toInsert, {
-          onConflict: "user_id,platform,external_comment_id",
-          ignoreDuplicates: true,
-        })
-        .select("id, message, platform, external_comment_id");
-      if (error) console.error("sync-comments (ayrshare) insert failed:", error.message);
-      if (!error && insertedRows) {
-        inserted += insertedRows.length;
-        for (const r of insertedRows as any[]) {
-          newRows.push({
-            id: r.id,
-            message: r.message,
-            platform: r.platform,
-            external_comment_id: r.external_comment_id,
-            postContent: post.content,
-            providerPostId: post.provider_post_id,
-          });
-        }
-      }
-    }
-  }
-
-  // Auto-reply pass — only if the user enabled it.
-  if (newRows.length > 0) {
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("tone, auto_reply_instructions, auto_reply_enabled, plan")
-      .eq("id", userId)
-      .maybeSingle();
-    if (profile && canAutoReply(profile as any)) {
-      const cap = Math.min(newRows.length, AUTO_REPLY_CAP);
-      for (let i = 0; i < cap; i++) {
-        const r = newRows[i];
-        if (!r.message) continue;
-        try {
-          const reply = await draftReply({
-            comment: r.message,
-            postContent: r.postContent,
-            brandTone: (profile as any).tone,
-            instructions: (profile as any).auto_reply_instructions,
-          });
-          const res = await ayrsharePostReply(
-            r.providerPostId,
-            r.external_comment_id,
-            r.platform,
-            reply,
-            profileKey,
-          );
-          if (res.ok) {
-            await supabase
-              .from("social_comments")
-              .update({
-                status: "replied",
-                reply_text: reply,
-                reply_external_id: res.id ?? null,
-                replied_at: new Date().toISOString(),
-                replied_by: "auto",
-              })
-              .eq("id", r.id);
-            replied++;
-          }
-        } catch (_e) {
-          /* keep going */
-        }
-      }
-    }
-  }
-
-  return { fetched, inserted, replied };
-}
-
 serve(async (req) => {
   const cors = buildCorsHeaders(req.headers.get("origin"));
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
@@ -348,7 +207,7 @@ serve(async (req) => {
       const { data: rows } = await supabase
         .from("social_connections")
         .select("user_id")
-        .in("provider", ["zernio", "ayrshare"])
+        .eq("provider", "zernio")
         .limit(50);
       const userIds = Array.from(new Set((rows as any[] || []).map((r) => r.user_id)));
       const results = [];

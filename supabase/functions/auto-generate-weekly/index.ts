@@ -200,9 +200,18 @@ serve(async (req) => {
         // Build the exact user-selected weekly editorial mix. Existing queued
         // posts retain their persisted category, so a retry only fills missing
         // value/research/promo slots instead of creating extra promotions.
+        //
+        // promo takes its slots first, so it must never be allowed to take the
+        // whole week. A profile saved at a higher frequency and later clamped
+        // by the plan (or simply a promo count equal to the frequency) would
+        // otherwise produce an all-advertising week: postsNeeded 3 with
+        // promo_posts_per_week 3 gave ["promo","promo","promo"]. At least one
+        // post a week is non-promotional, which is the editorial promise the
+        // product is built on.
+        const maxPromo = postsNeeded > 1 ? postsNeeded - 1 : postsNeeded;
         const promoTarget = Math.min(
           Math.max(0, profile.promo_posts_per_week ?? 1),
-          postsNeeded,
+          maxPromo,
         );
         const researchTarget = Math.min(
           Math.max(0, profile.research_posts_per_week ?? 1),
