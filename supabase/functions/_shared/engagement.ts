@@ -119,16 +119,22 @@ export async function draftReply(opts: {
     "Tu es un community manager expérimenté. Rédige UNE réponse à un commentaire reçu sur les réseaux sociaux.",
     "Règles:",
     "- Chaleureuse, professionnelle, utile.",
-    opts.brandTone ? `- Respecte le ton de la marque: ${opts.brandTone}.` : "",
+    opts.brandTone ? `- Respecte le ton de la marque: ${opts.brandTone.slice(0, 120)}.` : "",
     "- 1 à 2 phrases maximum, pas de hashtags, au plus un emoji.",
     "- N'invente pas de promesses commerciales.",
-    opts.instructions ? `- Consignes spécifiques: ${opts.instructions}` : "",
+    opts.instructions ? `- Consignes spécifiques: ${opts.instructions.slice(0, 800)}` : "",
     "Réponds UNIQUEMENT avec le texte de la réponse (sans guillemets).",
   ]
     .filter(Boolean)
     .join("\n");
 
-  const user = `Publication d'origine: ${opts.postContent || "(inconnue)"}\nCommentaire reçu: ${opts.comment}\nTa réponse:`;
+  // Bound every piece of caller-supplied text that lands in the prompt: a
+  // long comment or post is billed per token on every draft, and there is
+  // nothing useful past this much context for a one-or-two-sentence reply.
+  const clamp = (value: string, max: number) => value.slice(0, max);
+  const user = `Publication d'origine: ${
+    clamp(opts.postContent || "(inconnue)", 1200)
+  }\nCommentaire reçu: ${clamp(opts.comment, 1200)}\nTa réponse:`;
 
   const draft = await chatText({
     messages: [
