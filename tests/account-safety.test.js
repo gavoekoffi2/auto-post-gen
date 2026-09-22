@@ -96,3 +96,22 @@ test("the support address has a single source of truth", () => {
     assert.doesNotMatch(source, /contact@prosocialai\.com/, `${file} still hardcodes the address`);
   }
 });
+
+test("a user can change their own email, and the copy used for mailing follows", () => {
+  const ui = read("src/components/AccountSettings.tsx");
+  const migration = read("supabase/migrations/20260922010000_sync_profile_email.sql");
+
+  // "Contactez le support" asked a user to email an address they may no
+  // longer be able to reach, to fix the very address they cannot reach.
+  assert.doesNotMatch(ui, /Pour changer d'email, contactez le support/);
+  assert.match(ui, /supabase\.auth\.updateUser\(\s*\{ email: address \}/);
+  // The confirmation goes to the NEW address; the current one stays active.
+  assert.match(ui, /emailRedirectTo/);
+
+  // send-validation-email reads profiles.email, which was only refreshed as a
+  // side effect of saving unrelated forms — so a changed address kept getting
+  // the weekly posts at the old one.
+  assert.match(migration, /AFTER UPDATE OF email ON auth\.users/);
+  assert.match(migration, /UPDATE public\.profiles SET email = NEW\.email/);
+  assert.match(migration, /SET search_path = public/);
+});

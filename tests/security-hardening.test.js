@@ -151,11 +151,19 @@ test('public endpoints are IP rate-limited', () => {
 
 test('password change re-authenticates with the current password', () => {
   const account = read('src/components/AccountSettings.tsx');
-  assert.match(account, /signInWithPassword\(/);
-  assert.match(account, /currentPassword/);
-  // re-auth must happen before updateUser
+  // Scope the check to the password handler. A file-wide index comparison
+  // broke as soon as another handler (the email change) also called
+  // updateUser, while the invariant it protects was still satisfied.
+  const start = account.indexOf('const handlePasswordChange');
+  assert.ok(start >= 0, 'handlePasswordChange must exist');
+  const end = account.indexOf('const handleDeleteAccount', start);
+  const handler = account.slice(start, end > start ? end : undefined);
+
+  assert.match(handler, /signInWithPassword\(/);
+  assert.match(handler, /currentPassword/);
+  // A stolen or unlocked session must not be enough to lock the owner out.
   assert.ok(
-    account.indexOf('signInWithPassword') < account.indexOf('updateUser'),
+    handler.indexOf('signInWithPassword') < handler.indexOf('updateUser'),
     'must re-authenticate before changing the password',
   );
 });

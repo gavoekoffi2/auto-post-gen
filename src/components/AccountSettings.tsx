@@ -34,7 +34,46 @@ export function AccountSettings({ userEmail }: AccountSettingsProps) {
   const [deleting, setDeleting] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [confirmText, setConfirmText] = useState("");
+  const [newEmail, setNewEmail] = useState("");
+  const [changingEmail, setChangingEmail] = useState(false);
   const CONFIRM_WORD = "SUPPRIMER";
+
+  // Self-service email change. Previously the screen said "contactez le
+  // support" — which asks a user to email an address they may not be able to
+  // reach, to fix the very address they cannot reach. Supabase sends a
+  // confirmation to the NEW address and only swaps auth.users.email once it is
+  // clicked, and a trigger keeps profiles.email (used to send the weekly
+  // validation emails) in step with it.
+  const handleEmailChange = async () => {
+    const address = newEmail.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) {
+      toast.error("Saisissez une adresse email valide.");
+      return;
+    }
+    if (address === userEmail.trim().toLowerCase()) {
+      toast.error("C'est déjà votre adresse actuelle.");
+      return;
+    }
+
+    setChangingEmail(true);
+    try {
+      const { error } = await supabase.auth.updateUser(
+        { email: address },
+        { emailRedirectTo: `${window.location.origin}/profile` },
+      );
+      if (error) throw error;
+      setNewEmail("");
+      toast.success(
+        `Un lien de confirmation a été envoyé à ${address}. Votre adresse actuelle reste active tant qu'il n'est pas ouvert.`,
+        { duration: 12000 },
+      );
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Changement d'adresse impossible";
+      toast.error(message);
+    } finally {
+      setChangingEmail(false);
+    }
+  };
 
   const handleExport = async () => {
     setExporting(true);
@@ -122,16 +161,40 @@ export function AccountSettings({ userEmail }: AccountSettingsProps) {
 
   return (
     <div className="space-y-6">
-      {/* Email Info */}
+      {/* Email */}
       <Card className="glass-card p-6">
         <div className="flex items-center gap-2 mb-4">
           <Mail className="w-5 h-5 text-primary" />
           <h2 className="text-lg font-semibold">Adresse email</h2>
         </div>
-        <p className="text-muted-foreground">{userEmail}</p>
-        <p className="text-xs text-muted-foreground mt-2">
-          Pour changer d'email, contactez le support.
-        </p>
+        <p className="text-muted-foreground mb-4">{userEmail}</p>
+
+        <div className="space-y-4 max-w-md">
+          <div className="space-y-2">
+            <Label>Nouvelle adresse email</Label>
+            <Input
+              type="email"
+              placeholder="nouvelle@adresse.com"
+              className="glass-card"
+              autoComplete="email"
+              value={newEmail}
+              onChange={(e) => setNewEmail(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Un lien de confirmation est envoyé à la nouvelle adresse. Le changement
+              ne prend effet qu'une fois ce lien ouvert — votre adresse actuelle reste
+              active jusque-là.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            className="glass-card"
+            onClick={handleEmailChange}
+            disabled={changingEmail || !newEmail.trim()}
+          >
+            {changingEmail ? "Envoi…" : "Changer d'adresse"}
+          </Button>
+        </div>
       </Card>
 
       {/* Password Change */}
