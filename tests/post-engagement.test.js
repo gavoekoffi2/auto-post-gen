@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import { ensurePostEngagement } from '../supabase/functions/_shared/post-engagement.ts';
 
@@ -56,4 +57,24 @@ test('automatic and manual generation both pass final content through the engage
   assert.match(weekly, /ensurePostEngagement\(/);
   assert.match(manual, /3-5 hashtags/i);
   assert.match(weekly, /3-5 hashtags/i);
+});
+
+test('importing comments survives a concurrent sync instead of losing the batch', () => {
+  const sync = readFileSync(
+    new URL('../supabase/functions/sync-comments/index.ts', import.meta.url),
+    'utf8',
+  );
+  // The cron and a user clicking "Synchroniser" can overlap, and
+  // social_comments has UNIQUE (user_id, platform, external_comment_id).
+  // A plain insert failed the WHOLE batch on one duplicate, and the error
+  // was swallowed — so the run silently imported nothing.
+  assert.equal(sync.includes('.insert(toInsert)'), false);
+  assert.equal(
+    (sync.match(/onConflict: "user_id,platform,external_comment_id"/g) || []).length,
+    2,
+    'both provider paths must upsert on the real unique key',
+  );
+  assert.match(sync, /ignoreDuplicates: true/);
+  // A failed import must at least be visible in the logs.
+  assert.match(sync, /insert failed:/);
 });

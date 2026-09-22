@@ -117,8 +117,17 @@ async function syncUserZernio(
     if (toInsert.length > 0) {
       const { data: ins, error } = await supabase
         .from("social_comments")
-        .insert(toInsert)
+        // upsert, not insert: the cron and a user clicking "Synchroniser" can
+        // overlap, and social_comments has a UNIQUE (user_id, platform,
+        // external_comment_id). A plain insert made the WHOLE batch fail on a
+        // single duplicate — and the error was swallowed, so the run silently
+        // imported nothing.
+        .upsert(toInsert, {
+          onConflict: "user_id,platform,external_comment_id",
+          ignoreDuplicates: true,
+        })
         .select("id, message, external_comment_id, raw");
+      if (error) console.error("sync-comments (zernio) insert failed:", error.message);
       if (!error && ins) {
         inserted += ins.length;
         for (const r of ins as any[]) {
@@ -247,8 +256,12 @@ async function syncUserAyrshare(
     if (toInsert.length > 0) {
       const { data: insertedRows, error } = await supabase
         .from("social_comments")
-        .insert(toInsert)
+        .upsert(toInsert, {
+          onConflict: "user_id,platform,external_comment_id",
+          ignoreDuplicates: true,
+        })
         .select("id, message, platform, external_comment_id");
+      if (error) console.error("sync-comments (ayrshare) insert failed:", error.message);
       if (!error && insertedRows) {
         inserted += insertedRows.length;
         for (const r of insertedRows as any[]) {
