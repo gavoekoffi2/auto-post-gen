@@ -183,3 +183,33 @@ test('Graphiste GPT response extractor accepts common final poster URL shapes', 
     assert.match(source, new RegExp(`obj\\.${field}`), `missing extractor field ${field}`);
   }
 });
+
+test('the shared AI helper carries no image-generation path at all', () => {
+  const ai = readFileSync(
+    new URL('../supabase/functions/_shared/ai.ts', import.meta.url),
+    'utf8',
+  );
+  // It used to hold a full OpenRouter image chain that nothing called. Dead
+  // code contradicting the "Graphiste only, no fallback" decision is an
+  // invitation to wire it back in and silently ship worse visuals.
+  assert.equal(ai.includes('generateImageUrl'), false);
+  assert.equal(ai.includes('getImageModels'), false);
+  assert.equal(ai.includes('modalities'), false);
+  assert.equal(ai.includes('OPENROUTER_IMAGE_MODEL'), false);
+});
+
+test('an AI call cannot outlive its timeout because the caller passed a signal', () => {
+  const ai = readFileSync(
+    new URL('../supabase/functions/_shared/ai.ts', import.meta.url),
+    'utf8',
+  );
+  // Comments are stripped: the fix is explained in one, and matching prose
+  // would make this assert the opposite of what it means to check.
+  const code = ai.replace(/\/\/.*$/gm, '');
+  // Passing `opts.signal ?? controller.signal` meant a caller-supplied signal
+  // replaced the timeout entirely, so a hung provider pinned the function
+  // until the edge runtime killed it.
+  assert.equal(code.includes('opts.signal ?? controller.signal'), false);
+  assert.match(code, /signal: controller\.signal/);
+  assert.match(code, /addEventListener\("abort", onCallerAbort/);
+});

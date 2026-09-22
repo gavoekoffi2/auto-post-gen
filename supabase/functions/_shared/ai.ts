@@ -2,9 +2,15 @@
 // configured via Supabase secrets:
 //   OPENROUTER_API_KEY        — required
 //   OPENROUTER_TEXT_MODEL     — optional Claude override; non-Claude values are ignored
-//   OPENROUTER_IMAGE_MODEL    — optional, defaults to google/gemini-2.5-flash-image
+//   AI_TEXT_TIMEOUT_MS        — optional, defaults to 60000
 //   APP_PUBLIC_URL / APP_NAME — optional, sent as HTTP-Referer and X-Title
 //                               so OpenRouter's dashboard shows your usage cleanly
+//
+// TEXT ONLY. Posters go through Graphiste GPT exclusively (_shared/graphiste.ts)
+// with no fallback — a deliberate product decision, since a silent downgrade to
+// a generic image model would ship worse visuals without anyone noticing. This
+// module used to carry a full OpenRouter image-generation chain that nothing
+// called; it was removed so it cannot be wired back in by accident.
 //
 // The functions return raw OpenAI-style choices[0].message so callers can
 // keep their existing extraction logic.
@@ -22,25 +28,6 @@ export function getTextModel(): string {
   if (configured.startsWith("anthropic/claude-")) return configured;
   if (configured) console.warn(`Ignoring non-Claude OPENROUTER_TEXT_MODEL: ${configured}`);
   return "anthropic/claude-sonnet-5";
-}
-
-export function getImageModels(): string[] {
-  const configured = Deno.env.get("OPENROUTER_IMAGE_MODEL");
-  // Chain of image-OUTPUT-capable models (verified against OpenRouter's
-  // catalogue). A single model failure (capacity, deprecation) falls through
-  // to the next. Do not put text-only models here: they cannot return images
-  // and would silently turn every generation into a branded fallback.
-  // Production primary: Gemini Flash Image. GPT Image 2 is image-capable,
-  // but in Supabase Edge Functions it can exceed the gateway timeout and
-  // leave the dashboard spinning until a 504. Keep it as a fallback only.
-  const chain = [
-    configured,
-    "google/gemini-2.5-flash-image",
-    "openai/gpt-5.4-image-2",
-    "google/gemini-3.1-flash-image-preview",
-  ].filter(Boolean) as string[];
-  // De-dupe while preserving order.
-  return Array.from(new Set(chain));
 }
 
 function attribution() {
@@ -62,7 +49,6 @@ export interface ChatCompletionOptions {
   messages: ChatMessage[];
   temperature?: number;
   top_p?: number;
-  modalities?: string[];
   timeoutMs?: number;
   signal?: AbortSignal;
 }
@@ -77,13 +63,21 @@ export async function chatCompletion(opts: ChatCompletionOptions): Promise<Respo
   };
   if (opts.temperature !== undefined) body.temperature = opts.temperature;
   if (opts.top_p !== undefined) body.top_p = opts.top_p;
-  if (opts.modalities) body.modalities = opts.modalities;
 
-  const envTimeout = parseInt(Deno.env.get("IMAGE_GENERATION_TIMEOUT_MS") || "0", 10);
+  const envTimeout = parseInt(Deno.env.get("AI_TEXT_TIMEOUT_MS") || "0", 10);
   const timeout = opts.timeoutMs ?? (envTimeout > 0 ? envTimeout : 60_000);
 
+  // The timeout must apply even when the caller supplies its own signal. The
+  // previous version passed `opts.signal ?? controller.signal`, so a caller
+  // with a signal silently lost the timeout entirely and a hung provider could
+  // pin the function until the edge runtime killed it.
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
+  const onCallerAbort = () => controller.abort();
+  if (opts.signal) {
+    if (opts.signal.aborted) controller.abort();
+    else opts.signal.addEventListener("abort", onCallerAbort, { once: true });
+  }
   try {
     return await fetch(OPENROUTER_ENDPOINT, {
       method: "POST",
@@ -93,10 +87,11 @@ export async function chatCompletion(opts: ChatCompletionOptions): Promise<Respo
         ...attribution(),
       },
       body: JSON.stringify(body),
-      signal: opts.signal ?? controller.signal,
+      signal: controller.signal,
     });
   } finally {
     clearTimeout(timer);
+    opts.signal?.removeEventListener("abort", onCallerAbort);
   }
 }
 
@@ -120,96 +115,4 @@ export async function chatText(opts: ChatCompletionOptions): Promise<string> {
   }
   const data = await resp.json();
   return (data?.choices?.[0]?.message?.content || "").trim();
-}
-
-function isImageUrl(value: unknown): value is string {
-  // Only accept data: image URLs or http(s) URLs that actually end in an image
-  // extension. The previous catch-all `^https?://\S+` matched any URL, so a
-  // model returning a text/citation link was mistaken for an image.
-  return typeof value === "string" && (
-    value.startsWith("data:image/") ||
-    /^https?:\/\/\S+\.(png|jpe?g|webp|gif)(\?\S*)?$/i.test(value)
-  );
-}
-
-function extractImageUrlFromUnknown(value: unknown): string | null {
-  if (!value) return null;
-  if (isImageUrl(value)) return value;
-
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const found = extractImageUrlFromUnknown(item);
-      if (found) return found;
-    }
-    return null;
-  }
-
-  if (typeof value === "object") {
-    const obj = value as Record<string, unknown>;
-    // Common OpenAI/OpenRouter style shapes:
-    // - { image_url: { url: "..." } }
-    // - { image_url: "..." }
-    // - { url: "..." }
-    // - { b64_json: "..." }
-    // - { data: "..." }
-    const direct =
-      extractImageUrlFromUnknown(obj.image_url) ||
-      extractImageUrlFromUnknown(obj.url) ||
-      extractImageUrlFromUnknown(obj.data) ||
-      extractImageUrlFromUnknown(obj.output) ||
-      extractImageUrlFromUnknown(obj.images) ||
-      extractImageUrlFromUnknown(obj.content);
-    if (direct) return direct;
-
-    if (typeof obj.b64_json === "string" && obj.b64_json.length > 100) {
-      return `data:image/png;base64,${obj.b64_json}`;
-    }
-    return null;
-  }
-
-  if (typeof value === "string") {
-    // Some providers return markdown/text containing a URL or inline data URL.
-    const dataMatch = value.match(/data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/);
-    if (dataMatch?.[0]) return dataMatch[0];
-    const urlMatch = value.match(/https?:\/\/[^\s)"']+/);
-    if (urlMatch?.[0]) return urlMatch[0];
-  }
-
-  return null;
-}
-
-// Tries each model in the chain until one returns an image URL or data: URL.
-export async function generateImageUrl(
-  promptText: string,
-  models?: string[],
-): Promise<{ imageUrl: string | null; lastError: string | null }> {
-  const chain = models && models.length > 0 ? models : getImageModels();
-  let lastError: string | null = null;
-  for (const model of chain) {
-    try {
-      const resp = await chatCompletion({
-        model,
-        messages: [{ role: "user", content: [{ type: "text", text: promptText }] }],
-        modalities: ["image", "text"],
-      });
-      if (!resp.ok) {
-        lastError = `${model} ${resp.status}: ${(await resp.text()).slice(0, 500)}`;
-        continue;
-      }
-      const data = await resp.json();
-      const message = data?.choices?.[0]?.message;
-      const candidate =
-        extractImageUrlFromUnknown(message?.images) ||
-        extractImageUrlFromUnknown(message?.image_url) ||
-        extractImageUrlFromUnknown(message?.content) ||
-        extractImageUrlFromUnknown(data?.images) ||
-        extractImageUrlFromUnknown(data?.data) ||
-        extractImageUrlFromUnknown(data);
-      if (candidate) return { imageUrl: candidate, lastError: null };
-      lastError = `${model} returned no image. Response keys: ${Object.keys(data || {}).join(", ")}`;
-    } catch (err) {
-      lastError = `${model} threw: ${err instanceof Error ? err.message : String(err)}`;
-    }
-  }
-  return { imageUrl: null, lastError };
 }
