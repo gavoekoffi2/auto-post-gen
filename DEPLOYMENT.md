@@ -42,22 +42,22 @@ environment variables in the Supabase dashboard before deploying.
 | `IMAGE_GENERATION_TIMEOUT_MS` *(optional)* | `generate-image` | Per-model timeout for image generation. Defaults to 60000. |
 | `TAVILY_API_KEY` *(optional upgrade)* | `generate-content` | Premium web-search source. The function already uses **free** Google News RSS + DuckDuckGo by default — Tavily just adds higher quality results when configured. Free tier 1k queries/month at https://tavily.com. |
 | `BRAVE_SEARCH_API_KEY` *(optional upgrade)* | `generate-content` | Same idea as Tavily: optional premium search source. Free tier 2k queries/month at https://brave.com/search/api. |
-| `AYRSHARE_API_KEY` *(strongly recommended for MVP)* | `ayrshare-connect`, `ayrshare-status`, `publish-post`, `sync-comments`, `comment-reply` | When set, users see a "Connexion rapide" button that handles all social platforms (IG, FB, LinkedIn, X, TikTok, YouTube, Pinterest, Threads, Bluesky) through one Ayrshare account. No Meta App Review, no LinkedIn approval, no TikTok partnership — Ayrshare has done all that. Free trial (100 posts/month, 1 profile) at https://app.ayrshare.com. Paid tiers from $49/month. **Comment inbox + auto-reply require the Premium plan** (Comments API). |
-| `POSTIZ_API_KEY` *(the reference video's platform)* | `postiz-connect`, `postiz-status`, `publish-post` | When set, users get a "Connexion via Postiz" option (connect/publish/schedule across 30+ networks). Postiz handles the OAuth + publishing plumbing. Get the key in Postiz → Settings → Developers → Public API. **Note:** Postiz's public API does NOT expose comments — the comment inbox/auto-reply run through Ayrshare (or direct OAuth), not Postiz. |
-| `POSTIZ_API_URL` *(optional)* | `postiz-*`, `publish-post` | Override the Postiz base URL when self-hosting, e.g. `https://your-host/public/v1`. Defaults to the cloud API. |
 | `ZERNIO_API_KEY` | `zernio-connect`, `zernio-status`, `publish-post` | When set, users get a "Connexion via Zernio" option that connects LinkedIn, Facebook (and 13 more) and publishes through Zernio. Per-user isolation via Zernio "profiles" (one per app-user). Get the key at https://zernio.com/dashboard/api-keys (format `sk_` + 64 hex). **Set it in Supabase Secrets only — never commit it.** |
 | `ZERNIO_API_URL` *(optional)* | `zernio-*`, `publish-post` | Override the Zernio base URL. Defaults to `https://zernio.com/api/v1`. |
 | `SUPABASE_URL` | all server functions | (auto-provided) |
 | `SUPABASE_SERVICE_ROLE_KEY` | all server functions | (auto-provided) |
-| `CRON_SECRET` | `auto-generate-weekly`, `send-validation-email`, `publish-post` (cron) | Shared secret between Supabase Scheduler and the functions. Also used as the OAuth state HMAC secret if `OAUTH_STATE_SECRET` is unset. |
-| `OAUTH_STATE_SECRET` | all `oauth-*` functions | (Optional) Dedicated HMAC secret for OAuth state tokens; defaults to `CRON_SECRET`. |
+| `CRON_SECRET` | `auto-generate-weekly`, `send-validation-email`, `publish-post` (cron) | Shared secret between Supabase Scheduler and the functions. |
 | `ALLOWED_ORIGINS` | all functions | Comma-separated list of origins (e.g. `https://app.example.com`). **Fails closed**: when unset, no `Access-Control-Allow-Origin` is emitted and browsers block cross-origin calls. Set `*` explicitly only for local development. |
 | `RESEND_API_KEY` | `send-validation-email` | Email delivery |
 | `RESEND_FROM` | `send-validation-email` | Verified sender (`Pro Social AI <no-reply@yourdomain.com>`) |
 | `APP_BASE_URL` | `send-validation-email`, validation links | Where to point the validation link (e.g. `https://app.example.com`) — should be the front-end origin, not the Supabase URL. |
-| `OAUTH_LINKEDIN_CLIENT_ID` / `OAUTH_LINKEDIN_CLIENT_SECRET` | `oauth-*-linkedin` | LinkedIn app credentials |
-| `OAUTH_META_APP_ID` / `OAUTH_META_APP_SECRET` | `oauth-*-meta` | Meta (Facebook + Instagram) app credentials |
-| `OAUTH_TWITTER_CLIENT_ID` / `OAUTH_TWITTER_CLIENT_SECRET` | `oauth-*-twitter` | Twitter/X app credentials (PKCE; secret only for confidential clients) |
+
+> **Secrets to DELETE from Supabase, not to add.** Publishing is Zernio-only:
+> the Ayrshare, Postiz and direct per-platform OAuth endpoints were removed,
+> so `AYRSHARE_API_KEY`, `POSTIZ_API_KEY`, `POSTIZ_API_URL`,
+> `OAUTH_STATE_SECRET`, `OAUTH_LINKEDIN_*`, `OAUTH_META_*` and
+> `OAUTH_TWITTER_*` are read by nothing. A credential no code uses cannot help
+> you and can still leak — remove them from the project's secrets.
 
 ### Frontend env (`.env`)
 

@@ -213,3 +213,45 @@ test('TikTok is gated as "coming soon" in the platform pickers', () => {
     assert.match(src, /disabled=\{comingSoon\}/);
   }
 });
+
+test('no edge function is deployed without a product path to it', () => {
+  // Every deployed function is a public HTTPS endpoint. The direct OAuth
+  // callbacks in particular wrote social tokens into the database while being
+  // unreachable from the app since publishing moved to Zernio-only.
+  const config = read('supabase/config.toml');
+  const dir = (p) => join(__dirname, '..', p);
+  const declared = new Set([...config.matchAll(/\[functions\.([a-z0-9-]+)\]/g)].map((m) => m[1]));
+  const onDisk = new Set(
+    readdirSync(dir('supabase/functions'), { withFileTypes: true })
+      .filter((e) => e.isDirectory() && e.name !== '_shared')
+      .map((e) => e.name),
+  );
+
+  // config.toml and the function folders must describe the same surface.
+  assert.deepEqual([...declared].sort(), [...onDisk].sort());
+
+  for (const gone of [
+    'ayrshare-connect', 'ayrshare-status', 'postiz-connect', 'postiz-status',
+    'oauth-start-linkedin', 'oauth-callback-linkedin',
+    'oauth-start-meta', 'oauth-callback-meta',
+    'oauth-start-twitter', 'oauth-callback-twitter',
+  ]) {
+    assert.equal(onDisk.has(gone), false, `${gone} is unreachable from the app but still deployed`);
+  }
+
+  // Each remaining function is either called by the frontend or driven by cron.
+  const cronOnly = new Set(['auto-generate-weekly', 'send-validation-email']);
+  const frontendSources = readdirSync(dir('src/pages'))
+    .map((f) => `src/pages/${f}`)
+    .concat(readdirSync(dir('src/components')).map((f) => `src/components/${f}`))
+    .filter((f) => f.endsWith('.tsx'))
+    .map((f) => read(f))
+    .join('\n');
+  for (const name of onDisk) {
+    if (cronOnly.has(name)) continue;
+    assert.ok(
+      frontendSources.includes(`"${name}"`) || frontendSources.includes(`'${name}'`),
+      `${name} is deployed but nothing in the app calls it`,
+    );
+  }
+});

@@ -1,5 +1,16 @@
 project_id = "tktoyntaeajgsuplhntd"
 
+# Every entry below is a deployed public endpoint. `verify_jwt = false` means
+# the gateway lets the request through and the FUNCTION is responsible for
+# authenticating it — so each one states what protects it.
+#
+# Functions with no product path to them are not left deployed: the direct
+# per-platform OAuth flows (LinkedIn / Meta / Twitter) and the Ayrshare and
+# Postiz connectors were removed when publishing moved to Zernio-only. They
+# were unreachable from the app but still callable by anyone on the internet,
+# and the OAuth callbacks wrote social tokens into the database. `git log` has
+# them if a second provider is ever reinstated.
+
 # generate-content is called by authenticated clients. We verify the user
 # JWT inside the function (so the function can use the service role key
 # to record usage), but Supabase's gateway should still require an apikey.
@@ -26,33 +37,13 @@ verify_jwt = false
 verify_jwt = false
 
 # validate-post is hit from the email link without a session token.
-# Token validation is done in-function.
+# Token validation is done in-function (single-use + expiry + IP rate limit).
 [functions.validate-post]
 verify_jwt = false
 
 # publish-post: manual triggers require user JWT (validated in-function),
 # cron triggers use CRON_SECRET.
 [functions.publish-post]
-verify_jwt = false
-
-# OAuth flows: callbacks must be reachable without a JWT (the provider
-# does the redirect with just ?code=...&state=...).
-[functions.oauth-start-linkedin]
-verify_jwt = false
-
-[functions.oauth-callback-linkedin]
-verify_jwt = false
-
-[functions.oauth-start-meta]
-verify_jwt = false
-
-[functions.oauth-callback-meta]
-verify_jwt = false
-
-[functions.oauth-start-twitter]
-verify_jwt = false
-
-[functions.oauth-callback-twitter]
 verify_jwt = false
 
 # delete-account validates the user JWT in-function so it can call the
@@ -64,27 +55,10 @@ verify_jwt = false
 [functions.export-account-data]
 verify_jwt = false
 
-# Ayrshare: third-party social-media management API. ayrshare-connect
-# provisions a per-user profile and returns a one-time JWT URL the
-# user opens to OAuth into all their social accounts at once.
-[functions.ayrshare-connect]
-verify_jwt = false
-
-[functions.ayrshare-status]
-verify_jwt = false
-
-# Postiz: social scheduling platform (the reference video's tool).
-# postiz-connect returns a hosted OAuth URL; postiz-status lists channels.
-# Both validate the user JWT in-function.
-[functions.postiz-connect]
-verify_jwt = false
-
-[functions.postiz-status]
-verify_jwt = false
-
-# Zernio: social API (connect + publish for LinkedIn, Facebook, +13).
-# zernio-connect returns a hosted OAuth URL; zernio-status lists the
-# accounts connected under the user's Zernio profile. JWT checked in-function.
+# Zernio: the single social backend (connect + publish for LinkedIn, Facebook
+# and 13 more). zernio-connect returns a hosted OAuth URL and enforces the
+# plan's network limit; zernio-status lists the accounts connected under the
+# user's Zernio profile. Both check the user JWT in-function.
 [functions.zernio-connect]
 verify_jwt = false
 
@@ -92,7 +66,8 @@ verify_jwt = false
 verify_jwt = false
 
 # send-contact: public contact form → operator inbox via Resend. No JWT
-# (anonymous visitors), validated + honeypot-protected in-function.
+# (anonymous visitors), validated + honeypot-protected + IP rate-limited
+# in-function.
 [functions.send-contact]
 verify_jwt = false
 

@@ -191,6 +191,40 @@ function extractPosterImageUrl(value: unknown): string | null {
   return null;
 }
 
+/**
+ * A status URL is only ever polled when it points at the SAME ORIGIN as the
+ * configured Graphiste endpoint, over https.
+ *
+ * This is a credential guard, not a style rule. Every poll sends
+ * `Authorization: Bearer <GRAPHISTE_GPT_API_KEY>`, and the status URL reaches
+ * us from places a user controls: the `statusUrl` field of a generate-image
+ * request body, and `posts.image_status_url`, which RLS lets its owner write.
+ * Without this check, any logged-in user could point the poll at a server they
+ * own and be handed the operator's Graphiste API key.
+ *
+ * Returns the absolute URL to poll, or null when it must be refused.
+ */
+export function safeGraphisteStatusUrl(endpoint: string, statusUrl: string | null): string | null {
+  if (!statusUrl) return null;
+  let base: URL;
+  try {
+    base = new URL(endpoint);
+  } catch {
+    return null;
+  }
+  let candidate: URL;
+  try {
+    // A relative path is resolved against the configured endpoint, so it is
+    // same-origin by construction.
+    candidate = new URL(statusUrl, base);
+  } catch {
+    return null;
+  }
+  if (candidate.protocol !== "https:") return null;
+  if (candidate.origin !== base.origin) return null;
+  return candidate.toString();
+}
+
 function statusCandidates(endpoint: string, statusUrl: string | null, jobId: string | null): string[] {
   const out: string[] = [];
   if (jobId) {
@@ -203,7 +237,12 @@ function statusCandidates(endpoint: string, statusUrl: string | null, jobId: str
     out.push(`${base}/jobs/${encodeURIComponent(jobId)}`);
     out.push(`${u.origin}/functions/v1/api-v1/v1/jobs/${encodeURIComponent(jobId)}`);
   }
-  if (statusUrl) out.push(statusUrl.startsWith("http") ? statusUrl : new URL(statusUrl, endpoint).toString());
+  const safeStatusUrl = safeGraphisteStatusUrl(endpoint, statusUrl);
+  if (safeStatusUrl) {
+    out.push(safeStatusUrl);
+  } else if (statusUrl) {
+    console.error("Refusing an off-origin Graphiste status URL:", statusUrl.slice(0, 120));
+  }
   return [...new Set(out)];
 }
 

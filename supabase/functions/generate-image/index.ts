@@ -10,6 +10,8 @@ import { buildCorsHeaders } from "../_shared/cors.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { getSocialImageSpec, type SocialImageSpec } from "../_shared/socialImageSpecs.ts";
 import { planLimits } from "../_shared/plans.ts";
+import { safeGraphisteStatusUrl } from "../_shared/graphiste.ts";
+import { fetchImageBytes } from "../_shared/safeFetch.ts";
 // Image generation for Pro Social AI must produce real poster layouts.
 // Keep this endpoint dedicated to Graphiste GPT poster output rather than
 // generic image providers. The chosen output format always follows the post's
@@ -138,7 +140,15 @@ function graphisteStatusCandidates(endpoint: string, statusUrl: string | null, j
     out.push(`${base}/jobs/${encodeURIComponent(jobId)}`);
     out.push(`${u.origin}/functions/v1/api-v1/v1/jobs/${encodeURIComponent(jobId)}`);
   }
-  if (statusUrl) out.push(statusUrl.startsWith("http") ? statusUrl : new URL(statusUrl, endpoint).toString());
+  // Same-origin only: this URL is polled with the Graphiste API key in the
+  // Authorization header and `statusUrl` arrives from the request body, so an
+  // arbitrary URL here hands the operator's key to whoever asked for it.
+  const safeStatusUrl = safeGraphisteStatusUrl(endpoint, statusUrl);
+  if (safeStatusUrl) {
+    out.push(safeStatusUrl);
+  } else if (statusUrl) {
+    console.error("Refusing an off-origin Graphiste status URL:", statusUrl.slice(0, 120));
+  }
   return [...new Set(out)];
 }
 
@@ -741,13 +751,14 @@ serve(async (req) => {
             bytes = new TextEncoder().encode(decodeURIComponent(payload));
           }
         } else {
-          const fetched = await fetch(imageUrl);
-          if (!fetched.ok) throw new Error(`image fetch ${fetched.status}`);
-          contentType = (fetched.headers.get("content-type") || "image/png").toLowerCase();
-          if (!contentType.startsWith("image/") || contentType.includes("svg")) {
-            throw new Error(`unexpected content-type ${contentType}`);
-          }
-          bytes = new Uint8Array(await fetched.arrayBuffer());
+          // Guarded fetch: https-only, private/metadata hosts blocked, SVG
+          // refused and the body size capped. The poster URL comes from a
+          // provider response that a client-supplied statusUrl can influence,
+          // and an unbounded arrayBuffer() here would let one response
+          // exhaust the function's memory.
+          const fetched = await fetchImageBytes(imageUrl);
+          bytes = fetched.bytes;
+          contentType = fetched.contentType;
         }
       } catch (verifyErr) {
         console.error("generate-image: could not verify a real raster poster:", verifyErr);
