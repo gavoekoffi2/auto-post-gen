@@ -57,6 +57,26 @@ const OPTIONAL_SECRETS: Array<{ name: string; impact: string }> = [
   { name: "RESEND_FROM", impact: "expéditeur email non configuré" },
 ];
 
+/** Settings worth showing because a wrong value degrades quality silently. */
+function configurationChecks(): HealthCheck[] {
+  const region = (Deno.env.get("RESEARCH_NEWS_REGION") || "CI").toUpperCase();
+  const lang = (Deno.env.get("RESEARCH_NEWS_LANG") || "fr").toLowerCase();
+  const explicit = !!Deno.env.get("RESEARCH_NEWS_REGION");
+  return [
+    {
+      id: "config:research-market",
+      label: "Marché de la recherche d'actualité",
+      status: "ok",
+      detail: explicit
+        ? `${region} / ${lang}`
+        : `${region} / ${lang} (valeur par défaut — RESEARCH_NEWS_REGION non défini)`,
+      remedy: explicit
+        ? undefined
+        : "Définissez RESEARCH_NEWS_REGION sur le pays où vous vendez : les posts sont enrichis avec l'actualité de ce marché.",
+    },
+  ];
+}
+
 function secretChecks(): HealthCheck[] {
   const checks: HealthCheck[] = [];
   for (const { name, impact } of REQUIRED_SECRETS) {
@@ -402,7 +422,7 @@ export async function runHealthChecks(supabase: any): Promise<{
     Promise.all([openRouterCheck(), graphisteCheck(), zernioCheck()]),
     pipelineChecks(supabase),
   ]);
-  const checks = [...secretChecks(), ...providers, ...pipeline];
+  const checks = [...secretChecks(), ...configurationChecks(), ...providers, ...pipeline];
   const status: CheckStatus = checks.some((c) => c.status === "error")
     ? "error"
     : checks.some((c) => c.status === "warn")

@@ -59,3 +59,17 @@ test("profile lets users re-analyse, select and edit multiple audiences", () => 
   assert.match(profile, /audience_suggestions/);
   assert.match(profile, /Cibles de communication/);
 });
+
+test('news research targets the market the product is sold in, not a hard-coded one', () => {
+  const research = readFileSync(
+    new URL('../supabase/functions/_shared/research.ts', import.meta.url),
+    'utf8',
+  );
+  // It was pinned to France while the product is sold in francophone West
+  // Africa, so every "actualité de votre secteur" was the wrong country's.
+  assert.equal(/region = "FR"/.test(research), false);
+  assert.match(research, /RESEARCH_NEWS_REGION/);
+  assert.match(research, /RESEARCH_NEWS_LANG/);
+  assert.match(research, /region = newsRegion\(\)/);
+  assert.match(research, /lang = newsLang\(\)/);
+});

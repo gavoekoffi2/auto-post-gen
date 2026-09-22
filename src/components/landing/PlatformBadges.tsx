@@ -12,7 +12,7 @@ const platforms = [
 export const PlatformBadges = () => {
   return (
     <div className="flex flex-wrap justify-center gap-3 mt-8">
-      {platforms.map((platform, index) => (
+      {platforms.map((platform) => (
         <div
           key={platform.name}
           className="flex items-center gap-2 px-4 py-2 rounded-full glass-card hover-lift cursor-default opacity-0 animate-fade-in"

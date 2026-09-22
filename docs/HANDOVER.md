@@ -324,7 +324,7 @@ réellement bloquant. Voir §5 P1.
 | Accès | Où le trouver / le mettre |
 |---|---|
 | Secrets des edge functions (OpenRouter, Graphiste, Zernio, Resend, CRON_SECRET…) | **Supabase Dashboard → Project Settings → Edge Functions → Secrets** (projet `tktoyntaeajgsuplhntd`). Liste de référence : DEPLOYMENT.md §2. |
-| Variables front (VITE_*) | Local : `.env.local` (jamais commité). CI/prod : **GitHub → repo → Settings → Secrets and variables → Actions** (`VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, + `NETLIFY_AUTH_TOKEN`, `NETLIFY_SITE_ID`, `SUPABASE_ACCESS_TOKEN`). |
+| Variables front (VITE_*) | Local : `.env.local` (jamais commité). CI/prod : **GitHub → repo → Settings → Secrets and variables → Actions** (`VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_SUPPORT_EMAIL`, + `SUPABASE_ACCESS_TOKEN`). Les variables Netlify ne servent plus : l'hébergement est sur le VPS. |
 | Compte Graphiste GPT (clé + crédits) | Compte Graphiste GPT du propriétaire ; solde vérifiable via `GET /v1/account/credits` ou le script de diagnostic. |
 | Zernio | https://zernio.com/dashboard/api-keys (clé `sk_` + 64 hex). |
 | Resend (email) | https://resend.com → API Keys + Domains (vérification SPF/DKIM). |
@@ -377,8 +377,10 @@ Cochez dans l'ordre. Chaque étape a un résultat observable.
       OPENROUTER_API_KEY, GRAPHISTE_GPT_API_KEY, ZERNIO_API_KEY, CRON_SECRET,
       ALLOWED_ORIGINS=<origine VPS exacte>, APP_BASE_URL, RESEND_API_KEY,
       RESEND_FROM).
-- [ ] 7. Secrets GitHub Actions présents (VITE_*, NETLIFY_*, SUPABASE_ACCESS_TOKEN)
-      → les 3 workflows verts dans l'onglet Actions après le merge.
+- [ ] 7. Secrets GitHub Actions présents (VITE_*, SUPABASE_ACCESS_TOKEN,
+      ZERNIO_API_KEY) → les 2 workflows verts dans l'onglet Actions après le
+      merge (`ci.yml` et `deploy-functions.yml` ; le workflow Netlify a été
+      supprimé avec l'hébergement Netlify).
 - [ ] 8. Crons Supabase configurés avec le header `x-cron-secret` (5 cadences,
       DEPLOYMENT.md) → attendu le lendemain : posts auto générés + email de
       validation reçu. **`health-alert` en premier** (horaire) : c'est lui qui

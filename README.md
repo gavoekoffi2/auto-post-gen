@@ -129,8 +129,6 @@ Nginx sert `dist/` et renvoie toutes les routes React vers `index.html`
 (`nginx.vps.conf`, qui porte aussi la CSP et les en-têtes de sécurité).
 Origine publique : https://auto-post-gen.76.13.129.252.sslip.io
 
-Le fichier `netlify.toml` est conservé pour un éventuel retour à Netlify mais
-n'est plus utilisé en production.
 
 Edge Functions Supabase — le déploiement normal passe par la CI : tout push
 sur `main` touchant `supabase/functions/**` déploie **toutes** les fonctions

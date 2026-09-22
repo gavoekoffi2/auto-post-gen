@@ -12,7 +12,9 @@ type ToasterToast = ToastProps & {
   action?: ToastActionElement;
 };
 
-const actionTypes = {
+// Only ever referenced as `typeof actionTypes`, which the unused-vars rule
+// cannot see. Exported so it is unambiguously used, rather than silenced.
+export const actionTypes = {
   ADD_TOAST: "ADD_TOAST",
   UPDATE_TOAST: "UPDATE_TOAST",
   DISMISS_TOAST: "DISMISS_TOAST",

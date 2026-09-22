@@ -68,12 +68,30 @@ function pickTag(block: string, tag: string): string {
 
 // --- FREE SOURCES (no API key needed) ----------------------------
 
+// Which market the news should come from.
+//
+// This used to be hard-coded to France. The product is sold in francophone
+// West Africa (see docs/PRICING.md: zone FCFA, Mobile Money), so every
+// "actualité de votre secteur" fed to the model was French news — for a baker
+// in Abidjan or a coach in Dakar. Grounding posts in the wrong country's news
+// quietly undermines the one thing that makes the generated content specific.
+//
+// Set RESEARCH_NEWS_REGION to your market's ISO country code (CI, SN, BJ, TG,
+// BF, ML, CM, FR…) and RESEARCH_NEWS_LANG to its language.
+function newsRegion(): string {
+  return (Deno.env.get("RESEARCH_NEWS_REGION") || "CI").trim().toUpperCase();
+}
+
+function newsLang(): string {
+  return (Deno.env.get("RESEARCH_NEWS_LANG") || "fr").trim().toLowerCase();
+}
+
 // Google News RSS: officially provided by Google, no auth, fresh news
 // filtered by language/region. Best free source for sector trends.
 export async function googleNewsRssSearch(
   query: string,
-  lang = "fr",
-  region = "FR",
+  lang = newsLang(),
+  region = newsRegion(),
 ): Promise<WebResult[]> {
   try {
     const url = new URL("https://news.google.com/rss/search");
@@ -104,7 +122,7 @@ export async function googleNewsRssSearch(
 
 // Wikipedia REST API: free, no key, reliable from any IP including
 // datacenter IPs (unlike DuckDuckGo). Great foundational context.
-export async function wikipediaSearch(query: string, lang = "fr"): Promise<WebResult[]> {
+export async function wikipediaSearch(query: string, lang = newsLang()): Promise<WebResult[]> {
   try {
     const searchUrl = new URL(`https://${lang}.wikipedia.org/w/api.php`);
     searchUrl.searchParams.set("action", "opensearch");
@@ -273,7 +291,7 @@ export function extractKeywords(text: string, max = 6): string[] {
   const tokens = text
     .toLowerCase()
     .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "") // strip accents for stopword match
+    .replace(/[\u0300-\u036f]/g, "") // strip accents for stopword match
     .replace(/[^a-z0-9àâäéèêëîïôöùûüç \-]/gi, " ")
     .split(/\s+/)
     .filter((t) => t.length >= 3 && !FR_STOPWORDS.has(t));
