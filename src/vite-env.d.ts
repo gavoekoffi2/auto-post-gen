@@ -11,6 +11,10 @@ interface ImportMetaEnv {
   readonly VITE_SUPABASE_PROJECT_ID?: string;
   /** Public support address shown on the contact and legal pages. */
   readonly VITE_SUPPORT_EMAIL?: string;
+  /** Footer social links. Only https URLs you actually own; empty = hidden. */
+  readonly VITE_SOCIAL_TWITTER?: string;
+  readonly VITE_SOCIAL_LINKEDIN?: string;
+  readonly VITE_SOCIAL_INSTAGRAM?: string;
 }
 
 interface ImportMeta {

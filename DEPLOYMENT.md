@@ -74,7 +74,7 @@ Configure these in the Supabase dashboard, sending the header
 
 | Cadence | Endpoint | What it does |
 | --- | --- | --- |
-| Mondays, 06:00 UTC | `POST /functions/v1/auto-generate-weekly` | For every profile with `auto_publish=true`, generates the weekly batch. Posts are inserted as `validated`. |
+| Daily, 06:00 UTC | `POST /functions/v1/auto-generate-weekly` | For every profile with `auto_publish=true`, tops the account up to its plan's weekly post count over the next 7 days. Posts are inserted as `validated`. Idempotent, and it stops cleanly when it runs out of runtime — so run it **daily**, not weekly: an account deferred because the batch was large is served the next day instead of waiting a week. |
 | Mondays, 08:00 UTC | `POST /functions/v1/send-validation-email` | Emails any user with `pending` posts so they can validate them. |
 | Every 15 minutes | `POST /functions/v1/publish-post` (no body) | Publishes any `validated` post whose `scheduled_for` is in the past. |
 | Every 15–30 minutes | `POST /functions/v1/sync-comments` (no body) | Pulls new comments on published posts into the inbox and (if the user's plan includes it) auto-replies with the AI. |

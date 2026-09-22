@@ -9,3 +9,17 @@ export const SUPPORT_EMAIL =
   import.meta.env.VITE_SUPPORT_EMAIL?.trim() || "contact@prosocialai.com";
 
 export const APP_NAME = "Pro Social AI";
+
+/**
+ * Public social profiles linked from the footer, configurable per deployment.
+ *
+ * These were hardcoded to `prosocialai` handles. A footer link to a profile
+ * that does not exist sends a prospective customer to a 404 on the very page
+ * meant to build trust — so an entry is rendered only when it is configured.
+ * Set the ones you actually own and leave the rest empty.
+ */
+export const SOCIAL_LINKS: Array<{ label: string; url: string }> = [
+  { label: "Twitter", url: import.meta.env.VITE_SOCIAL_TWITTER?.trim() || "" },
+  { label: "LinkedIn", url: import.meta.env.VITE_SOCIAL_LINKEDIN?.trim() || "" },
+  { label: "Instagram", url: import.meta.env.VITE_SOCIAL_INSTAGRAM?.trim() || "" },
+].filter((link) => link.url.startsWith("https://"));

@@ -36,3 +36,21 @@ test('value posts do not promote the company, promo posts carry a clear CTA', ()
   assert.match(source, /OBJECTIF DE CE POST: présenter ce que propose/);
   assert.match(source, /appel à l'action clair/);
 });
+
+test('the run is bounded and reports what it could not reach', () => {
+  // Each post costs an AI call. Past enough accounts the edge runtime kills
+  // the function mid-batch, and the accounts at the end of the list silently
+  // get nothing that week with nothing in the response to say so.
+  assert.match(source, /const runDeadline = Date\.now\(\)/);
+  assert.match(source, /if \(Date\.now\(\) > runDeadline\)/);
+  assert.match(source, /deferred \+= 1/);
+  assert.match(source, /JSON\.stringify\(\{ success: true, results, deferred \}\)/);
+});
+
+test('the weekly volume is capped by the plan, not by what the client asked for', () => {
+  // post_frequency is written by the browser; it is a request, not an
+  // entitlement. Without the clamp a Starter account received the
+  // Enterprise volume just by picking a bigger number.
+  assert.match(source, /planLimits\(profile\.plan\)/);
+  assert.match(source, /limits\.postsPerWeek/);
+});

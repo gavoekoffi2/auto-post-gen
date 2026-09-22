@@ -164,7 +164,10 @@ x-cron-secret: <CRON_SECRET>
 
 Cadences recommandées :
 
-- `auto-generate-weekly` : lundi 06:00 UTC
+- `auto-generate-weekly` : **tous les jours** 06:00 UTC (la fonction est
+  idempotente : elle complète chaque compte jusqu'au quota hebdomadaire de son
+  forfait. Une cadence quotidienne rattrape les comptes reportés quand un lot
+  dépasse le temps d'exécution, au lieu de les faire attendre une semaine)
 - `send-validation-email` : lundi 08:00 UTC
 - `publish-post` : toutes les 15 minutes
 - `sync-comments` : toutes les 15–30 minutes si commentaires activés

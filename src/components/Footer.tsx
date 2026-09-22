@@ -1,4 +1,5 @@
 import { Sparkles } from "lucide-react";
+import { SOCIAL_LINKS } from "@/lib/appConfig";
 import { Link } from "react-router-dom";
 
 export const Footer = () => {
@@ -69,32 +70,21 @@ export const Footer = () => {
           <p className="text-sm text-muted-foreground">
             © {new Date().getFullYear()} Pro Social AI. Tous droits réservés.
           </p>
-          <div className="flex gap-4">
-            <a 
-              href="https://twitter.com/prosocialai" 
-              target="_blank" 
-              rel="noopener noreferrer" 
-              className="text-muted-foreground hover:text-primary transition-colors"
-            >
-              Twitter
-            </a>
-            <a 
-              href="https://linkedin.com/company/prosocialai" 
-              target="_blank" 
-              rel="noopener noreferrer" 
-              className="text-muted-foreground hover:text-primary transition-colors"
-            >
-              LinkedIn
-            </a>
-            <a 
-              href="https://instagram.com/prosocialai" 
-              target="_blank" 
-              rel="noopener noreferrer" 
-              className="text-muted-foreground hover:text-primary transition-colors"
-            >
-              Instagram
-            </a>
-          </div>
+          {SOCIAL_LINKS.length > 0 && (
+            <div className="flex gap-4">
+              {SOCIAL_LINKS.map(({ label, url }) => (
+                <a
+                  key={label}
+                  href={url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-muted-foreground hover:text-primary transition-colors"
+                >
+                  {label}
+                </a>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </footer>

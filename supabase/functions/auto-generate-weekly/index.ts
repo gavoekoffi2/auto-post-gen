@@ -113,11 +113,21 @@ serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Wall-clock budget for the whole run. Post creation is never skipped, but
+    // Wall-clock budget for poster work. Post creation is never skipped, but
     // once this passes we stop kicking (blocking) poster jobs so the image work
     // can't push the cron past the edge runtime limit; those posts just go out
     // text-only. publish-post still publishes everything on schedule.
     const posterDeadline = Date.now() + 90_000;
+
+    // Budget for the WHOLE run. Each post costs an AI call, so enough accounts
+    // will run past the edge runtime limit and the function is killed
+    // mid-batch — silently leaving the last accounts with no posts that week,
+    // with nothing in the response to say so. We stop cleanly instead and
+    // report what is left. Resuming is safe because generation is idempotent:
+    // it tops a profile up to its plan's weekly count over the next 7 days, so
+    // an already-served profile is skipped by a cheap query with no AI call.
+    // Run this cron DAILY rather than weekly and any backlog clears next day.
+    const runDeadline = Date.now() + 110_000;
 
     const { data: profiles, error: profilesError } = await supabase
       .from("profiles")
@@ -129,8 +139,13 @@ serve(async (req) => {
     console.log(`Found ${profiles?.length || 0} profile(s) with auto_publish enabled`);
 
     const results: any[] = [];
+    let deferred = 0;
 
     for (const profile of profiles || []) {
+      if (Date.now() > runDeadline) {
+        deferred += 1;
+        continue;
+      }
       try {
         // The weekly volume the customer PAID for. post_frequency is written
         // by the client, so it is a request, not an entitlement: a Starter
@@ -467,8 +482,12 @@ Génère uniquement le texte du post, sans titre ni explication.`;
       }
     }
 
+    if (deferred > 0) {
+      console.warn(`Run budget reached: ${deferred} profile(s) deferred to the next run.`);
+    }
+
     return new Response(
-      JSON.stringify({ success: true, results }),
+      JSON.stringify({ success: true, results, deferred }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (error) {
