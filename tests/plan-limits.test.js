@@ -99,3 +99,19 @@ test("the onboarding frequency choices come from the plan table", () => {
   assert.match(onboarding, /Object\.values\(PLAN_LIMITS\)/);
   assert.doesNotMatch(onboarding, /2 posts\/semaine \(Starter\)/);
 });
+
+test("the network limit is visible before it is hit, not only when refused", () => {
+  const status = readFileSync("supabase/functions/zernio-status/index.ts", "utf8");
+  const ui = readFileSync("src/components/SocialMediaConnect.tsx", "utf8");
+
+  // Discovering your plan's ceiling only when a connection is refused reads
+  // like a bug rather than a limit.
+  assert.match(status, /planLimits\(planRow\?\.plan\)/);
+  assert.match(status, /maxAccounts: limits\.socialAccounts/);
+  assert.match(ui, /maxAccounts/);
+  assert.match(ui, /réseau/);
+
+  // Already-connected platforms stay clickable (re-authorising is a repair,
+  // not a new account); only new ones are blocked at the ceiling.
+  assert.match(ui, /disabled=\{zernioLoading \|\| \(atLimit && !connected\)\}/);
+});

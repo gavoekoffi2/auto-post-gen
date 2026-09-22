@@ -4,6 +4,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { buildCorsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { getSupabaseAdmin, getUserIdFromAuthHeader } from "../_shared/oauth.ts";
 import { getZernioKey, zernioListAccounts } from "../_shared/zernio.ts";
+import { planLimits } from "../_shared/plans.ts";
 
 serve(async (req) => {
   const cors = buildCorsHeaders(req.headers.get("origin"));
@@ -21,15 +22,23 @@ serve(async (req) => {
 
   try {
     const admin = getSupabaseAdmin();
-    const { data: existing } = await admin
-      .from("social_connections")
-      .select("profile_key")
-      .eq("user_id", userId)
-      .eq("provider", "zernio")
-      .maybeSingle();
+    const [{ data: existing }, { data: planRow }] = await Promise.all([
+      admin
+        .from("social_connections")
+        .select("profile_key")
+        .eq("user_id", userId)
+        .eq("provider", "zernio")
+        .maybeSingle(),
+      admin.from("profiles").select("plan").eq("id", userId).maybeSingle(),
+    ]);
+    // Sent so the UI can show "2 / 2 réseaux" up front. Otherwise the user
+    // only discovers their plan's ceiling at the moment a connection is
+    // refused, which reads like a bug rather than a limit.
+    const limits = planLimits(planRow?.plan);
+    const planInfo = { plan: limits.id, planLabel: limits.label, maxAccounts: limits.socialAccounts };
 
     if (!existing) {
-      return jsonResponse({ provisioned: false, platforms: [] }, { cors });
+      return jsonResponse({ provisioned: false, platforms: [], ...planInfo }, { cors });
     }
 
     const accounts = await zernioListAccounts(existing.profile_key);
@@ -40,6 +49,7 @@ serve(async (req) => {
     return jsonResponse(
       {
         provisioned: true,
+        ...planInfo,
         platforms,
         accounts: active.map((a) => ({
           id: a._id,

@@ -36,6 +36,9 @@ type ZernioStatus = {
   platforms: string[];
   accounts?: ZernioAccount[];
   error?: string;
+  /** The plan's ceiling, so the limit is visible before it is hit. */
+  planLabel?: string;
+  maxAccounts?: number;
 };
 
 const ZERNIO_PLATFORMS = [
@@ -66,6 +69,10 @@ export function SocialMediaConnect({
   const [zernioLoading, setZernioLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
+  const connectedCount = zernio?.platforms?.length ?? 0;
+  const atLimit =
+    typeof zernio?.maxAccounts === "number" && connectedCount >= zernio.maxAccounts;
+
   const refreshZernio = async () => {
     setRefreshing(true);
     try {
@@ -77,6 +84,8 @@ export function SocialMediaConnect({
         platforms: (data?.platforms || []).map(normalisePlatform),
         accounts: data?.accounts || [],
         error: data?.error,
+        planLabel: data?.planLabel,
+        maxAccounts: data?.maxAccounts,
       });
       onUpdate();
     } catch (err) {
@@ -187,6 +196,21 @@ export function SocialMediaConnect({
                 Zernio centralise l'autorisation et la publication vers les réseaux sociaux. Cliquez sur un réseau pour connecter le compte correspondant.
               </p>
 
+              {typeof zernio?.maxAccounts === "number" && (
+                <p className="text-xs mt-2">
+                  <span className={atLimit ? "text-destructive font-medium" : "text-muted-foreground"}>
+                    {connectedCount} / {zernio.maxAccounts} réseau
+                    {zernio.maxAccounts > 1 ? "x" : ""} connecté{connectedCount > 1 ? "s" : ""}
+                    {zernio.planLabel ? ` · forfait ${zernio.planLabel}` : ""}
+                  </span>
+                  {atLimit && (
+                    <span className="text-destructive">
+                      {" "}— déconnectez un réseau ou changez de forfait pour en ajouter un autre.
+                    </span>
+                  )}
+                </p>
+              )}
+
               {zernio?.error && (
                 <p className="text-xs text-destructive mt-2">Zernio : {zernio.error}</p>
               )}
@@ -199,7 +223,7 @@ export function SocialMediaConnect({
                       key={platform.id}
                       size="sm"
                       variant="outline"
-                      disabled={zernioLoading}
+                      disabled={zernioLoading || (atLimit && !connected)}
                       onClick={() => handleZernioConnect(platform.id)}
                       className="glass-card"
                     >
