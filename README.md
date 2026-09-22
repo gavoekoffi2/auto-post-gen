@@ -168,6 +168,10 @@ Cadences recommandées :
 - `send-validation-email` : lundi 08:00 UTC
 - `publish-post` : toutes les 15 minutes
 - `sync-comments` : toutes les 15–30 minutes si commentaires activés
+- `health-alert` : toutes les heures — **le plus important à configurer** :
+  c'est lui qui vous prévient par email quand une clé expire, que les crédits
+  sont épuisés ou qu'un cron a cessé de tourner. Sans lui, vous l'apprenez
+  par un client mécontent.
 
 ## État actuel vérifié
 

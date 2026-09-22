@@ -46,7 +46,8 @@ environment variables in the Supabase dashboard before deploying.
 | `ZERNIO_API_URL` *(optional)* | `zernio-*`, `publish-post` | Override the Zernio base URL. Defaults to `https://zernio.com/api/v1`. |
 | `SUPABASE_URL` | all server functions | (auto-provided) |
 | `SUPABASE_SERVICE_ROLE_KEY` | all server functions | (auto-provided) |
-| `CRON_SECRET` | `auto-generate-weekly`, `send-validation-email`, `publish-post` (cron) | Shared secret between Supabase Scheduler and the functions. |
+| `CRON_SECRET` | `auto-generate-weekly`, `send-validation-email`, `publish-post` (cron), `health-alert` | Shared secret between Supabase Scheduler and the functions. |
+| `HEALTH_ALERT_TO` *(optional)* | `health-alert` | Where the "something is broken" alert is emailed. Defaults to `CONTACT_TO`, then to the `RESEND_FROM` address. |
 | `ALLOWED_ORIGINS` | all functions | Comma-separated list of origins (e.g. `https://app.example.com`). **Fails closed**: when unset, no `Access-Control-Allow-Origin` is emitted and browsers block cross-origin calls. Set `*` explicitly only for local development. |
 | `RESEND_API_KEY` | `send-validation-email` | Email delivery |
 | `RESEND_FROM` | `send-validation-email` | Verified sender (`Pro Social AI <no-reply@yourdomain.com>`) |
@@ -76,7 +77,8 @@ Configure these in the Supabase dashboard, sending the header
 | Mondays, 06:00 UTC | `POST /functions/v1/auto-generate-weekly` | For every profile with `auto_publish=true`, generates the weekly batch. Posts are inserted as `validated`. |
 | Mondays, 08:00 UTC | `POST /functions/v1/send-validation-email` | Emails any user with `pending` posts so they can validate them. |
 | Every 15 minutes | `POST /functions/v1/publish-post` (no body) | Publishes any `validated` post whose `scheduled_for` is in the past. |
-| Every 15–30 minutes | `POST /functions/v1/sync-comments` (no body) | Pulls new comments on published posts into the inbox and (if the user enabled it) auto-replies with the AI. Requires a comment-capable provider (Ayrshare Premium). |
+| Every 15–30 minutes | `POST /functions/v1/sync-comments` (no body) | Pulls new comments on published posts into the inbox and (if the user's plan includes it) auto-replies with the AI. |
+| **Hourly** | `POST /functions/v1/health-alert` (no body) | **Configure this one first.** Runs the full platform diagnosis and emails you the moment something is genuinely broken — an expired key, exhausted credits, a cron that stopped firing, posts past their publish time. Silent when everything is fine. Without it you find out from a customer. |
 
 ## 3. Social network publishing — the truth
 

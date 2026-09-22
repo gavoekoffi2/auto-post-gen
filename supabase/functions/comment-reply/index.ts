@@ -8,6 +8,10 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { buildCorsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { ayrsharePostReply, draftReply, zernioReply } from "../_shared/engagement.ts";
 
+// AI drafts per user per hour. Generous for real inbox work (a busy account
+// answers a few dozen comments a day), low enough to bound the cost of abuse.
+const DRAFT_RATE_LIMIT_MAX = 40;
+
 serve(async (req) => {
   const cors = buildCorsHeaders(req.headers.get("origin"));
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
@@ -62,6 +66,27 @@ serve(async (req) => {
 
   try {
     if (body.mode === "draft" || !body.mode) {
+      // Drafting calls the paid text model. Every other AI entry point is
+      // quota'd; this one was not, so a single account could mint unlimited
+      // AI calls just by clicking "suggérer une réponse". Same atomic
+      // reservation as generate-content, so parallel requests cannot slip
+      // past the count.
+      const { data: allowed, error: quotaError } = await supabase.rpc("consume_generation_quota", {
+        p_user: userId,
+        p_function: "comment-reply",
+        p_max: DRAFT_RATE_LIMIT_MAX,
+        p_window_seconds: 3600,
+      });
+      if (!quotaError && allowed === false) {
+        return jsonResponse(
+          {
+            error: `Limite de ${DRAFT_RATE_LIMIT_MAX} suggestions IA par heure atteinte. Réessayez plus tard.`,
+            code: "rate_limited",
+          },
+          { status: 429, cors },
+        );
+      }
+
       const reply = await draftReply({
         comment: comment.message || "",
         postContent: post?.content || null,

@@ -240,7 +240,7 @@ test('no edge function is deployed without a product path to it', () => {
   }
 
   // Each remaining function is either called by the frontend or driven by cron.
-  const cronOnly = new Set(['auto-generate-weekly', 'send-validation-email']);
+  const cronOnly = new Set(['auto-generate-weekly', 'send-validation-email', 'health-alert']);
   const frontendSources = readdirSync(dir('src/pages'))
     .map((f) => `src/pages/${f}`)
     .concat(readdirSync(dir('src/components')).map((f) => `src/components/${f}`))

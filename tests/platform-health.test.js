@@ -46,3 +46,23 @@ test("the health action is exposed by admin-api and rendered in the control plan
   assert.match(adminApi, /runHealthChecks\(admin\)/);
   assert.match(adminUi, /action: "health"/);
 });
+
+test("the diagnosis is also pushed, not only displayed", () => {
+  const alert = readFileSync("supabase/functions/health-alert/index.ts", "utf8");
+  const config = readFileSync("supabase/config.toml", "utf8");
+
+  // Showing a failure in /admin only helps someone who opens /admin.
+  assert.match(alert, /runHealthChecks\(admin\)/);
+  assert.match(alert, /api\.resend\.com\/emails/);
+
+  // Only real failures page the operator: alerting on warnings trains people
+  // to ignore the alerts that matter.
+  assert.match(alert, /filter\(\(c\) => c\.status === "error"\)/);
+  assert.match(alert, /if \(failing\.length === 0\)/);
+
+  // This endpoint reveals which secrets are configured, so it must fail closed.
+  assert.match(alert, /CRON_SECRET/);
+  assert.match(alert, /refusing to run/);
+  assert.match(alert, /provided !== expectedSecret/);
+  assert.match(config, /\[functions\.health-alert\]/);
+});

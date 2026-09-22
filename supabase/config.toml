@@ -36,6 +36,12 @@ verify_jwt = false
 [functions.send-validation-email]
 verify_jwt = false
 
+# health-alert is cron-only: it runs the platform diagnosis and emails the
+# operator when something is actually broken. Protected by CRON_SECRET — it
+# reports which secrets are configured, so it must never answer anonymously.
+[functions.health-alert]
+verify_jwt = false
+
 # validate-post is hit from the email link without a session token.
 # Token validation is done in-function (single-use + expiry + IP rate limit).
 [functions.validate-post]

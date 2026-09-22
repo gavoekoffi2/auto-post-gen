@@ -43,6 +43,7 @@ type UserProfile = {
   description?: string | null;
   company_name?: string | null;
   platforms?: string[] | null;
+  auto_publish?: boolean | null;
   [key: string]: unknown;
 };
 
@@ -790,6 +791,27 @@ export default function Dashboard() {
               >
                 <Share2 className="w-4 h-4 mr-2" />
                 Connecter un réseau
+              </Button>
+            </div>
+          </Card>
+        )}
+
+        {/* The product's core promise is automatic weekly posting, but
+            auto_publish defaults to OFF and the only switch lives deep in the
+            profile page. A first user could conclude the automation simply
+            does not work. */}
+        {userProfile && userProfile.auto_publish === false && (
+          <Card className="glass-card p-4 mb-6 border-secondary/40">
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <div className="flex items-center gap-3">
+                <CalendarIcon className="w-5 h-5 text-secondary shrink-0" />
+                <p className="text-sm">
+                  La génération automatique hebdomadaire est désactivée. Activez-la pour
+                  recevoir vos posts chaque semaine sans y penser.
+                </p>
+              </div>
+              <Button size="sm" variant="outline" className="glass-card" onClick={handleProfile}>
+                Activer dans le profil
               </Button>
             </div>
           </Card>
