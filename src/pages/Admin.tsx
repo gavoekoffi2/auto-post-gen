@@ -44,6 +44,8 @@ type Health = {
 type Overview = {
   actor: AdminUser;
   stats: { users: number; active: number; blocked: number; admins: number; posts: number; published: number; generations: number; connections: number };
+  /** The headline totals are exact; the per-account columns come from a capped sample. */
+  perUserTruncated?: boolean;
   users: AdminUser[];
 };
 
@@ -231,7 +233,16 @@ export default function Admin() {
 
         <Card className="overflow-hidden">
           <div className="flex flex-col gap-4 border-b p-5 sm:flex-row sm:items-center sm:justify-between">
-            <div><h2 className="font-semibold text-xl">Gestion des comptes</h2><p className="text-sm text-muted-foreground">{users.length} compte(s) affiché(s)</p></div>
+            <div>
+              <h2 className="font-semibold text-xl">Gestion des comptes</h2>
+              <p className="text-sm text-muted-foreground">{users.length} compte(s) affiché(s)</p>
+              {data?.perUserTruncated && (
+                <p className="mt-1 text-xs text-amber-600">
+                  Les totaux en haut de page sont exacts ; les compteurs par compte
+                  ci-dessous portent sur les 5 000 lignes les plus récentes.
+                </p>
+              )}
+            </div>
             <div className="relative w-full sm:max-w-sm"><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input className="pl-9" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Email, entreprise, secteur…" /></div>
           </div>
           {loading ? <div className="p-12 text-center text-muted-foreground animate-pulse">Chargement des comptes…</div> : (

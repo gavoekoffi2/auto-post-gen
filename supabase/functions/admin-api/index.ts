@@ -98,15 +98,41 @@ serve(async (req) => {
       if (listError) throw listError;
       const users = authList.users;
       const ids = users.map((u) => u.id);
-      const [profilesResult, postsResult, usageResult, connectionsResult] = await Promise.all([
+      // Per-user aggregation needs the rows, but PostgREST caps how many it
+      // returns. Fetching rows and calling .length would therefore report a
+      // number that quietly stops growing — an admin dashboard that lies is
+      // worse than one that says it is truncated. The HEADLINE totals below
+      // come from exact COUNT queries instead, which are cheap and correct
+      // whatever the row cap is.
+      const ROW_CAP = 5000;
+      const [
+        profilesResult,
+        postsResult,
+        usageResult,
+        connectionsResult,
+        postsTotal,
+        publishedTotal,
+        usageTotal,
+        connectionsTotal,
+      ] = await Promise.all([
         ids.length ? admin.from("profiles").select("id,email,company_name,sector,plan,created_at").in("id", ids) : Promise.resolve({ data: [], error: null }),
-        admin.from("posts").select("user_id,status,created_at"),
-        admin.from("generation_usage").select("user_id,status,created_at"),
-        admin.from("social_connections").select("user_id,platform,provider,created_at"),
+        admin.from("posts").select("user_id,status").order("created_at", { ascending: false }).limit(ROW_CAP),
+        admin.from("generation_usage").select("user_id").order("created_at", { ascending: false }).limit(ROW_CAP),
+        admin.from("social_connections").select("user_id").order("created_at", { ascending: false }).limit(ROW_CAP),
+        admin.from("posts").select("id", { count: "exact", head: true }),
+        admin.from("posts").select("id", { count: "exact", head: true }).eq("status", "published"),
+        admin.from("generation_usage").select("id", { count: "exact", head: true }),
+        admin.from("social_connections").select("id", { count: "exact", head: true }),
       ]);
       for (const result of [profilesResult, postsResult, usageResult, connectionsResult]) {
         if (result.error) throw result.error;
       }
+      // True once a per-user column is computed from a truncated sample, so
+      // the UI can say so rather than present it as complete.
+      const perUserTruncated =
+        (postsResult.data || []).length >= ROW_CAP ||
+        (usageResult.data || []).length >= ROW_CAP ||
+        (connectionsResult.data || []).length >= ROW_CAP;
       const profiles = new Map((profilesResult.data || []).map((p: Record<string, unknown>) => [p.id, p]));
       const postsByUser = new Map<string, { total: number; published: number }>();
       for (const post of postsResult.data || []) {
@@ -133,11 +159,12 @@ serve(async (req) => {
           active: enriched.filter((u) => !u.blocked).length,
           blocked: enriched.filter((u) => u.blocked).length,
           admins: enriched.filter((u) => u.role === "admin" || u.role === "super_admin").length,
-          posts: (postsResult.data || []).length,
-          published: (postsResult.data || []).filter((p) => p.status === "published").length,
-          generations: (usageResult.data || []).length,
-          connections: (connectionsResult.data || []).length,
+          posts: postsTotal.count ?? (postsResult.data || []).length,
+          published: publishedTotal.count ?? 0,
+          generations: usageTotal.count ?? (usageResult.data || []).length,
+          connections: connectionsTotal.count ?? (connectionsResult.data || []).length,
         },
+        perUserTruncated,
         users: enriched,
       }, { cors: corsHeaders });
     }
