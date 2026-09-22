@@ -31,8 +31,8 @@ export const CTASection = () => {
           
           {/* Subtitle */}
           <p className="text-lg text-muted-foreground max-w-xl mx-auto mb-10">
-            Rejoignez plus de 10 000 créateurs et entreprises qui utilisent Pro Social AI 
-            pour dominer les réseaux sociaux sans effort.
+            Créez votre compte, décrivez votre activité, et recevez vos premiers
+            posts générés pour vous — sans carte bancaire.
           </p>
           
           {/* CTA buttons */}

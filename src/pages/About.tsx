@@ -1,4 +1,5 @@
 import { Navbar } from "@/components/Navbar";
+import { PLATFORM_STATS } from "@/lib/testimonials";
 import { Footer } from "@/components/Footer";
 import { Card } from "@/components/ui/card";
 import { Sparkles, Target, Users, Zap } from "lucide-react";
@@ -72,28 +73,23 @@ export default function About() {
             </Card>
           </div>
 
-          {/* Stats */}
-          <div className="glass-card p-8 md:p-12 rounded-2xl text-center">
-            <h2 className="text-2xl font-bold mb-8">Pro Social AI en chiffres</h2>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
-              <div>
-                <p className="text-4xl font-bold gradient-text">500+</p>
-                <p className="text-muted-foreground">Utilisateurs actifs</p>
-              </div>
-              <div>
-                <p className="text-4xl font-bold gradient-text">10K+</p>
-                <p className="text-muted-foreground">Posts générés</p>
-              </div>
-              <div>
-                <p className="text-4xl font-bold gradient-text">5</p>
-                <p className="text-muted-foreground">Réseaux supportés</p>
-              </div>
-              <div>
-                <p className="text-4xl font-bold gradient-text">98%</p>
-                <p className="text-muted-foreground">Satisfaction client</p>
+          {/* Figures we can evidence, from src/lib/testimonials.ts — which
+              ships empty. This block used to state active users, posts
+              generated and a satisfaction rate, all invented, for a product
+              that had not yet had its first user. */}
+          {PLATFORM_STATS.length > 0 && (
+            <div className="glass-card p-8 md:p-12 rounded-2xl text-center">
+              <h2 className="text-2xl font-bold mb-8">Pro Social AI en chiffres</h2>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
+                {PLATFORM_STATS.map((stat) => (
+                  <div key={stat.label}>
+                    <p className="text-4xl font-bold gradient-text">{stat.value}</p>
+                    <p className="text-muted-foreground">{stat.label}</p>
+                  </div>
+                ))}
               </div>
             </div>
-          </div>
+          )}
         </div>
       </main>
 

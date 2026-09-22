@@ -1,37 +1,12 @@
 import { Star, Quote } from "lucide-react";
+import { PLATFORM_STATS, TESTIMONIALS } from "@/lib/testimonials";
 
-const testimonials = [
-  {
-    name: "Marie Dubois",
-    role: "Fondatrice, BeautyTech",
-    avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&h=100&fit=crop&crop=face",
-    content: "Pro Social AI a transformé ma façon de gérer mes réseaux. Je gagne plus de 15h par semaine que je peux consacrer à mon business. L'IA génère du contenu qui reflète parfaitement ma marque.",
-    rating: 5
-  },
-  {
-    name: "Thomas Martin",
-    role: "CMO, GrowthStartup",
-    avatar: "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100&h=100&fit=crop&crop=face",
-    content: "L'automatisation est impressionnante. On valide par email et le contenu est publié automatiquement. Notre engagement a augmenté de 300% en 3 mois.",
-    rating: 5
-  },
-  {
-    name: "Sophie Chen",
-    role: "Influenceuse lifestyle",
-    avatar: "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=100&h=100&fit=crop&crop=face",
-    content: "Je collabore avec plusieurs marques et Pro Social AI me permet de gérer tous mes comptes sans effort. Le gain de temps est incroyable !",
-    rating: 5
-  },
-  {
-    name: "Alexandre Petit",
-    role: "CEO, AgenceDigitale",
-    avatar: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100&h=100&fit=crop&crop=face",
-    content: "On utilise Pro Social AI pour tous nos clients. La qualité du contenu généré et l'automatisation nous ont permis de scaler notre activité x3.",
-    rating: 5
-  }
-];
+
 
 export const TestimonialsNew = () => {
+  // Nothing true to show yet — render nothing rather than invent customers.
+  if (TESTIMONIALS.length === 0 && PLATFORM_STATS.length === 0) return null;
+
   return (
     <section className="py-24 relative overflow-hidden">
       {/* Background */}
@@ -51,14 +26,13 @@ export const TestimonialsNew = () => {
           </h2>
           
           <p className="text-lg text-muted-foreground">
-            Rejoignez des milliers de créateurs et entreprises qui ont transformé 
-            leur présence sur les réseaux sociaux.
+            Les retours des entreprises qui utilisent Pro Social AI au quotidien.
           </p>
         </div>
         
         {/* Testimonials grid */}
         <div className="grid md:grid-cols-2 gap-6 max-w-5xl mx-auto">
-          {testimonials.map((testimonial, index) => (
+          {TESTIMONIALS.map((testimonial, index) => (
             <div
               key={index}
               className="p-8 rounded-3xl glass-card-strong hover-lift opacity-0 animate-fade-in-up"
@@ -81,11 +55,17 @@ export const TestimonialsNew = () => {
               
               {/* Author */}
               <div className="flex items-center gap-4">
-                <img
-                  src={testimonial.avatar}
-                  alt={testimonial.name}
-                  className="w-14 h-14 rounded-full object-cover ring-2 ring-primary/20"
-                />
+                {testimonial.avatar ? (
+                  <img
+                    src={testimonial.avatar}
+                    alt={testimonial.name}
+                    className="w-14 h-14 rounded-full object-cover ring-2 ring-primary/20"
+                  />
+                ) : (
+                  <div className="w-14 h-14 rounded-full bg-gradient-to-br from-primary to-secondary ring-2 ring-primary/20 flex items-center justify-center text-white font-semibold">
+                    {testimonial.name.slice(0, 2).toUpperCase()}
+                  </div>
+                )}
                 <div>
                   <h4 className="font-semibold text-foreground">{testimonial.name}</h4>
                   <p className="text-sm text-muted-foreground">{testimonial.role}</p>
@@ -97,12 +77,7 @@ export const TestimonialsNew = () => {
         
         {/* Stats */}
         <div className="mt-20 grid grid-cols-2 md:grid-cols-4 gap-8 max-w-4xl mx-auto">
-          {[
-            { value: "10K+", label: "Utilisateurs actifs" },
-            { value: "500K+", label: "Posts publiés" },
-            { value: "98%", label: "Satisfaction client" },
-            { value: "24/7", label: "Support disponible" }
-          ].map((stat, index) => (
+          {PLATFORM_STATS.map((stat, index) => (
             <div 
               key={index} 
               className="text-center p-6 rounded-2xl glass-card opacity-0 animate-fade-in-up"
