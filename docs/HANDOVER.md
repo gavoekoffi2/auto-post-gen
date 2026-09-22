@@ -168,18 +168,119 @@ Notes mineures (acceptées, pas des trous) :
 
 ---
 
+## 4 bis. Deuxième passe d'audit (22/09/2026)
+
+Audit complet du code **avant toute modification**, puis correction. Les
+défauts ci-dessous étaient tous présents en production.
+
+### Bloquants pour un premier utilisateur
+
+| Défaut | Pourquoi c'était grave |
+|---|---|
+| L'onboarding pouvait être une **impasse définitive** : l'étape 3 refusait d'avancer tant que l'analyse IA des cibles n'aboutissait pas | Clé OpenRouter absente, quota épuisé ou panne du fournisseur = un nouveau compte n'atteignait **jamais** le tableau de bord. Analyse désormais best-effort, saisie manuelle en repli. |
+| La **programmation corrompait les heures** | Le tableau de bord lisait la date en UTC et l'heure en local, puis sauvegardait les deux collés sans fuseau — que Postgres relit comme de l'UTC. Chaque post ré-enregistré dérivait ; près de minuit il changeait de jour. Tout passe par `src/lib/datetime.ts`. |
+| Du **texte générique présenté comme de l'IA** | `generate-content` répond 200 avec un post pré-écrit quand le fournisseur est injoignable ; l'écran affichait quand même « Post enrichi par recherche web généré ». |
+| Erreurs illisibles partout | « Edge Function returned a non-2xx status code » au lieu de la vraie cause. `src/lib/functionError.ts` extrait le message réel. |
+
+### Sécurité
+
+| Défaut | Impact |
+|---|---|
+| **Fuite de la clé Graphiste GPT** | Les deux boucles de polling ajoutaient le `statusUrl` reçu à leur liste d'URL puis le requêtaient avec `Authorization: Bearer <GRAPHISTE_GPT_API_KEY>`. Cette valeur est choisie par l'attaquant de deux façons : `generate-image` la lit dans le corps de la requête, et `publish-post` lit `posts.image_status_url`, colonne que RLS laisse écrire à son propriétaire. N'importe quel compte connecté pouvait donc pointer le polling vers son serveur et récupérer la clé payante de l'opérateur. Corrigé par `safeGraphisteStatusUrl` (même origine, https). |
+| **Prise de contrôle du compte propriétaire** | `admin-api` laissait tout super-admin réinitialiser le mot de passe du propriétaire, compte pourtant protégé contre la rétrogradation, le blocage et la suppression. |
+| **10 endpoints publics morts** | `ayrshare-*`, `postiz-*` et les 6 fonctions OAuth directes, injoignables depuis l'app depuis le passage en Zernio-only mais toujours déployées et appelables — les callbacks écrivaient encore des jetons sociaux en base. Supprimées. |
+| Email personnel du fondateur livré dans le bundle JS public | Remplacé par un drapeau `protectedOwner` renvoyé par le serveur. |
+| Téléchargement d'image non borné dans `generate-image` | Passe par le helper anti-SSRF avec plafond de taille. |
+
+### Modèle économique : les forfaits étaient vendus mais **jamais appliqués**
+
+La page tarifs vend 3/7/10 posts par semaine et 2/3/8 réseaux ; la colonne
+`plan` ne conditionnait que l'auto-réponse aux commentaires. Un compte Starter
+pouvait mettre `post_frequency` à 10, connecter autant de réseaux qu'il
+voulait, et consommer le même budget IA forfaitaire que tout le monde.
+
+`supabase/functions/_shared/plans.ts` est désormais la source unique, appliquée
+**côté serveur** : le cron hebdomadaire plafonne au forfait, les quotas
+mensuels texte/affiche viennent du forfait, et `zernio-connect` refuse un
+réseau supplémentaire au-delà du nombre inclus (reconnecter un réseau déjà lié
+reste toujours possible). Le forfait est toujours lu en base avec le rôle
+service — jamais pris dans la requête. `src/lib/plans.ts` en est le miroir pour
+l'interface, et un test échoue si les deux divergent.
+
+### Liens de validation : le TTL ne fonctionnait pas
+
+`posts.validation_token` a une valeur par défaut depuis 20251203, mais
+`validation_token_created_at` n'en a jamais eu : NULL sur chaque post créé
+depuis, et `validate-post` saute le contrôle d'expiration quand c'est NULL.
+L'expiration de 24 h documentée ne s'est donc **jamais** appliquée à un seul
+post réel — ces liens étaient permanents. Corrigé par migration, et la durée de
+vie se compte maintenant depuis l'envoi de l'email (une fenêtre mesurée depuis
+la création pouvait être à moitié écoulée avant que le mail parte).
+
+### Page d'accueil : allégations fabriquées
+
+Quatre témoignages de clients inexistants (noms, entreprises, photos de
+personnes réelles prises sur Unsplash, résultats inventés), « plus de 10 000
+créateurs », 10K+ utilisateurs, 500K+ posts, 98 % de satisfaction — pour un
+produit sans premier utilisateur. Présenter de faux témoignages figure à
+l'annexe I de la directive 2005/29/CE parmi les pratiques déloyales **en toutes
+circonstances**, et les fausses allégations sur la clientèle relèvent de la
+pratique commerciale trompeuse (C. conso. L121-2). Témoignages et chiffres
+viennent désormais de `src/lib/testimonials.ts`, **livré vide** : les sections
+ne s'affichent que s'il y a quelque chose de vrai à y mettre.
+
+### Autres corrections notables
+
+- Le workflow de déploiement n'appliquait que **3 migrations nommées à la
+  main** : toute migration ajoutée depuis n'a jamais été appliquée en
+  production. Remplacé par `scripts/apply-migrations.mjs` (registre en base,
+  liste explicite des migrations déjà live, n'exécute que les nouvelles).
+- **TypeScript n'était jamais vérifié** (`vite build` ne typecheck pas) :
+  3 vraies erreurs dormaient dans `main`. Gate `npm run typecheck` en CI.
+- Politique de mot de passe incohérente (6 à l'inscription, 8 en réglages) —
+  unifiée à 8, appliquée aussi par le service d'auth.
+- Suppression de compte : le nettoyage du stockage listait au plus 1000
+  objets, dans un bucket **public**. Le reste restait téléchargeable après la
+  suppression du compte.
+- Un logo remplacé n'était jamais supprimé : l'ancien fichier restait public
+  indéfiniment et s'accumulait à chaque changement.
+- Le nom d'objet stocké tirait son extension du nom de fichier de
+  l'utilisateur ; il vient maintenant du type MIME vérifié (SVG refusé).
+- Import des commentaires : un `insert` simple faisait échouer **tout le lot**
+  sur un seul doublon, erreur avalée — donc un cron concurrent avec une
+  synchro manuelle n'importait rien, silencieusement.
+- Le tableau de bord admin comptait avec `.length` sur des lignes plafonnées
+  par PostgREST : les totaux cessaient silencieusement d'augmenter.
+- Changement d'email en libre-service (« contactez le support » demandait
+  d'écrire à une adresse qu'on ne peut justement plus atteindre), avec un
+  trigger qui garde `profiles.email` — utilisée pour les emails de validation
+  — synchronisée quelle que soit la façon dont l'adresse change.
+
+### Observabilité : traitée
+
+`/admin` porte un panneau **« État de la plateforme »** et
+`health-alert` (cron horaire) **envoie un email** dès qu'un point est
+réellement bloquant. Voir §5 P1.
+
+---
+
 ## 5. Fragilités connues & feuille de route proposée
 
 ### P0 — avant d'encaisser le moindre franc
 1. **Configurer et prouver `GRAPHISTE_GPT_API_KEY`** (checklist §7, étape 2).
-   C'est LE point qui conditionne la promesse produit.
+   C'est LE point qui conditionne la promesse produit. Le panneau
+   « État de la plateforme » de `/admin` le vérifie désormais en un clic.
 2. **Brancher le paiement Mobile Money** (CinetPay ou PayDunya) : aujourd'hui
    `profiles.plan` est attribué **à la main** en SQL. Les add-ons du
    PRICING.md §4 dépendent de la même brique. Le webhook de paiement doit
    écrire `plan` via service role (le trigger laisse passer le service role).
-3. **Configurer les 4 crons Supabase** (cadences dans DEPLOYMENT.md) — sans
+   **Les limites de chaque forfait sont maintenant réellement appliquées**
+   (§4 bis) : il ne reste que l'encaissement et l'attribution automatique.
+3. **Configurer les 5 crons Supabase** (cadences dans DEPLOYMENT.md) — sans
    eux : pas de posts automatiques, pas d'emails de validation, pas de
-   publication planifiée.
+   publication planifiée, et **aucune alerte** quand quelque chose casse.
+   Commencez par `health-alert` : c'est celui qui vous prévient pour les
+   quatre autres.
 4. **Emails : vérifier le domaine dans Resend + DNS.** Tant que `RESEND_FROM`
    n'est pas sur un domaine vérifié avec SPF+DKIM (et idéalement DMARC), les
    emails de validation finiront en spam. Runbook §6.
@@ -278,9 +379,12 @@ Cochez dans l'ordre. Chaque étape a un résultat observable.
       RESEND_FROM).
 - [ ] 7. Secrets GitHub Actions présents (VITE_*, NETLIFY_*, SUPABASE_ACCESS_TOKEN)
       → les 3 workflows verts dans l'onglet Actions après le merge.
-- [ ] 8. Crons Supabase configurés avec le header `x-cron-secret` (4 cadences,
-      DEPLOYMENT.md) → attendu lundi suivant : posts auto générés + email de
-      validation reçu.
+- [ ] 8. Crons Supabase configurés avec le header `x-cron-secret` (5 cadences,
+      DEPLOYMENT.md) → attendu le lendemain : posts auto générés + email de
+      validation reçu. **`health-alert` en premier** (horaire) : c'est lui qui
+      vous signalera l'échec des autres.
+- [ ] 8 bis. Ouvrir `/admin` → panneau « État de la plateforme » : tout doit
+      être au vert. Chaque ligne en défaut porte sa correction.
 - [ ] 9. Email : domaine vérifié dans Resend + les 3 `dig` du runbook §6
       répondent → un email de validation atterrit en boîte de réception (pas
       en spam).
@@ -293,6 +397,13 @@ Cochez dans l'ordre. Chaque étape a un résultat observable.
       `UPDATE profiles SET plan='enterprise'` **depuis le client** (console
       navigateur) → doit être ignoré (trigger). L'attribuer depuis le SQL
       Editor → l'auto-réponse aux commentaires se débloque.
+- [ ] 11 bis. Vérifier les limites du forfait : sur un compte `starter`, le
+      profil ne doit proposer que jusqu'à 3 posts/semaine, et la connexion
+      d'un 3ᵉ réseau doit être refusée avec un message explicite.
+- [ ] 11 ter. Renseigner `VITE_SUPPORT_EMAIL` (les pages légales la donnent
+      comme contact pour les demandes RGPD — elle doit recevoir du courrier)
+      et, si vous en avez, `VITE_SOCIAL_*`. Ajouter vos vrais témoignages dans
+      `src/lib/testimonials.ts` quand des clients acceptent d'être cités.
 
 ### E. Avant la mise en paiement (plus tard, mais bloquant pour encaisser)
 - [ ] 12. Intégration Mobile Money (CinetPay/PayDunya) + webhook → `plan`.
