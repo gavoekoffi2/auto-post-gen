@@ -1,5 +1,5 @@
 import { ArrowLeft } from "lucide-react";
-import { SUPPORT_EMAIL } from "@/lib/appConfig";
+import { SUPPORT_EMAIL, formatLegalDate } from "@/lib/appConfig";
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
 
@@ -17,7 +17,7 @@ export default function Terms() {
         <h1 className="text-4xl font-bold mb-8">Conditions d'utilisation</h1>
 
         <div className="prose prose-invert max-w-none space-y-6 text-muted-foreground">
-          <p>Dernière mise à jour : {new Date().toLocaleDateString('fr-FR')}</p>
+          <p>Dernière mise à jour : {formatLegalDate()}</p>
 
           <section>
             <h2 className="text-2xl font-semibold text-foreground mb-4">1. Acceptation des conditions</h2>

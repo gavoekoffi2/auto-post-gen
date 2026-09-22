@@ -50,3 +50,32 @@ test("no invented user count or satisfaction rate is claimed anywhere", () => {
     }
   }
 });
+
+test("the legal pages state a fixed revision date, not today's", () => {
+  const config = read("src/lib/appConfig.ts");
+  // Both pages rendered new Date(), so they always claimed to have been
+  // revised today. On a legal document that field is how a user knows whether
+  // the terms changed since they accepted them; one that recomputes daily
+  // says nothing.
+  assert.match(config, /LEGAL_LAST_UPDATED = "\d{4}-\d{2}-\d{2}"/);
+  for (const page of ["src/pages/Privacy.tsx", "src/pages/Terms.tsx"]) {
+    const source = read(page);
+    assert.match(source, /formatLegalDate\(\)/, `${page} must use the fixed date`);
+    assert.doesNotMatch(
+      source,
+      /Dernière mise à jour : \{new Date\(\)/,
+      `${page} still recomputes its revision date`,
+    );
+  }
+});
+
+test("the privacy policy names the processors that actually receive data", () => {
+  const privacy = read("src/pages/Privacy.tsx");
+  // GDPR art. 13 requires informing about recipients and transfers outside
+  // the EU. "des prestataires de services" does not, least of all for a
+  // product that sends the customer's business description to third-party AI.
+  for (const processor of ["Supabase", "OpenRouter", "Graphiste GPT", "Zernio", "Resend"]) {
+    assert.match(privacy, new RegExp(processor), `the policy must disclose ${processor}`);
+  }
+  assert.match(privacy, /hors de l'Union européenne/);
+});
