@@ -5,9 +5,9 @@
 //   Manual: POST with the user's JWT       → syncs that user.
 //   Cron:   POST with x-cron-secret header → syncs a batch of users.
 //
-// Comments require a comment-capable provider. Postiz's public API has none,
-// so this routes through Ayrshare's Comments API (Premium plan). Users
-// without an Ayrshare connection get a clear notice instead of a hard error.
+// Comments come from Zernio's inbox add-on, the only comment-capable provider
+// the product connects to. A user without a Zernio connection (or without the
+// add-on on their Zernio account) gets a clear notice, not a hard error.
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { buildCorsHeaders, jsonResponse } from "../_shared/cors.ts";
@@ -203,7 +203,7 @@ serve(async (req) => {
 
   try {
     if (isCron) {
-      // Batch: every user that has an Ayrshare connection.
+      // Batch: every user with a Zernio connection.
       const { data: rows } = await supabase
         .from("social_connections")
         .select("user_id")
@@ -234,7 +234,7 @@ serve(async (req) => {
         {
           ...result,
           notice:
-            "La synchronisation des commentaires nécessite un fournisseur compatible : Zernio (add-on Inbox) ou Ayrshare (Premium). Connectez-en un dans « Réseaux sociaux ».",
+            "Connectez un réseau social dans « Gérer les réseaux sociaux » pour synchroniser vos commentaires. La boîte de réception nécessite l'add-on Inbox de Zernio.",
         },
         { cors },
       );

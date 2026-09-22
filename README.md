@@ -9,7 +9,7 @@ Le produit aide une petite entreprise à :
 - enrichir les posts avec recherche web gratuite (Google News RSS, Wikipedia, DuckDuckGo) ;
 - générer un visuel IA associé ;
 - valider, programmer et publier les posts ;
-- connecter les réseaux sociaux via Zernio / Postiz / Ayrshare selon les secrets configurés ;
+- connecter les réseaux sociaux via Zernio (fournisseur unique) ;
 - suivre les statistiques et les commentaires.
 
 ## Stack
@@ -19,7 +19,7 @@ Le produit aide une petite entreprise à :
 - Supabase Auth / Database / Storage / Edge Functions
 - OpenRouter pour la génération IA de **texte**
 - Graphiste GPT pour les **affiches/images** (moteur exclusif, pas de repli)
-- Zernio / Postiz / Ayrshare / OAuth direct pour la publication sociale
+- Zernio pour la connexion et la publication sociale (fournisseur unique, sans repli)
 - VPS (Docker + Nginx + Traefik) pour le frontend — voir `docker-compose.vps.yml`
 
 ## Développement local
@@ -36,6 +36,18 @@ Variables frontend nécessaires dans `.env.local` :
 VITE_SUPABASE_PROJECT_ID="..."
 VITE_SUPABASE_PUBLISHABLE_KEY="..."
 VITE_SUPABASE_URL="https://....supabase.co"
+
+# Adresse de support affichée sur le contact ET les pages légales, où elle
+# est donnée comme contact pour les demandes RGPD : elle DOIT recevoir du
+# courrier.
+VITE_SUPPORT_EMAIL="contact@votre-domaine.com"
+
+# Liens sociaux du pied de page. Ne renseignez que les comptes que vous
+# possédez réellement ; un champ vide masque le lien au lieu d'envoyer un
+# visiteur sur une page inexistante.
+VITE_SOCIAL_TWITTER=""
+VITE_SOCIAL_LINKEDIN=""
+VITE_SOCIAL_INSTAGRAM=""
 ```
 
 Les secrets backend ne doivent jamais être mis dans `.env.local` : ils vont dans Supabase → Project Settings → Edge Functions → Secrets.
@@ -87,13 +99,28 @@ ZERNIO_API_KEY=...
 ZERNIO_API_URL=https://zernio.com/api/v1
 ```
 
-Optionnel :
+Fortement recommandé aussi — sans eux vous n'avez ni emails ni alertes :
 
 ```bash
 RESEND_API_KEY=...
 RESEND_FROM="Pro Social AI <no-reply@votre-domaine.com>"
+HEALTH_ALERT_TO=vous@votre-domaine.com   # destinataire des alertes de panne
+```
+
+À régler selon votre marché (la recherche d'actualité est sinon calée sur la
+Côte d'Ivoire par défaut) :
+
+```bash
+RESEARCH_NEWS_REGION=CI   # code pays ISO : CI, SN, BJ, TG, BF, ML, CM, FR…
+RESEARCH_NEWS_LANG=fr
+```
+
+Optionnel :
+
+```bash
 TAVILY_API_KEY=...
 BRAVE_SEARCH_API_KEY=...
+AI_TEXT_TIMEOUT_MS=60000
 ```
 
 La recherche web fonctionne déjà gratuitement sans Tavily/Brave grâce à Google News RSS + Wikipedia + DuckDuckGo.
