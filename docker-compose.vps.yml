@@ -8,6 +8,13 @@ services:
       - ./nginx.vps.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
       - web
+    # Without a cap, container logs grow until they fill the VPS disk — and a
+    # full disk takes down every other service on the box, not just this one.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/healthz >/dev/null || exit 1"]
       interval: 30s
