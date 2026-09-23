@@ -26,6 +26,7 @@ const NotFound = lazy(() => import("./pages/NotFound"));
 const ValidatePost = lazy(() => import("./pages/ValidatePost"));
 const Comments = lazy(() => import("./pages/Comments"));
 const Admin = lazy(() => import("./pages/Admin"));
+const Subscription = lazy(() => import("./pages/Subscription"));
 
 const queryClient = new QueryClient();
 
@@ -106,6 +107,14 @@ const App = () => (
               element={
                 <ProtectedRoute>
                   <Profile />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/abonnement"
+              element={
+                <ProtectedRoute>
+                  <Subscription />
                 </ProtectedRoute>
               }
             />

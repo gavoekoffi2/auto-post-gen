@@ -15,8 +15,10 @@ switch.
 - Email/password authentication (Supabase Auth)
 - 7-step onboarding (sector, tone, frequency, description, style example,
   platforms, preferred days, image-people-type)
-- AI text generation (Google Gemini via Lovable AI Gateway)
-- AI image generation (with custom-image-library fallback)
+- AI text generation (Claude via OpenRouter)
+- AI poster generation (Graphiste GPT, exclusively — no fallback)
+- 7-day free trial on the plan picked at signup, then Mobile Money
+  subscriptions verified by the operator (see "Free trial and subscriptions")
 - Posts CRUD: create, edit, validate, publish (manual), delete
 - Calendar view with per-day post scheduling
 - Statistics dashboard (totals, weekly chart, platform pie)
@@ -45,12 +47,13 @@ environment variables in the Supabase dashboard before deploying.
 | `ZERNIO_API_URL` *(optional)* | `zernio-*`, `publish-post` | Override the Zernio base URL. Defaults to `https://zernio.com/api/v1`. |
 | `SUPABASE_URL` | all server functions | (auto-provided) |
 | `SUPABASE_SERVICE_ROLE_KEY` | all server functions | (auto-provided) |
-| `CRON_SECRET` | `auto-generate-weekly`, `send-validation-email`, `publish-post` (cron), `health-alert` | Shared secret between Supabase Scheduler and the functions. |
+| `CRON_SECRET` | `auto-generate-weekly`, `send-validation-email`, `publish-post` (cron), `health-alert`, `subscription-reminders` | Shared secret between Supabase Scheduler and the functions. |
 | `HEALTH_ALERT_TO` *(optional)* | `health-alert` | Where the "something is broken" alert is emailed. Defaults to `CONTACT_TO`, then to the `RESEND_FROM` address. |
 | `ALLOWED_ORIGINS` | all functions | Comma-separated list of origins (e.g. `https://app.example.com`). **Fails closed**: when unset, no `Access-Control-Allow-Origin` is emitted and browsers block cross-origin calls. Set `*` explicitly only for local development. |
-| `RESEND_API_KEY` | `send-validation-email` | Email delivery |
-| `RESEND_FROM` | `send-validation-email` | Verified sender (`Pro Social AI <no-reply@yourdomain.com>`) |
-| `APP_BASE_URL` | `send-validation-email`, validation links | Where to point the validation link (e.g. `https://app.example.com`) — should be the front-end origin, not the Supabase URL. |
+| `RESEND_API_KEY` | `send-validation-email`, `send-contact`, `health-alert`, `request-subscription`, `subscription-reminders`, `admin-api` | Email delivery. Without it, payments are still recorded and listed in `/admin`, but nobody is notified and no trial reminder goes out. |
+| `RESEND_FROM` | same | Verified sender (`Pro Social AI <no-reply@yourdomain.com>`) |
+| `CONTACT_TO` *(recommended)* | `send-contact`, `request-subscription` | The operator inbox: contact-form messages and **"new payment to verify"** alerts land here. Defaults to the `RESEND_FROM` address. |
+| `APP_BASE_URL` | `send-validation-email`, validation links, subscription emails | Where to point links in emails (e.g. `https://app.example.com`) — should be the front-end origin, not the Supabase URL. |
 
 > **Secrets to DELETE from Supabase, not to add.** Publishing is Zernio-only:
 > the Ayrshare, Postiz and direct per-platform OAuth endpoints were removed,
@@ -62,7 +65,15 @@ environment variables in the Supabase dashboard before deploying.
 ### Frontend env (`.env`)
 
 `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_SUPABASE_PROJECT_ID`
-must be set. Copy `.env.example` to `.env.local` and fill them in (no `.env`
+must be set.
+
+**Payments** — set the Mobile Money accounts customers pay to, or the
+subscription page can only tell them to email you:
+`VITE_PAYMENT_WAVE`, `VITE_PAYMENT_ORANGE_MONEY`, `VITE_PAYMENT_MTN_MOMO`,
+`VITE_PAYMENT_MOOV_MONEY` (each a phone number, or an `https://` payment link
+such as a Wave merchant link; leave unused ones empty) and
+`VITE_PAYMENT_BENEFICIARY` (the account holder name the customer will see).
+They are baked into the bundle at build time: rebuild after changing them. Copy `.env.example` to `.env.local` and fill them in (no `.env`
 is committed; in CI they come from GitHub Actions secrets and are baked into the
 bundle served by the VPS).
 
@@ -77,7 +88,30 @@ Configure these in the Supabase dashboard, sending the header
 | Mondays, 08:00 UTC | `POST /functions/v1/send-validation-email` | Emails any user with `pending` posts so they can validate them. |
 | Every 15 minutes | `POST /functions/v1/publish-post` (no body) | Publishes any `validated` post whose `scheduled_for` is in the past. |
 | Every 15–30 minutes | `POST /functions/v1/sync-comments` (no body) | Pulls new comments on published posts into the inbox and (if the user's plan includes it) auto-replies with the AI. |
+| Daily, 08:00 UTC | `POST /functions/v1/subscription-reminders` (no body) | Emails each account once, 2 days before its free trial ends and 3 days before a paid period ends. There is no automatic debit, so without this every renewal depends on the customer remembering. |
 | **Hourly** | `POST /functions/v1/health-alert` (no body) | **Configure this one first.** Runs the full platform diagnosis and emails you the moment something is genuinely broken — an expired key, exhausted credits, a cron that stopped firing, posts past their publish time. Silent when everything is fine. Without it you find out from a customer. |
+
+### Free trial and subscriptions
+
+- **Signup** starts a 7-day trial of the plan in the pricing link
+  (`/auth?plan=pro`), Pro by default. No card, nothing to configure.
+- **Effective state** is computed from dates at read time by
+  `resolveEntitlement` (`supabase/functions/_shared/plans.ts`): a trial or paid
+  period that has ended is expired at that instant, whether or not a cron ran.
+- **Expired** accounts cannot generate (text, posters, AI replies, new
+  networks), but posts already scheduled are still published and they keep
+  full access to their data.
+- **Payment**: the customer pays by Mobile Money and declares the transaction
+  reference on `/abonnement` → you get an email → you check the transaction
+  in your Mobile Money app → **Valider** in `/admin` → the plan is active for
+  one month / one year (extending a period still running) and the customer is
+  emailed. **Refuser** sends them your reason.
+- `/admin` also lets you **offer** a plan with no end date, and extend a
+  prospect's trial by 7 days.
+- A payment waiting more than 24 h turns the health panel red, and
+  `health-alert` emails it to you.
+- Accounts that existed before this feature were migrated to `active` with no
+  end date: nobody was expired by the deploy.
 
 ## 3. Social network publishing — the truth
 

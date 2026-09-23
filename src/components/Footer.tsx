@@ -34,7 +34,7 @@ export const Footer = () => {
                 <Link to="/faq" className="hover:text-primary transition-colors">FAQ</Link>
               </li>
               <li>
-                <Link to="/auth" className="hover:text-primary transition-colors">Commencer</Link>
+                <Link to="/auth?mode=signup" className="hover:text-primary transition-colors">Commencer</Link>
               </li>
             </ul>
           </div>

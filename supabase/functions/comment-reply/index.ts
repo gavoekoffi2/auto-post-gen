@@ -7,6 +7,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { buildCorsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { draftReply, zernioReply } from "../_shared/engagement.ts";
+import { ENTITLEMENT_COLUMNS, resolveEntitlement, SUBSCRIPTION_EXPIRED_MESSAGE } from "../_shared/plans.ts";
 
 // AI drafts per user per hour. Generous for real inbox work (a busy account
 // answers a few dozen comments a day), low enough to bound the cost of abuse.
@@ -60,12 +61,20 @@ serve(async (req) => {
     : { data: null };
   const { data: profile } = await supabase
     .from("profiles")
-    .select("tone, auto_reply_instructions")
+    .select(`tone, auto_reply_instructions, ${ENTITLEMENT_COLUMNS}`)
     .eq("id", userId)
     .maybeSingle();
 
   try {
     if (body.mode === "draft" || !body.mode) {
+      // AI drafting is generation; replying by hand ("send") stays open to an
+      // expired account so its community is never left unanswered.
+      if (!resolveEntitlement(profile).canGenerate) {
+        return jsonResponse(
+          { error: SUBSCRIPTION_EXPIRED_MESSAGE, code: "subscription_expired" },
+          { status: 402, cors },
+        );
+      }
       // Drafting calls the paid text model. Every other AI entry point is
       // quota'd; this one was not, so a single account could mint unlimited
       // AI calls just by clicking "suggérer une réponse". Same atomic

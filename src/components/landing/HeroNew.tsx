@@ -40,12 +40,12 @@ export const HeroNew = () => {
           {/* Subtitle */}
           <p className="text-lg sm:text-xl text-muted-foreground max-w-2xl mx-auto mb-8 opacity-0 animate-fade-in-up" style={{ animationDelay: '0.2s', animationFillMode: 'forwards' }}>
             L'IA génère votre contenu, vous validez en un clic, nous publions automatiquement. 
-            <span className="text-foreground font-medium"> Gagnez 10h par semaine</span> sur vos réseaux sociaux.
+            <span className="text-foreground font-medium"> Gagnez des heures chaque semaine</span> sur vos réseaux sociaux.
           </p>
           
           {/* CTA buttons */}
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-8 opacity-0 animate-fade-in-up" style={{ animationDelay: '0.3s', animationFillMode: 'forwards' }}>
-            <Link to="/auth">
+            <Link to="/auth?mode=signup">
               <Button 
                 size="lg" 
                 className="group h-14 px-8 text-base font-semibold bg-gradient-to-r from-primary via-primary to-accent hover:opacity-90 transition-all shadow-glow animate-gradient rounded-2xl"

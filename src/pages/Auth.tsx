@@ -5,18 +5,24 @@ import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CheckCircle2, MailCheck, Sparkles } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { MIN_PASSWORD_LENGTH, PASSWORD_RULE_HINT, validatePassword } from "@/lib/password";
 import { usePageMeta } from "@/lib/usePageMeta";
 import { authErrorMessage } from "@/lib/authError";
+import { PLAN_LIMITS, TRIAL_DAYS, isPlanId } from "@/lib/plans";
 
 export default function Auth() {
   usePageMeta("Connexion", "Connectez-vous ou créez votre compte Pro Social AI.");
 
   const navigate = useNavigate();
+  // Pricing CTAs link here with ?plan=<id>. The trial starts on that plan
+  // (see handle_new_user); visitors who arrive otherwise get Pro, the plan
+  // the pricing page features.
+  const [searchParams] = useSearchParams();
+  const requestedPlan = searchParams.get("plan");
+  const trialPlan = isPlanId(requestedPlan) ? requestedPlan : "pro";
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -39,6 +45,7 @@ export default function Auth() {
         password,
         options: {
           emailRedirectTo: `${window.location.origin}/onboarding`,
+          data: { requested_plan: trialPlan },
         },
       });
 
@@ -167,7 +174,7 @@ export default function Auth() {
           </Card>
         ) : (
         <Card className="glass-card p-8">
-          <Tabs defaultValue="signin" className="w-full">
+          <Tabs defaultValue={requestedPlan || searchParams.get("mode") === "signup" ? "signup" : "signin"} className="w-full">
             {/* The page needs a top-level heading. The product name beside
                 the logo is a <span>, and the tab labels are controls, so
                 without this the sign-in page had no <h1> at all. */}
@@ -217,6 +224,14 @@ export default function Auth() {
 
             <TabsContent value="signup">
               <form onSubmit={handleSignUp} className="space-y-6">
+                <div className="rounded-xl border border-green-500/20 bg-green-500/10 px-4 py-3 text-sm">
+                  <p className="font-semibold text-green-600 dark:text-green-400">
+                    Essai gratuit {TRIAL_DAYS} jours — forfait {PLAN_LIMITS[trialPlan].label}
+                  </p>
+                  <p className="text-muted-foreground">
+                    Sans carte bancaire, sans prélèvement automatique.
+                  </p>
+                </div>
                 <div className="space-y-2">
                   <Label htmlFor="signup-email">Email</Label>
                   <Input

@@ -1,6 +1,6 @@
 import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
-import { PLAN_LIMITS } from "@/lib/plans";
+import { PLAN_LIMITS, PLAN_PRICES_FCFA, TRIAL_DAYS } from "@/lib/plans";
 import { usePageMeta } from "@/lib/usePageMeta";
 import {
   Accordion,
@@ -10,6 +10,19 @@ import {
 } from "@/components/ui/accordion";
 
 const faqs = [
+  {
+    question: "Comment fonctionne l'essai gratuit ?",
+    answer: `Vous profitez pendant ${TRIAL_DAYS} jours de toutes les fonctionnalités du forfait choisi, sans carte bancaire. Un email vous prévient avant la fin. Si vous ne choisissez pas de forfait, la création de nouveaux contenus se met simplement en pause : rien n'est facturé et vos posts déjà programmés sont quand même publiés.`,
+  },
+  {
+    question: "Comment payer mon abonnement ?",
+    answer: `Par Mobile Money (Wave, Orange Money, MTN ou Moov), depuis la page Abonnement de votre compte : vous choisissez votre forfait, payez le montant indiqué (${PLAN_PRICES_FCFA.starter.monthly.toLocaleString("fr-FR")} FCFA/mois pour ${PLAN_LIMITS.starter.label}) puis saisissez la référence de la transaction reçue par SMS. Votre forfait est activé après vérification, généralement sous 24 h ouvrées, et vous êtes prévenu par email.`,
+  },
+  {
+    question: "Puis-je arrêter quand je veux ?",
+    answer:
+      "Oui. Il n'y a aucun prélèvement automatique : chaque mois (ou chaque année), vous décidez de renouveler ou non. Un rappel vous est envoyé quelques jours avant l'échéance. Sans renouvellement, vos contenus restent accessibles et vos posts déjà programmés sont publiés.",
+  },
   {
     question: "Comment fonctionne la génération automatique de contenu ?",
     answer:

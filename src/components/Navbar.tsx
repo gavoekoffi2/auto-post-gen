@@ -40,7 +40,7 @@ export const Navbar = () => {
                 Se connecter
               </Button>
             </Link>
-            <Link to="/auth">
+            <Link to="/auth?mode=signup">
               <Button size="sm" className="bg-gradient-to-r from-primary to-secondary hover:opacity-90">
                 Commencer
               </Button>
@@ -102,7 +102,7 @@ export const Navbar = () => {
                     Se connecter
                   </Button>
                 </Link>
-                <Link to="/auth" onClick={() => setIsMenuOpen(false)}>
+                <Link to="/auth?mode=signup" onClick={() => setIsMenuOpen(false)}>
                   <Button className="w-full bg-gradient-to-r from-primary to-secondary hover:opacity-90">
                     Commencer
                   </Button>

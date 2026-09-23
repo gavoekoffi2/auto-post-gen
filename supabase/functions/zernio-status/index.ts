@@ -4,7 +4,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { buildCorsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { getSupabaseAdmin, getUserIdFromAuthHeader } from "../_shared/supabaseAdmin.ts";
 import { getZernioKey, zernioListAccounts } from "../_shared/zernio.ts";
-import { planLimits } from "../_shared/plans.ts";
+import { ENTITLEMENT_COLUMNS, resolveEntitlement } from "../_shared/plans.ts";
 
 serve(async (req) => {
   const cors = buildCorsHeaders(req.headers.get("origin"));
@@ -29,13 +29,19 @@ serve(async (req) => {
         .eq("user_id", userId)
         .eq("provider", "zernio")
         .maybeSingle(),
-      admin.from("profiles").select("plan").eq("id", userId).maybeSingle(),
+      admin.from("profiles").select(ENTITLEMENT_COLUMNS).eq("id", userId).maybeSingle(),
     ]);
     // Sent so the UI can show "2 / 2 réseaux" up front. Otherwise the user
     // only discovers their plan's ceiling at the moment a connection is
     // refused, which reads like a bug rather than a limit.
-    const limits = planLimits(planRow?.plan);
-    const planInfo = { plan: limits.id, planLabel: limits.label, maxAccounts: limits.socialAccounts };
+    const entitlement = resolveEntitlement(planRow);
+    const limits = entitlement.limits;
+    const planInfo = {
+      plan: limits.id,
+      planLabel: limits.label,
+      maxAccounts: limits.socialAccounts,
+      subscriptionState: entitlement.state,
+    };
 
     if (!existing) {
       return jsonResponse({ provisioned: false, platforms: [], ...planInfo }, { cors });

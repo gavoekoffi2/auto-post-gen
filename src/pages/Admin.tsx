@@ -8,8 +8,10 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { Activity, AlertTriangle, BarChart3, Ban, CheckCircle2, HeartPulse, KeyRound, LogOut, Plus, RefreshCw, Search, Send, ShieldCheck, Trash2, Unplug, Users, XCircle } from "lucide-react";
+import { Activity, AlertTriangle, BarChart3, Ban, CheckCircle2, CreditCard, HeartPulse, KeyRound, LogOut, Plus, RefreshCw, Search, Send, ShieldCheck, TimerReset, Trash2, Unplug, Users, XCircle } from "lucide-react";
 import { usePageMeta } from "@/lib/usePageMeta";
+import { functionErrorMessage } from "@/lib/functionError";
+import { PAYMENT_METHODS, PLAN_LIMITS, resolveEntitlement, type PaymentMethod, type PlanId, type SubscriptionFields } from "@/lib/plans";
 
 type AdminUser = {
   id: string;
@@ -20,7 +22,7 @@ type AdminUser = {
   blocked: boolean;
   /** Owner account: cannot be demoted, blocked or deleted (enforced server-side). */
   protectedOwner?: boolean;
-  profile: { company_name?: string | null; sector?: string | null; plan?: string | null } | null;
+  profile: (SubscriptionFields & { company_name?: string | null; sector?: string | null }) | null;
   posts: { total: number; published: number };
   generations: number;
   connections: number;
@@ -44,13 +46,52 @@ type Health = {
 
 type Overview = {
   actor: AdminUser;
-  stats: { users: number; active: number; blocked: number; admins: number; posts: number; published: number; generations: number; connections: number };
+  stats: { users: number; active: number; blocked: number; admins: number; posts: number; published: number; generations: number; connections: number; pendingSubscriptions?: number };
   /** The headline totals are exact; the per-account columns come from a capped sample. */
   perUserTruncated?: boolean;
   users: AdminUser[];
 };
 
-const defaultCreate = { email: "", password: "", companyName: "", plan: "enterprise", role: "user" };
+type PaymentRequest = {
+  id: string;
+  user_id: string;
+  plan: string;
+  billing_period: "monthly" | "annual";
+  amount_fcfa: number;
+  payment_method: string;
+  payer_phone: string;
+  payment_reference: string;
+  status: "pending" | "approved" | "rejected" | "cancelled";
+  admin_note: string | null;
+  decided_at: string | null;
+  created_at: string;
+  profile: { email?: string | null; company_name?: string | null } | null;
+};
+
+const REQUEST_STATUS: Record<PaymentRequest["status"], string> = {
+  pending: "À vérifier",
+  approved: "Validé",
+  rejected: "Refusé",
+  cancelled: "Annulé par le client",
+};
+
+const fcfa = (amount: number) => `${amount.toLocaleString("fr-FR")} FCFA`;
+const planLabel = (plan: string) => PLAN_LIMITS[plan as PlanId]?.label ?? plan;
+
+/** One-line billing state for an account row. */
+function billingSummary(profile: AdminUser["profile"]): { text: string; tone: "default" | "secondary" | "destructive" | "outline" } {
+  if (!profile) return { text: "Profil absent", tone: "outline" };
+  const e = resolveEntitlement(profile);
+  if (e.state === "trialing") return { text: `Essai ${e.limits.label} · J-${e.daysLeft}`, tone: "outline" };
+  if (e.state === "expired") return { text: profile.subscription_status === "trialing" ? "Essai terminé" : "Abonnement expiré", tone: "destructive" };
+  return {
+    text: e.endsAt ? `${e.limits.label} · jusqu'au ${new Date(e.endsAt).toLocaleDateString("fr-FR")}` : `${e.limits.label} · offert`,
+    tone: "default",
+  };
+}
+
+// An empty plan creates the account on the standard free trial.
+const defaultCreate = { email: "", password: "", companyName: "", plan: "", role: "user" };
 
 const HEALTH_TONE: Record<CheckStatus, { icon: typeof CheckCircle2; text: string; badge: string; summary: string }> = {
   ok: { icon: CheckCircle2, text: "text-green-600", badge: "bg-green-500/15 text-green-600", summary: "Tout est opérationnel" },
@@ -71,12 +112,44 @@ export default function Admin() {
   const [form, setForm] = useState(defaultCreate);
   const [health, setHealth] = useState<Health | null>(null);
   const [healthLoading, setHealthLoading] = useState(false);
+  const [payments, setPayments] = useState<PaymentRequest[]>([]);
 
   const invoke = async (body: Record<string, unknown>) => {
     const { data: response, error } = await supabase.functions.invoke("admin-api", { body });
-    if (error) throw error;
+    if (error) throw new Error(await functionErrorMessage(error, "Action impossible"));
     if (response?.error) throw new Error(response.error);
     return response;
+  };
+
+  const loadPayments = async () => {
+    try {
+      const response = await invoke({ action: "subscriptions" });
+      setPayments(response.requests || []);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Paiements indisponibles");
+    }
+  };
+
+  const decide = async (request: PaymentRequest, approve: boolean) => {
+    let note: string | null = null;
+    if (approve) {
+      const ok = window.confirm(
+        `Confirmez-vous avoir reçu ${fcfa(request.amount_fcfa)} via ${PAYMENT_METHODS[request.payment_method as PaymentMethod] ?? request.payment_method} ` +
+          `(réf. ${request.payment_reference}) ?\n\nLe forfait ${planLabel(request.plan)} sera activé immédiatement.`,
+      );
+      if (!ok) return;
+    } else {
+      note = window.prompt("Motif du refus (envoyé au client) :", "Transaction introuvable avec cette référence.");
+      if (note === null) return;
+    }
+    setBusy(request.id);
+    try {
+      await invoke({ action: approve ? "approve_subscription" : "reject_subscription", requestId: request.id, note });
+      toast.success(approve ? "Abonnement activé — le client est prévenu par email" : "Demande refusée — le client est prévenu");
+      await Promise.all([loadPayments(), load()]);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Action impossible");
+    } finally { setBusy(null); }
   };
 
   const load = async () => {
@@ -107,13 +180,13 @@ export default function Admin() {
   // The admin API client is stable for the lifetime of this page; run the
   // initial overview exactly once and let explicit actions refresh it later.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { void load(); void loadHealth(); }, []);
+  useEffect(() => { void load(); void loadHealth(); void loadPayments(); }, []);
 
   const users = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) return data?.users || [];
     return (data?.users || []).filter((user) =>
-      [user.email, user.profile?.company_name, user.profile?.sector, user.profile?.plan, user.role]
+      [user.email, user.profile?.company_name, user.profile?.sector, user.profile?.plan, billingSummary(user.profile).text, user.role]
         .some((value) => String(value || "").toLowerCase().includes(needle)),
     );
   }, [data, query]);
@@ -161,6 +234,8 @@ export default function Admin() {
     { label: "Générations IA", value: stats?.generations ?? 0, icon: Activity, detail: "activité totale" },
     { label: "Réseaux connectés", value: stats?.connections ?? 0, icon: Unplug, detail: `${stats?.admins ?? 0} administrateur(s)` },
   ];
+  const pendingPayments = payments.filter((p) => p.status === "pending");
+  const decidedPayments = payments.filter((p) => p.status !== "pending").slice(0, 10);
 
   return (
     <div className="min-h-screen bg-background">
@@ -180,12 +255,64 @@ export default function Admin() {
       <main className="mx-auto max-w-7xl space-y-7 px-4 py-7">
         <section className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
           <div><h1 className="text-3xl font-bold tracking-tight">Pilotage global</h1><p className="text-muted-foreground">Comptes, forfaits, accès et activité de toute la plateforme.</p></div>
-          <div className="flex gap-2"><Button variant="outline" onClick={load} disabled={loading}><RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />Actualiser</Button><Button onClick={() => setCreateOpen(true)}><Plus className="mr-2 h-4 w-4" />Créer un compte</Button></div>
+          <div className="flex gap-2"><Button variant="outline" onClick={() => { void load(); void loadPayments(); }} disabled={loading}><RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />Actualiser</Button><Button onClick={() => setCreateOpen(true)}><Plus className="mr-2 h-4 w-4" />Créer un compte</Button></div>
         </section>
 
         <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {cards.map(({ label, value, icon: Icon, detail }) => <Card key={label} className="p-5"><div className="mb-4 flex items-center justify-between"><p className="text-sm text-muted-foreground">{label}</p><Icon className="h-5 w-5 text-primary" /></div><p className="text-3xl font-bold">{value}</p><p className="mt-1 text-xs text-muted-foreground">{detail}</p></Card>)}
         </section>
+
+        <Card className="overflow-hidden">
+          <div className="flex flex-col gap-1 border-b p-5">
+            <h2 className="font-semibold text-xl flex items-center gap-2">
+              <CreditCard className="h-5 w-5 text-primary" />
+              Paiements à vérifier
+              {pendingPayments.length > 0 && <Badge variant="destructive">{pendingPayments.length}</Badge>}
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              Vérifiez chaque transaction dans votre application Mobile Money avant de valider : la validation active le forfait et prévient le client.
+            </p>
+          </div>
+          {pendingPayments.length === 0 ? (
+            <p className="p-5 text-sm text-muted-foreground">Aucun paiement en attente.</p>
+          ) : (
+            <div className="divide-y">
+              {pendingPayments.map((request) => {
+                const isBusy = busy === request.id;
+                return (
+                  <div key={request.id} className="flex flex-col gap-3 p-5 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="min-w-0">
+                      <p className="font-semibold break-all">{request.profile?.email || request.user_id}{request.profile?.company_name ? ` · ${request.profile.company_name}` : ""}</p>
+                      <p className="mt-1 text-sm">
+                        <strong>{fcfa(request.amount_fcfa)}</strong> · {planLabel(request.plan)} {request.billing_period === "annual" ? "annuel" : "mensuel"} · {PAYMENT_METHODS[request.payment_method as PaymentMethod] ?? request.payment_method}
+                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Réf. <span className="font-mono text-foreground">{request.payment_reference}</span> · payé depuis {request.payer_phone} · déclaré le {new Date(request.created_at).toLocaleString("fr-FR")}
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button size="sm" disabled={isBusy} onClick={() => decide(request, true)}><CheckCircle2 className="mr-2 h-4 w-4" />Valider</Button>
+                      <Button size="sm" variant="outline" disabled={isBusy} onClick={() => decide(request, false)}><XCircle className="mr-2 h-4 w-4" />Refuser</Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {decidedPayments.length > 0 && (
+            <details className="border-t">
+              <summary className="cursor-pointer p-5 text-sm text-muted-foreground">Dernières décisions ({decidedPayments.length})</summary>
+              <div className="divide-y border-t">
+                {decidedPayments.map((request) => (
+                  <div key={request.id} className="flex flex-wrap items-center justify-between gap-2 px-5 py-3 text-sm">
+                    <span className="break-all">{request.profile?.email || request.user_id} · {planLabel(request.plan)} · {fcfa(request.amount_fcfa)} · réf. <span className="font-mono">{request.payment_reference}</span></span>
+                    <Badge variant={request.status === "approved" ? "default" : "secondary"}>{REQUEST_STATUS[request.status]}</Badge>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+        </Card>
 
         <Card className="overflow-hidden">
           <div className="flex flex-col gap-3 border-b p-5 sm:flex-row sm:items-center sm:justify-between">
@@ -256,12 +383,13 @@ export default function Admin() {
                 return <div key={user.id} className="p-5 hover:bg-muted/20">
                   <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
                     <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2"><p className="font-semibold break-all">{user.email}</p>{user.role !== "user" && <Badge>{user.role === "super_admin" ? "Super administrateur" : "Administrateur"}</Badge>}<Badge variant={user.blocked ? "destructive" : "secondary"}>{user.blocked ? "Bloqué" : "Actif"}</Badge></div>
+                      <div className="flex flex-wrap items-center gap-2"><p className="font-semibold break-all">{user.email}</p>{user.role !== "user" && <Badge>{user.role === "super_admin" ? "Super administrateur" : "Administrateur"}</Badge>}<Badge variant={user.blocked ? "destructive" : "secondary"}>{user.blocked ? "Bloqué" : "Actif"}</Badge>{(() => { const billing = billingSummary(user.profile); return <Badge variant={billing.tone}>{billing.text}</Badge>; })()}</div>
                       <p className="mt-1 text-sm text-muted-foreground">{user.profile?.company_name || "Entreprise non renseignée"} · {user.profile?.sector || "Profil à compléter"}</p>
                       <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground"><span>{user.posts.total} publication(s), {user.posts.published} publiée(s)</span><span>{user.generations} génération(s) IA</span><span>{user.connections} réseau(x)</span><span>Dernière connexion : {user.lastSignInAt ? new Date(user.lastSignInAt).toLocaleDateString("fr-FR") : "jamais"}</span></div>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <select className="h-9 rounded-md border bg-background px-3 text-sm" value={user.profile?.plan || "starter"} disabled={isBusy} onChange={(e) => action(user, { action: "set_plan", plan: e.target.value }, "Forfait mis à jour")}><option value="starter">Starter</option><option value="pro">Pro</option><option value="enterprise">Enterprise</option></select>
+                      <select className="h-9 rounded-md border bg-background px-3 text-sm" title="Attribuer un forfait à la main (sans paiement déclaré)" value="" disabled={isBusy} onChange={(e) => e.target.value && window.confirm(`Attribuer le forfait ${planLabel(e.target.value)} à ${user.email} ? Il devient actif immédiatement.`) && action(user, { action: "set_plan", plan: e.target.value }, "Forfait attribué")}><option value="">Attribuer un forfait…</option><option value="starter">Starter</option><option value="pro">Pro</option><option value="enterprise">Enterprise</option></select>
+                      {user.profile?.subscription_status === "trialing" && <Button variant="outline" size="sm" title="Prolonger l'essai de 7 jours" disabled={isBusy} onClick={() => action(user, { action: "extend_trial", days: 7 }, "Essai prolongé de 7 jours")}><TimerReset className="mr-1 h-4 w-4" />+7 j</Button>}
                       <select className="h-9 rounded-md border bg-background px-3 text-sm" value={user.role} disabled={isBusy || protectedOwner} onChange={(e) => action(user, { action: "set_role", role: e.target.value }, "Rôle mis à jour")}><option value="user">Utilisateur</option><option value="admin">Administrateur</option><option value="super_admin">Super administrateur</option></select>
                       <Button variant="outline" size="sm" disabled={isBusy} onClick={() => resetPassword(user)}><KeyRound className="h-4 w-4" /></Button>
                       {!protectedOwner && <Button variant="outline" size="sm" disabled={isBusy} onClick={() => action(user, { action: "set_blocked", blocked: !user.blocked }, user.blocked ? "Compte réactivé" : "Compte bloqué")}>{user.blocked ? <CheckCircle2 className="h-4 w-4" /> : <Ban className="h-4 w-4" />}</Button>}
@@ -276,7 +404,7 @@ export default function Admin() {
         </Card>
       </main>
 
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}><DialogContent><DialogHeader><DialogTitle>Créer un compte</DialogTitle><DialogDescription>Le compte sera confirmé et immédiatement utilisable.</DialogDescription></DialogHeader><form onSubmit={createUser} className="space-y-4"><div><Label>Email</Label><Input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div><div><Label>Mot de passe initial</Label><Input type="text" minLength={8} required value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></div><div><Label>Entreprise</Label><Input value={form.companyName} onChange={(e) => setForm({ ...form, companyName: e.target.value })} /></div><div className="grid grid-cols-2 gap-3"><div><Label>Forfait</Label><select className="mt-2 h-10 w-full rounded-md border bg-background px-3" value={form.plan} onChange={(e) => setForm({ ...form, plan: e.target.value })}><option value="starter">Starter</option><option value="pro">Pro</option><option value="enterprise">Enterprise</option></select></div><div><Label>Rôle</Label><select className="mt-2 h-10 w-full rounded-md border bg-background px-3" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}><option value="user">Utilisateur</option><option value="admin">Administrateur</option><option value="super_admin">Super admin</option></select></div></div><Button className="w-full" type="submit" disabled={busy === "create"}>{busy === "create" ? "Création…" : "Créer et activer"}</Button></form></DialogContent></Dialog>
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}><DialogContent><DialogHeader><DialogTitle>Créer un compte</DialogTitle><DialogDescription>Le compte sera confirmé et immédiatement utilisable.</DialogDescription></DialogHeader><form onSubmit={createUser} className="space-y-4"><div><Label>Email</Label><Input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div><div><Label>Mot de passe initial</Label><Input type="text" minLength={8} required value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></div><div><Label>Entreprise</Label><Input value={form.companyName} onChange={(e) => setForm({ ...form, companyName: e.target.value })} /></div><div className="grid grid-cols-2 gap-3"><div><Label>Forfait</Label><select className="mt-2 h-10 w-full rounded-md border bg-background px-3" value={form.plan} onChange={(e) => setForm({ ...form, plan: e.target.value })}><option value="">Essai gratuit</option><option value="starter">Starter (offert)</option><option value="pro">Pro (offert)</option><option value="enterprise">Enterprise (offert)</option></select></div><div><Label>Rôle</Label><select className="mt-2 h-10 w-full rounded-md border bg-background px-3" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}><option value="user">Utilisateur</option><option value="admin">Administrateur</option><option value="super_admin">Super admin</option></select></div></div><Button className="w-full" type="submit" disabled={busy === "create"}>{busy === "create" ? "Création…" : "Créer et activer"}</Button></form></DialogContent></Dialog>
     </div>
   );
 }

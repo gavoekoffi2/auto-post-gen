@@ -1,36 +1,36 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+// Node strips the TypeScript annotations, so the policy is tested by running
+// the real code rather than by pattern-matching it.
+import {
+  PLAN_LIMITS,
+  PLAN_PRICES_FCFA,
+  TRIAL_DAYS,
+  isPlanId,
+  priceFor,
+  resolveEntitlement,
+} from "../src/lib/plans.ts";
 
 const server = readFileSync("supabase/functions/_shared/plans.ts", "utf8");
 const client = readFileSync("src/lib/plans.ts", "utf8");
 
-/** Pull the PLAN_LIMITS literal out of either copy without executing TS. */
-function parseLimits(source) {
-  const start = source.indexOf("export const PLAN_LIMITS");
-  assert.ok(start >= 0, "PLAN_LIMITS must be exported");
-  const body = source.slice(source.indexOf("{", start), source.indexOf("\n};", start));
-  const limits = {};
-  for (const [, plan, fields] of body.matchAll(/(\w+):\s*\{([^}]*)\}/g)) {
-    const entry = {};
-    for (const [, key, value] of fields.matchAll(/(\w+):\s*([^,\n]+)/g)) {
-      const raw = value.trim().replace(/^["']|["'],?$/g, "").replace(/,$/, "");
-      entry[key] = /^\d+$/.test(raw) ? Number(raw) : raw === "true" ? true : raw === "false" ? false : raw;
-    }
-    limits[plan] = entry;
-  }
-  return limits;
-}
-
 test("the browser mirror of the plan limits never drifts from the server copy", () => {
-  // The UI copy only labels and pre-constrains; the server copy enforces. If
-  // they disagree, the product promises a limit it will not honour (or blocks
-  // something the customer paid for).
-  assert.deepEqual(parseLimits(client), parseLimits(server));
+  // The UI copy labels, prices and pre-constrains; the server copy enforces.
+  // If they disagree, the product promises a limit it will not honour, shows
+  // a price it will not charge, or calls an account expired that the server
+  // still serves. Everything after the marker must be byte-identical.
+  const marker = "// ───── Everything below this line is shared verbatim with its mirror. ─────";
+  const shared = (source) => {
+    const at = source.indexOf(marker);
+    assert.ok(at >= 0, "shared-body marker missing");
+    return source.slice(at);
+  };
+  assert.equal(shared(client), shared(server));
 });
 
 test("plan limits match the published pricing page", () => {
-  const limits = parseLimits(server);
+  const limits = PLAN_LIMITS;
   const pricing = readFileSync("src/components/landing/PricingNew.tsx", "utf8");
 
   assert.equal(limits.starter.postsPerWeek, 3);
@@ -67,7 +67,7 @@ test("every advertised limit is enforced server-side, not just in the UI", () =>
 
   // Weekly volume: post_frequency is client-written, so it must be clamped.
   assert.match(weekly, /limits\.postsPerWeek/);
-  assert.match(weekly, /planLimits\(profile\.plan\)/);
+  assert.match(weekly, /resolveEntitlement\(profile\)/);
 
   // AI cost ceilings come from the plan, not a flat constant.
   assert.match(text, /limits\.monthlyTextGenerations/);
@@ -80,16 +80,18 @@ test("every advertised limit is enforced server-side, not just in the UI", () =>
   assert.match(connect, /plan_limit_reached/);
 
   // Auto-reply entitlement.
-  assert.match(comments, /planLimits\(profile\?\.plan\)\.aiAutoReply/);
+  assert.match(comments, /entitlement\.limits\.aiAutoReply/);
 
-  // Each of these reads `plan` from the database with the service role, never
-  // from the request body (the column is trigger-protected from client writes).
+  // Each of these reads the subscription from the database with the service
+  // role, never from the request body (the columns are trigger-protected from
+  // client writes), and derives limits through resolveEntitlement.
   for (const [name, source] of [["generate-content", text], ["generate-image", image], ["zernio-connect", connect]]) {
     assert.match(
       source,
-      /\.from\("profiles"\)\s*\n?\s*\.select\("plan"\)/,
-      `${name} must read the plan server-side`,
+      /\.from\("profiles"\)\s*\n?\s*\.select\(ENTITLEMENT_COLUMNS\)/,
+      `${name} must read the subscription server-side`,
     );
+    assert.match(source, /const limits = entitlement\.limits/, `${name} must use the entitlement's limits`);
   }
 });
 
@@ -99,11 +101,15 @@ test("onboarding offers only the volumes a new account will actually receive", (
   // plan volumes, of which two were silently rewritten on save because every
   // signup starts on Starter. Offering a choice and discarding it is worse
   // than not offering it.
-  assert.match(onboarding, /PLAN_LIMITS\.starter\.postsPerWeek/);
+  // Since the free trial, a new account is entitled to the plan it picked on
+  // the pricing page, so the ceiling comes from its entitlement.
+  assert.match(onboarding, /resolveEntitlement\(profile\)/);
+  assert.match(onboarding, /\{ length: limits\.postsPerWeek \}/);
+  assert.match(onboarding, /parseInt\(formData\.frequency\),\s*limits\.postsPerWeek/);
   assert.doesNotMatch(onboarding, /2 posts\/semaine \(Starter\)/);
   assert.doesNotMatch(onboarding, /Object\.values\(PLAN_LIMITS\)\.map/);
   // And the ceiling is explained rather than left as a silent cap.
-  assert.match(onboarding, /Votre compte démarre sur le forfait/);
+  assert.match(onboarding, /inclut jusqu'à \$\{limits\.postsPerWeek\} posts\/semaine/);
 });
 
 test("the editorial mix can never fill a whole week with advertising", () => {
@@ -126,7 +132,7 @@ test("the network limit is visible before it is hit, not only when refused", () 
 
   // Discovering your plan's ceiling only when a connection is refused reads
   // like a bug rather than a limit.
-  assert.match(status, /planLimits\(planRow\?\.plan\)/);
+  assert.match(status, /resolveEntitlement\(planRow\)/);
   assert.match(status, /maxAccounts: limits\.socialAccounts/);
   assert.match(ui, /maxAccounts/);
   assert.match(ui, /réseau/);

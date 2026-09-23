@@ -34,7 +34,7 @@ export const SOCIAL_LINKS: Array<{ label: string; url: string }> = [
  *
  * Bump this, in the same commit, whenever you change either document.
  */
-export const LEGAL_LAST_UPDATED = "2026-09-22";
+export const LEGAL_LAST_UPDATED = "2026-09-23";
 
 export function formatLegalDate(iso: string = LEGAL_LAST_UPDATED): string {
   const [year, month, day] = iso.split("-").map(Number);
@@ -44,3 +44,20 @@ export function formatLegalDate(iso: string = LEGAL_LAST_UPDATED): string {
     year: "numeric",
   });
 }
+
+/**
+ * Where customers send Mobile Money payments, per channel, configured at build
+ * time. A value is a phone number to transfer to, or an https:// payment link
+ * (a Wave merchant link, for instance). Only configured channels are offered;
+ * with none, the subscription page asks the customer to contact support
+ * rather than inventing a number.
+ */
+export const PAYMENT_ACCOUNTS: Array<{ method: "wave" | "orange_money" | "mtn_momo" | "moov_money"; value: string }> = [
+  { method: "wave" as const, value: import.meta.env.VITE_PAYMENT_WAVE?.trim() || "" },
+  { method: "orange_money" as const, value: import.meta.env.VITE_PAYMENT_ORANGE_MONEY?.trim() || "" },
+  { method: "mtn_momo" as const, value: import.meta.env.VITE_PAYMENT_MTN_MOMO?.trim() || "" },
+  { method: "moov_money" as const, value: import.meta.env.VITE_PAYMENT_MOOV_MONEY?.trim() || "" },
+].filter((account) => account.value.length > 0);
+
+/** Name the customer should see on the receiving account. */
+export const PAYMENT_BENEFICIARY = import.meta.env.VITE_PAYMENT_BENEFICIARY?.trim() || APP_NAME;

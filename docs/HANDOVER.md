@@ -262,6 +262,47 @@ ne s'affichent que s'il y a quelque chose de vrai à y mettre.
 `health-alert` (cron horaire) **envoie un email** dès qu'un point est
 réellement bloquant. Voir §5 P1.
 
+### Essai gratuit et abonnements : implémentés (23/09/2026)
+
+La page tarifs promettait « Essai gratuit 7 jours » sur chaque forfait, mais
+rien ne l'implémentait : un compte restait `starter` à vie, sans échéance ni
+moyen de payer. Décisions prises (en tant que responsable produit) :
+
+- **Essai de 7 jours du forfait choisi** sur la page tarifs (`?plan=`), Pro
+  par défaut — le forfait mis en avant. Sans carte : le marché paie par Mobile
+  Money, et exiger un moyen de paiement tuerait l'inscription.
+- **État calculé à la lecture** (`resolveEntitlement`, fichier partagé
+  `plans.ts`) à partir des dates, jamais d'un drapeau qu'un cron doit
+  basculer : un essai fini à 3 h est fini à 3 h, cron ou pas.
+- **À l'expiration, la génération se met en pause** (texte, affiches,
+  réponses IA, nouveaux réseaux) mais **les posts déjà programmés sont
+  publiés** : on ne sabote pas la présence en ligne d'un client qui a oublié
+  de payer, et on ne lui retire pas ses données.
+- **Paiement déclaratif vérifié à la main** : le client paie par Wave /
+  Orange Money / MTN / Moov et saisit la référence ; l'opérateur reçoit un
+  email et valide en un clic dans `/admin`. Montant calculé côté serveur,
+  références uniques, une seule demande en attente par compte. Choisi plutôt
+  qu'un agrégateur (CinetPay, PayDunya) pour lancer sans contrat ni frais ; la
+  table `subscription_requests` est prête à recevoir les écritures d'un
+  webhook le jour où le volume le justifie.
+- **Pas de prélèvement automatique**, donc rappel par email avant chaque
+  échéance (`subscription-reminders`, cron quotidien).
+- **Les comptes existants** sont passés `active` sans échéance : personne n'a
+  été coupé par le déploiement.
+
+Fichiers : migration `20260923000000_trial_and_subscriptions.sql`, fonctions
+`request-subscription` et `subscription-reminders`, actions
+`subscriptions` / `approve_subscription` / `reject_subscription` /
+`extend_trial` d'`admin-api`, page `/abonnement`, `SubscriptionBanner`.
+Tests : `tests/subscription.test.js` (la politique est exécutée, pas
+seulement relue).
+
+**Décision laissée au propriétaire :** la politique de remboursement. Les CGU
+décrivent le mécanisme mais ne promettent ni n'excluent de remboursement.
+Note : supprimer un compte supprime aussi son historique de paiements
+(`ON DELETE CASCADE`) ; si votre comptabilité doit les conserver, exportez-les
+avant (ils figurent dans l'export de données du client).
+
 ---
 
 ## 5. Fragilités connues & feuille de route proposée
@@ -270,17 +311,18 @@ réellement bloquant. Voir §5 P1.
 1. **Configurer et prouver `GRAPHISTE_GPT_API_KEY`** (checklist §7, étape 2).
    C'est LE point qui conditionne la promesse produit. Le panneau
    « État de la plateforme » de `/admin` le vérifie désormais en un clic.
-2. **Brancher le paiement Mobile Money** (CinetPay ou PayDunya) : aujourd'hui
-   `profiles.plan` est attribué **à la main** en SQL. Les add-ons du
-   PRICING.md §4 dépendent de la même brique. Le webhook de paiement doit
-   écrire `plan` via service role (le trigger laisse passer le service role).
-   **Les limites de chaque forfait sont maintenant réellement appliquées**
-   (§4 bis) : il ne reste que l'encaissement et l'attribution automatique.
-3. **Configurer les 5 crons Supabase** (cadences dans DEPLOYMENT.md) — sans
+2. **Renseigner les comptes Mobile Money** (`VITE_PAYMENT_*`, DEPLOYMENT.md)
+   puis reconstruire le front : sans eux, la page Abonnement ne peut que
+   demander au client de vous écrire. L'essai, l'expiration, la déclaration
+   de paiement et l'activation depuis `/admin` fonctionnent (§4 bis). Un
+   agrégateur (CinetPay / PayDunya) avec webhook reste l'étape suivante quand
+   la vérification manuelle deviendra trop lourde ; les add-ons du PRICING.md
+   §4 n'existent pas encore et ne sont plus annoncés.
+3. **Configurer les 6 crons Supabase** (cadences dans DEPLOYMENT.md) — sans
    eux : pas de posts automatiques, pas d'emails de validation, pas de
    publication planifiée, et **aucune alerte** quand quelque chose casse.
    Commencez par `health-alert` : c'est celui qui vous prévient pour les
-   quatre autres.
+   autres. `subscription-reminders` envoie les rappels de fin d'essai.
 4. **Emails : vérifier le domaine dans Resend + DNS.** Tant que `RESEND_FROM`
    n'est pas sur un domaine vérifié avec SPF+DKIM (et idéalement DMARC), les
    emails de validation finiront en spam. Runbook §6.
@@ -381,7 +423,7 @@ Cochez dans l'ordre. Chaque étape a un résultat observable.
       ZERNIO_API_KEY) → les 2 workflows verts dans l'onglet Actions après le
       merge (`ci.yml` et `deploy-functions.yml` ; le workflow Netlify a été
       supprimé avec l'hébergement Netlify).
-- [ ] 8. Crons Supabase configurés avec le header `x-cron-secret` (5 cadences,
+- [ ] 8. Crons Supabase configurés avec le header `x-cron-secret` (6 cadences,
       DEPLOYMENT.md) → attendu le lendemain : posts auto générés + email de
       validation reçu. **`health-alert` en premier** (horaire) : c'est lui qui
       vous signalera l'échec des autres.
@@ -395,20 +437,28 @@ Cochez dans l'ordre. Chaque étape a un résultat observable.
 - [ ] 10. Inscription → onboarding → connexion d'un réseau (Zernio) →
       génération d'un post (texte + affiche) → validation → publication →
       le post est visible sur le réseau social → il apparaît dans Statistiques.
-- [ ] 11. Vérifier le plan : un nouveau compte est `starter` ; tenter
-      `UPDATE profiles SET plan='enterprise'` **depuis le client** (console
-      navigateur) → doit être ignoré (trigger). L'attribuer depuis le SQL
-      Editor → l'auto-réponse aux commentaires se débloque.
-- [ ] 11 bis. Vérifier les limites du forfait : sur un compte `starter`, le
-      profil ne doit proposer que jusqu'à 3 posts/semaine, et la connexion
-      d'un 3ᵉ réseau doit être refusée avec un message explicite.
+- [ ] 11. Vérifier l'essai : s'inscrire depuis « Essai gratuit » du forfait
+      Starter → le tableau de bord affiche « Essai gratuit Starter — encore
+      7 jours ». Tenter `UPDATE profiles SET trial_ends_at='2099-01-01'`
+      **depuis le client** (console navigateur) → doit être ignoré (trigger).
+- [ ] 11 bis. Vérifier les limites : sur ce compte Starter, le profil ne
+      propose que jusqu'à 3 posts/semaine, et la connexion d'un 3ᵉ réseau est
+      refusée avec un message explicite.
+- [ ] 11 quater. Parcours de paiement : `/abonnement` → déclarer un paiement
+      (petit montant réel ou référence de test) → l'email « paiement à
+      vérifier » arrive → **Valider** dans `/admin` → le client reçoit
+      l'email de confirmation et son bandeau disparaît. Dans le SQL Editor,
+      mettre `trial_ends_at` d'un compte de test dans le passé → le bandeau
+      rouge apparaît et « Générer » renvoie vers `/abonnement`.
 - [ ] 11 ter. Renseigner `VITE_SUPPORT_EMAIL` (les pages légales la donnent
       comme contact pour les demandes RGPD — elle doit recevoir du courrier)
       et, si vous en avez, `VITE_SOCIAL_*`. Ajouter vos vrais témoignages dans
       `src/lib/testimonials.ts` quand des clients acceptent d'être cités.
 
 ### E. Avant la mise en paiement (plus tard, mais bloquant pour encaisser)
-- [ ] 12. Intégration Mobile Money (CinetPay/PayDunya) + webhook → `plan`.
+- [ ] 12. Renseigner `VITE_PAYMENT_*` et `CONTACT_TO`, reconstruire, et faire
+      un vrai paiement de bout en bout (§D 11 quater). Plus tard : agrégateur
+      Mobile Money + webhook écrivant dans `subscription_requests`.
 - [ ] 13. Relire `docs/PRICING.md` en entier (quotas, add-ons, marges par
       palier Zernio) avant de figer la grille publique.
 - [ ] 14. Mettre en place l'observabilité minimale (§5 P1) — ne lancez pas

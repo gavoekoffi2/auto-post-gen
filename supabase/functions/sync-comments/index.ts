@@ -11,7 +11,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { buildCorsHeaders, jsonResponse } from "../_shared/cors.ts";
-import { planLimits } from "../_shared/plans.ts";
+import { ENTITLEMENT_COLUMNS, resolveEntitlement, type SubscriptionFields } from "../_shared/plans.ts";
 import {
   draftReply,
   zernioGetPostComments,
@@ -28,8 +28,11 @@ const AUTO_REPLY_CAP = 10; // max auto-replies per user per run
 // the feature. `plan` is trigger-protected from client writes (see migration),
 // so this read is authoritative. The entitlement itself lives in
 // _shared/plans.ts so every limit is defined in exactly one place.
-function canAutoReply(profile: { auto_reply_enabled?: boolean; plan?: string } | null): boolean {
-  return !!profile?.auto_reply_enabled && planLimits(profile?.plan).aiAutoReply;
+// An expired account stops receiving AI replies along with other generation.
+function canAutoReply(profile: (SubscriptionFields & { auto_reply_enabled?: boolean }) | null): boolean {
+  if (!profile?.auto_reply_enabled) return false;
+  const entitlement = resolveEntitlement(profile);
+  return entitlement.canGenerate && entitlement.limits.aiAutoReply;
 }
 
 type SyncResult = { fetched: number; inserted: number; replied: number; note?: string };
@@ -144,7 +147,7 @@ async function syncUserZernio(
   if (newRows.length > 0) {
     const { data: profile } = await supabase
       .from("profiles")
-      .select("tone, auto_reply_instructions, auto_reply_enabled, plan")
+      .select(`tone, auto_reply_instructions, auto_reply_enabled, ${ENTITLEMENT_COLUMNS}`)
       .eq("id", userId)
       .maybeSingle();
     if (profile && canAutoReply(profile as any)) {

@@ -9,7 +9,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { buildCorsHeaders } from "../_shared/cors.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { getSocialImageSpec, type SocialImageSpec } from "../_shared/socialImageSpecs.ts";
-import { planLimits } from "../_shared/plans.ts";
+import { ENTITLEMENT_COLUMNS, resolveEntitlement, SUBSCRIPTION_EXPIRED_MESSAGE } from "../_shared/plans.ts";
 import { safeGraphisteStatusUrl } from "../_shared/graphiste.ts";
 import { fetchImageBytes } from "../_shared/safeFetch.ts";
 // Image generation for Pro Social AI must produce real poster layouts.
@@ -630,12 +630,17 @@ serve(async (req) => {
     } else {
       // Monthly poster ceiling for the user's PLAN. Each poster is a paid
       // premium 2K render, so this is the main cost control.
+      // A resumed job above is not gated: the render was already paid for.
       const { data: planRow } = await supabase
         .from("profiles")
-        .select("plan")
+        .select(ENTITLEMENT_COLUMNS)
         .eq("id", userId)
         .maybeSingle();
-      const limits = planLimits(planRow?.plan);
+      const entitlement = resolveEntitlement(planRow);
+      if (!entitlement.canGenerate) {
+        return jsonResponse({ error: SUBSCRIPTION_EXPIRED_MESSAGE, code: "subscription_expired", format }, 402);
+      }
+      const limits = entitlement.limits;
       const monthSince = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
       const { count: monthCount } = await supabase
         .from("generation_usage")

@@ -53,7 +53,7 @@ const REQUIRED_SECRETS: Array<{ name: string; impact: string }> = [
 ];
 
 const OPTIONAL_SECRETS: Array<{ name: string; impact: string }> = [
-  { name: "RESEND_API_KEY", impact: "pas d'email de validation ni de formulaire de contact" },
+  { name: "RESEND_API_KEY", impact: "pas d'email de validation, de contact, de rappel de fin d'essai ni d'alerte de paiement" },
   { name: "RESEND_FROM", impact: "expéditeur email non configuré" },
 ];
 
@@ -417,6 +417,36 @@ async function pipelineChecks(supabase: any): Promise<HealthCheck[]> {
       label: "Génération hebdomadaire",
       status: "warn",
       detail: "vérification impossible",
+    });
+  }
+
+  // 5. Customers who paid and are still waiting. Every hour one waits is an
+  //    hour a paying customer cannot generate, so this is surfaced (and, as an
+  //    error after a day, emailed by health-alert) rather than left to /admin.
+  try {
+    const waitingSince = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { count: waiting, error } = await supabase
+      .from("subscription_requests")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "pending")
+      .lte("created_at", waitingSince);
+    if (error) throw error;
+    checks.push({
+      id: "billing:pending",
+      label: "Paiements à vérifier",
+      status: waiting > 0 ? "error" : "ok",
+      detail: waiting > 0
+        ? `${waiting} paiement(s) déclaré(s) il y a plus de 24 h, toujours pas vérifié(s)`
+        : "aucun paiement en attente depuis plus de 24 h",
+      remedy: waiting > 0 ? "Validez ou refusez-les dans la section « Paiements à vérifier » ci-dessous." : undefined,
+    });
+  } catch {
+    checks.push({
+      id: "billing:pending",
+      label: "Paiements à vérifier",
+      status: "warn",
+      detail: "vérification impossible",
+      remedy: "Vérifiez que la migration 20260923000000_trial_and_subscriptions est appliquée.",
     });
   }
 

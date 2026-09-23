@@ -29,10 +29,14 @@ Si ça passe en local, ça passe en CI.
 
 ## Invariants à ne pas casser
 
-1. **Tout ce qui est vendu est appliqué côté serveur.** Les limites de forfait
-   vivent dans `supabase/functions/_shared/plans.ts` (miroir UI :
-   `src/lib/plans.ts`, un test échoue si les deux divergent). Le forfait se lit
-   **toujours** en base avec le rôle service, jamais depuis la requête.
+1. **Tout ce qui est vendu est appliqué côté serveur.** Limites, prix et
+   cycle de vie (essai / actif / expiré) vivent dans
+   `supabase/functions/_shared/plans.ts` (miroir UI : `src/lib/plans.ts`,
+   identique après le marqueur — un test échoue si les deux divergent). Ce
+   qu'un compte peut faire se calcule **toujours** avec
+   `resolveEntitlement(<colonnes ENTITLEMENT_COLUMNS lues en base avec le rôle
+   service>)`, jamais depuis la requête ni depuis `plan` seul. Un compte
+   expiré ne génère plus rien ; ses posts déjà programmés sont publiés.
 
 2. **Graphiste GPT est le seul moteur d'affiches, sans repli.** Un repli
    silencieux produirait des visuels médiocres sans que personne ne le voie. Le

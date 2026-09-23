@@ -20,6 +20,12 @@ export const DashboardPreview = () => {
               app.prosocialai.com/dashboard
             </div>
           </div>
+          {/* The figures below are illustrative. Unlabelled, they read as a
+              real customer's results, which the public pages must never
+              imply (see src/lib/testimonials.ts). */}
+          <span className="px-2 py-0.5 rounded-full bg-muted/60 text-[10px] font-medium text-muted-foreground">
+            Données d'exemple
+          </span>
         </div>
         
         {/* Dashboard content */}

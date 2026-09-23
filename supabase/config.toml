@@ -89,3 +89,14 @@ verify_jwt = false
 # requires server-owned app_metadata role=admin/super_admin.
 [functions.admin-api]
 verify_jwt = false
+
+# Subscriptions. request-subscription records a declared Mobile Money payment
+# (user JWT checked in-function; the amount is computed server-side and it
+# grants nothing — admin-api approval does). subscription-reminders is
+# cron-only (CRON_SECRET) and emails accounts whose trial or paid period ends
+# soon.
+[functions.request-subscription]
+verify_jwt = false
+
+[functions.subscription-reminders]
+verify_jwt = false

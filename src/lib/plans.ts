@@ -12,6 +12,9 @@
 // to LABEL and pre-constrain the UI; the server copy is what actually enforces.
 // tests/plan-limits.test.js fails the build if the two drift.
 
+// ───── Everything below this line is shared verbatim with its mirror. ─────
+// tests/plan-limits.test.js fails the build if the two files differ here.
+
 export type PlanId = "starter" | "pro" | "enterprise";
 
 export interface PlanLimits {
@@ -59,6 +62,31 @@ export const PLAN_LIMITS: Record<PlanId, PlanLimits> = {
   },
 };
 
+export type BillingPeriod = "monthly" | "annual";
+
+/**
+ * Prices in FCFA. The pricing page, the payment screen and the server-side
+ * amount check all read these, so the price a customer is shown and the price
+ * they are asked to pay cannot drift apart.
+ *
+ * `annualPerMonth` is the displayed monthly equivalent; the amount charged for
+ * a year is twelve times it.
+ */
+export const PLAN_PRICES_FCFA: Record<PlanId, { monthly: number; annualPerMonth: number }> = {
+  starter: { monthly: 5000, annualPerMonth: 4200 },
+  pro: { monthly: 15000, annualPerMonth: 12500 },
+  enterprise: { monthly: 35000, annualPerMonth: 29000 },
+};
+
+/** What a customer pays for one billing period. */
+export function priceFor(plan: PlanId, period: BillingPeriod): number {
+  const price = PLAN_PRICES_FCFA[plan];
+  return period === "annual" ? price.annualPerMonth * 12 : price.monthly;
+}
+
+/** Length of the free trial, in days. Mirrored by the signup migration. */
+export const TRIAL_DAYS = 7;
+
 /** Unknown / missing plan falls back to the most restrictive tier. */
 export function planLimits(plan: string | null | undefined): PlanLimits {
   const key = (plan || "").trim().toLowerCase();
@@ -66,5 +94,135 @@ export function planLimits(plan: string | null | undefined): PlanLimits {
 }
 
 export function isPlanId(value: string | null | undefined): value is PlanId {
-  return !!value && value in PLAN_LIMITS;
+  return !!value && Object.prototype.hasOwnProperty.call(PLAN_LIMITS, value);
+}
+
+export type EntitlementState = "trialing" | "active" | "expired";
+
+export interface SubscriptionFields {
+  plan?: string | null;
+  subscription_status?: string | null;
+  trial_plan?: string | null;
+  trial_ends_at?: string | null;
+  current_period_ends_at?: string | null;
+}
+
+export interface Entitlement {
+  state: EntitlementState;
+  /** The plan whose limits apply right now (the trial plan while trialing). */
+  plan: PlanId;
+  limits: PlanLimits;
+  /** When the current trial or paid period ends; null = open-ended. */
+  endsAt: string | null;
+  /** Whole days left, rounded up; null when open-ended. 0 once expired. */
+  daysLeft: number | null;
+  /** May the account create new content (AI text, posters, networks)? */
+  canGenerate: boolean;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function daysUntil(iso: string, now: number): number {
+  return Math.max(0, Math.ceil((new Date(iso).getTime() - now) / DAY_MS));
+}
+
+/**
+ * The single answer to "what is this account allowed to do right now?".
+ *
+ * Derived from timestamps at read time rather than from a status some job has
+ * to update: a trial that ended at 03:00 is over at 03:00 whether or not any
+ * cron ran. Every server-side gate and every screen that shows the plan calls
+ * this, so the product never says one thing and enforces another.
+ *
+ *  - active, no end date     → the paid plan, open-ended (comped / legacy)
+ *  - active, end in future   → the paid plan until then
+ *  - trialing, end in future → the trial plan until then
+ *  - anything past its end   → expired: limits fall to Starter and new
+ *    generation stops. Posts already scheduled are still published.
+ */
+export function resolveEntitlement(
+  profile: SubscriptionFields | null | undefined,
+  now: number = Date.now(),
+): Entitlement {
+  const status = profile?.subscription_status;
+
+  if (status === "active") {
+    const plan = isPlanId(profile?.plan) ? profile!.plan as PlanId : "starter";
+    const endsAt = profile?.current_period_ends_at ?? null;
+    if (!endsAt || new Date(endsAt).getTime() > now) {
+      return {
+        state: "active",
+        plan,
+        limits: PLAN_LIMITS[plan],
+        endsAt,
+        daysLeft: endsAt ? daysUntil(endsAt, now) : null,
+        canGenerate: true,
+      };
+    }
+    return expired(endsAt);
+  }
+
+  if (status === "trialing") {
+    const plan = isPlanId(profile?.trial_plan) ? profile!.trial_plan as PlanId : "pro";
+    const endsAt = profile?.trial_ends_at ?? null;
+    if (endsAt && new Date(endsAt).getTime() > now) {
+      return {
+        state: "trialing",
+        plan,
+        limits: PLAN_LIMITS[plan],
+        endsAt,
+        daysLeft: daysUntil(endsAt, now),
+        canGenerate: true,
+      };
+    }
+    return expired(endsAt);
+  }
+
+  // No lifecycle data at all (a row predating the migration that somehow
+  // escaped the backfill): fail towards the most restrictive paid tier rather
+  // than locking the person out.
+  return {
+    state: "active",
+    plan: "starter",
+    limits: PLAN_LIMITS.starter,
+    endsAt: null,
+    daysLeft: null,
+    canGenerate: true,
+  };
+}
+
+function expired(endsAt: string | null): Entitlement {
+  return {
+    state: "expired",
+    plan: "starter",
+    limits: PLAN_LIMITS.starter,
+    endsAt,
+    daysLeft: 0,
+    canGenerate: false,
+  };
+}
+
+/** Columns to select from `profiles` to call resolveEntitlement. */
+export const ENTITLEMENT_COLUMNS =
+  "plan, subscription_status, trial_plan, trial_ends_at, current_period_ends_at";
+
+/** Shown wherever an expired account is refused new content. */
+export const SUBSCRIPTION_EXPIRED_MESSAGE =
+  "Votre essai gratuit ou votre abonnement est terminé. Choisissez un forfait " +
+  "sur la page Abonnement pour reprendre la génération : vos posts déjà " +
+  "programmés continuent d'être publiés.";
+
+/** Accepted payment channels, as stored in subscription_requests. */
+export const PAYMENT_METHODS = {
+  wave: "Wave",
+  orange_money: "Orange Money",
+  mtn_momo: "MTN Mobile Money",
+  moov_money: "Moov Money",
+  other: "Autre",
+} as const;
+
+export type PaymentMethod = keyof typeof PAYMENT_METHODS;
+
+export function isPaymentMethod(value: unknown): value is PaymentMethod {
+  return typeof value === "string" && Object.prototype.hasOwnProperty.call(PAYMENT_METHODS, value);
 }

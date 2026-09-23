@@ -21,7 +21,7 @@ import { AIQuotaError, chatCompletion, getOpenRouterKey, getTextModel } from "..
 import { buildAudiencePrompt, normalizeAudiences } from "../_shared/audience.ts";
 import { ensurePostEngagement } from "../_shared/post-engagement.ts";
 import { buildInspirationBlock, researchInspiration } from "../_shared/research.ts";
-import { planLimits } from "../_shared/plans.ts";
+import { ENTITLEMENT_COLUMNS, resolveEntitlement, SUBSCRIPTION_EXPIRED_MESSAGE } from "../_shared/plans.ts";
 
 
 // Per-user rate limit
@@ -174,14 +174,22 @@ serve(async (req) => {
     const prompt = typeof body.prompt === "string" ? body.prompt.slice(0, 2000) : "";
     const userPreferences: UserPreferences = body.userPreferences || {};
 
-    // Monthly ceiling for the user's PLAN, read server-side: `plan` is
-    // trigger-protected from client writes, so this cannot be self-upgraded.
+    // What this account may do right now (trial, paid period or expired),
+    // read server-side: the subscription columns are trigger-protected from
+    // client writes, so this cannot be self-upgraded or self-extended.
     const { data: planRow } = await supabase
       .from("profiles")
-      .select("plan")
+      .select(ENTITLEMENT_COLUMNS)
       .eq("id", userId)
       .maybeSingle();
-    const limits = planLimits(planRow?.plan);
+    const entitlement = resolveEntitlement(planRow);
+    if (!entitlement.canGenerate) {
+      return new Response(
+        JSON.stringify({ error: SUBSCRIPTION_EXPIRED_MESSAGE, code: "subscription_expired" }),
+        { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    const limits = entitlement.limits;
     const monthSince = new Date(Date.now() - MONTHLY_WINDOW_MS).toISOString();
     const { count: monthCount } = await supabase
       .from("generation_usage")

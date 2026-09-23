@@ -14,7 +14,7 @@ import {
   zernioListAccounts,
   zernioListProfiles,
 } from "../_shared/zernio.ts";
-import { planLimits } from "../_shared/plans.ts";
+import { ENTITLEMENT_COLUMNS, resolveEntitlement, SUBSCRIPTION_EXPIRED_MESSAGE } from "../_shared/plans.ts";
 
 const SUPPORTED = [
   "linkedin",
@@ -102,13 +102,14 @@ serve(async (req) => {
     );
     if (upErr) console.error("zernio-connect upsert:", upErr);
 
-    // How many networks this plan includes, read server-side.
+    // How many networks this account includes right now, read server-side.
     const { data: planRow } = await admin
       .from("profiles")
-      .select("plan")
+      .select(ENTITLEMENT_COLUMNS)
       .eq("id", userId)
       .maybeSingle();
-    const limits = planLimits(planRow?.plan);
+    const entitlement = resolveEntitlement(planRow);
+    const limits = entitlement.limits;
 
     if (!platform) {
       return jsonResponse(
@@ -134,6 +135,14 @@ serve(async (req) => {
     const alreadyLinked = connected.some(
       (a) => (a.platform || "").toLowerCase() === platform && a.isActive !== false,
     );
+    // An expired account keeps the networks it has (already scheduled posts
+    // still go out through them) and may repair them, but adds no new ones.
+    if (!alreadyLinked && !entitlement.canGenerate) {
+      return jsonResponse(
+        { error: SUBSCRIPTION_EXPIRED_MESSAGE, code: "subscription_expired" },
+        { status: 402, cors },
+      );
+    }
     if (!alreadyLinked && activeCount >= limits.socialAccounts) {
       return jsonResponse(
         {

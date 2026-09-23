@@ -183,7 +183,9 @@ test('AI comment auto-reply is gated to the Enterprise plan (server-side)', () =
   // itself now lives in _shared/plans.ts, so assert the gate is wired to it
   // rather than to a constant that used to be inlined here.
   const plans = read('supabase/functions/_shared/plans.ts');
-  assert.match(sync, /planLimits\(profile\?\.plan\)\.aiAutoReply/);
+  // Through the entitlement, so a trial of Enterprise includes it and an
+  // expired account does not.
+  assert.match(sync, /entitlement\.canGenerate && entitlement\.limits\.aiAutoReply/);
   assert.match(sync, /canAutoReply/);
   assert.match(plans, /enterprise:[\s\S]*?aiAutoReply: true/);
   assert.match(plans, /starter:[\s\S]*?aiAutoReply: false/);
@@ -209,9 +211,10 @@ test('monthly usage caps exist for text and image generation, driven by the plan
   assert.match(genContent, /Limite mensuelle/);
   assert.match(genImage, /limits\.monthlyImageGenerations/);
   for (const source of [genContent, genImage]) {
-    assert.match(source, /planLimits\(planRow\?\.plan\)/);
+    assert.match(source, /resolveEntitlement\(planRow\)/);
     // Never trust a plan supplied by the caller.
     assert.doesNotMatch(source, /planLimits\(body/);
+    assert.doesNotMatch(source, /resolveEntitlement\(body/);
   }
 });
 
@@ -249,7 +252,7 @@ test('no edge function is deployed without a product path to it', () => {
   }
 
   // Each remaining function is either called by the frontend or driven by cron.
-  const cronOnly = new Set(['auto-generate-weekly', 'send-validation-email', 'health-alert']);
+  const cronOnly = new Set(['auto-generate-weekly', 'send-validation-email', 'health-alert', 'subscription-reminders']);
   const frontendSources = readdirSync(dir('src/pages'))
     .map((f) => `src/pages/${f}`)
     .concat(readdirSync(dir('src/components')).map((f) => `src/components/${f}`))

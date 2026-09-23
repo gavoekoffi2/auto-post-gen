@@ -2,6 +2,8 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, type User } from "https://esm.sh/@supabase/supabase-js@2.74.0";
 import { buildCorsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { runHealthChecks } from "../_shared/health.ts";
+import { emailLayout, escapeHtml, formatFcfa, getEmailConfig, sendEmail } from "../_shared/email.ts";
+import { ENTITLEMENT_COLUMNS, PLAN_LIMITS, isPlanId, type PlanId } from "../_shared/plans.ts";
 
 // Canonical owner account, overridable without a code change. Keep the default
 // so an existing deployment behaves identically when the secret is not set.
@@ -9,6 +11,7 @@ const FOUNDER_EMAIL = (Deno.env.get("FOUNDER_EMAIL") || "c1domefa@gmail.com")
   .trim()
   .toLowerCase();
 const VALID_PLANS = new Set(["starter", "pro", "enterprise"]);
+const MAX_TRIAL_EXTENSION_DAYS = 30;
 
 type AdminBody = {
   action?: string;
@@ -19,7 +22,34 @@ type AdminBody = {
   role?: "user" | "admin" | "super_admin";
   blocked?: boolean;
   companyName?: string;
+  requestId?: string;
+  note?: string;
+  days?: number;
 };
+
+/**
+ * Same calendar day `months` later, clamped to the end of a shorter month
+ * (31 January + 1 month = 28/29 February, not 3 March).
+ */
+function addMonths(from: Date, months: number): Date {
+  const result = new Date(from.getTime());
+  const day = result.getUTCDate();
+  result.setUTCDate(1);
+  result.setUTCMonth(result.getUTCMonth() + months);
+  const lastDay = new Date(Date.UTC(result.getUTCFullYear(), result.getUTCMonth() + 1, 0)).getUTCDate();
+  result.setUTCDate(Math.min(day, lastDay));
+  return result;
+}
+
+function formatDateFr(date: Date): string {
+  return date.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric", timeZone: "Africa/Abidjan" });
+}
+
+// GoTrue returns banned_until on the user, but supabase-js does not type it.
+function isBanned(user: User): boolean {
+  const bannedUntil = (user as User & { banned_until?: string | null }).banned_until;
+  return !!bannedUntil && new Date(bannedUntil).getTime() > Date.now();
+}
 
 function safeUser(user: User) {
   return {
@@ -28,7 +58,7 @@ function safeUser(user: User) {
     createdAt: user.created_at,
     lastSignInAt: user.last_sign_in_at ?? null,
     role: user.app_metadata?.role ?? "user",
-    blocked: !!user.banned_until && new Date(user.banned_until).getTime() > Date.now(),
+    blocked: isBanned(user),
     // The owner account cannot be demoted, blocked or deleted (enforced below).
     // Sent to the admin UI so it does not have to embed the owner's email
     // address in the public JS bundle to grey out those controls.
@@ -114,8 +144,9 @@ serve(async (req) => {
         publishedTotal,
         usageTotal,
         connectionsTotal,
+        pendingSubscriptions,
       ] = await Promise.all([
-        ids.length ? admin.from("profiles").select("id,email,company_name,sector,plan,created_at").in("id", ids) : Promise.resolve({ data: [], error: null }),
+        ids.length ? admin.from("profiles").select(`id,email,company_name,sector,created_at,${ENTITLEMENT_COLUMNS}`).in("id", ids) : Promise.resolve({ data: [], error: null }),
         admin.from("posts").select("user_id,status").order("created_at", { ascending: false }).limit(ROW_CAP),
         admin.from("generation_usage").select("user_id").order("created_at", { ascending: false }).limit(ROW_CAP),
         admin.from("social_connections").select("user_id").order("created_at", { ascending: false }).limit(ROW_CAP),
@@ -123,6 +154,7 @@ serve(async (req) => {
         admin.from("posts").select("id", { count: "exact", head: true }).eq("status", "published"),
         admin.from("generation_usage").select("id", { count: "exact", head: true }),
         admin.from("social_connections").select("id", { count: "exact", head: true }),
+        admin.from("subscription_requests").select("id", { count: "exact", head: true }).eq("status", "pending"),
       ]);
       // The count queries belong in this guard too. Left out, a failed count
       // became `?? 0` or fell back to the length of the truncated sample — the
@@ -130,7 +162,7 @@ serve(async (req) => {
       // silently, which is the exact failure this pair of queries replaced.
       for (const result of [
         profilesResult, postsResult, usageResult, connectionsResult,
-        postsTotal, publishedTotal, usageTotal, connectionsTotal,
+        postsTotal, publishedTotal, usageTotal, connectionsTotal, pendingSubscriptions,
       ]) {
         if (result.error) throw result.error;
       }
@@ -172,9 +204,29 @@ serve(async (req) => {
           published: publishedTotal.count ?? 0,
           generations: usageTotal.count ?? 0,
           connections: connectionsTotal.count ?? 0,
+          pendingSubscriptions: pendingSubscriptions.count ?? 0,
         },
         perUserTruncated,
         users: enriched,
+      }, { cors: corsHeaders });
+    }
+
+    // Payment declarations to verify, newest first, with who sent them.
+    if (action === "subscriptions") {
+      const { data: requests, error } = await admin
+        .from("subscription_requests")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(100);
+      if (error) throw error;
+      const userIds = [...new Set((requests || []).map((r) => r.user_id))];
+      const { data: owners, error: ownersError } = userIds.length
+        ? await admin.from("profiles").select(`id,email,company_name,${ENTITLEMENT_COLUMNS}`).in("id", userIds)
+        : { data: [], error: null };
+      if (ownersError) throw ownersError;
+      const byId = new Map((owners || []).map((o) => [o.id, o]));
+      return jsonResponse({
+        requests: (requests || []).map((r) => ({ ...r, profile: byId.get(r.user_id) || null })),
       }, { cors: corsHeaders });
     }
 
@@ -195,10 +247,125 @@ serve(async (req) => {
         app_metadata: { role },
       });
       if (error || !data.user) throw error || new Error("Création impossible");
-      if (body.plan && VALID_PLANS.has(body.plan)) {
-        await admin.from("profiles").update({ plan: body.plan, company_name: body.companyName || null }).eq("id", data.user.id);
+      // With a plan, the operator is granting it (no end date); without one
+      // the account gets the same free trial as a self-service signup.
+      const granted = body.plan && VALID_PLANS.has(body.plan)
+        ? { plan: body.plan, subscription_status: "active", current_period_ends_at: null }
+        : {};
+      if (body.companyName || Object.keys(granted).length) {
+        const { error: profileError } = await admin
+          .from("profiles")
+          .update({ ...granted, ...(body.companyName ? { company_name: body.companyName } : {}) })
+          .eq("id", data.user.id);
+        if (profileError) throw profileError;
       }
       return jsonResponse({ success: true, user: safeUser(data.user) }, { cors: corsHeaders });
+    }
+
+    if (action === "approve_subscription" || action === "reject_subscription") {
+      if (!body.requestId) return jsonResponse({ error: "Demande requise" }, { status: 400, cors: corsHeaders });
+      const { data: request, error: requestError } = await admin
+        .from("subscription_requests")
+        .select("*")
+        .eq("id", body.requestId)
+        .maybeSingle();
+      if (requestError) throw requestError;
+      if (!request) return jsonResponse({ error: "Demande introuvable" }, { status: 404, cors: corsHeaders });
+      if (request.status !== "pending") {
+        return jsonResponse({ error: "Cette demande a déjà été traitée" }, { status: 409, cors: corsHeaders });
+      }
+      const { data: owner, error: ownerError } = await admin
+        .from("profiles")
+        .select(`email, company_name, ${ENTITLEMENT_COLUMNS}`)
+        .eq("id", request.user_id)
+        .maybeSingle();
+      if (ownerError) throw ownerError;
+      if (!owner) return jsonResponse({ error: "Compte introuvable" }, { status: 404, cors: corsHeaders });
+
+      const decidedAt = new Date();
+      const note = (body.note || "").trim().slice(0, 500) || null;
+      // Claim the request first, conditionally on it still being pending, so
+      // two admins clicking at once cannot grant the same payment twice.
+      const { data: claimed, error: claimError } = await admin
+        .from("subscription_requests")
+        .update({
+          status: action === "approve_subscription" ? "approved" : "rejected",
+          admin_note: note,
+          decided_at: decidedAt.toISOString(),
+          decided_by: actor.id,
+        })
+        .eq("id", request.id)
+        .eq("status", "pending")
+        .select("id")
+        .maybeSingle();
+      if (claimError) throw claimError;
+      if (!claimed) return jsonResponse({ error: "Cette demande a déjà été traitée" }, { status: 409, cors: corsHeaders });
+
+      const email = getEmailConfig();
+      const planLabel = isPlanId(request.plan) ? PLAN_LIMITS[request.plan as PlanId].label : String(request.plan);
+
+      if (action === "reject_subscription") {
+        if (email && owner.email) {
+          await sendEmail(email, {
+            to: owner.email,
+            subject: "Votre paiement Pro Social AI n'a pas pu être confirmé",
+            html: emailLayout(
+              "Paiement non confirmé",
+              `<p>Nous n'avons pas pu confirmer votre paiement de ${escapeHtml(formatFcfa(request.amount_fcfa))}
+               (référence <strong>${escapeHtml(request.payment_reference)}</strong>) pour le forfait
+               ${escapeHtml(planLabel)}.</p>
+               ${note ? `<p><strong>Motif :</strong> ${escapeHtml(note)}</p>` : ""}
+               <p>Vérifiez la référence de la transaction et renvoyez votre demande, ou répondez à cet
+               email si vous pensez qu'il s'agit d'une erreur.</p>
+               ${email.appUrl ? `<p><a href="${escapeHtml(email.appUrl)}/abonnement">Revenir à mon abonnement</a></p>` : ""}`,
+            ),
+          });
+        }
+        return jsonResponse({ success: true }, { cors: corsHeaders });
+      }
+
+      // A renewal paid while the current paid period still runs extends it
+      // (no day is lost by paying early); anything else starts today. An
+      // upgrade mid-period applies the new plan immediately and extends from
+      // the current end date, in the customer's favour.
+      const currentEnd = owner.current_period_ends_at ? new Date(owner.current_period_ends_at) : null;
+      const base = owner.subscription_status === "active" && currentEnd && currentEnd > decidedAt
+        ? currentEnd
+        : decidedAt;
+      const periodEnd = addMonths(base, request.billing_period === "annual" ? 12 : 1);
+      const { error: activateError } = await admin
+        .from("profiles")
+        .update({
+          plan: request.plan,
+          subscription_status: "active",
+          current_period_ends_at: periodEnd.toISOString(),
+          expiry_reminder_sent_at: null,
+        })
+        .eq("id", request.user_id);
+      if (activateError) {
+        // Never leave a payment marked approved on an account that was not
+        // upgraded: put it back in the queue and report the failure.
+        await admin
+          .from("subscription_requests")
+          .update({ status: "pending", admin_note: null, decided_at: null, decided_by: null })
+          .eq("id", request.id);
+        throw activateError;
+      }
+      if (email && owner.email) {
+        await sendEmail(email, {
+          to: owner.email,
+          subject: `Votre abonnement ${planLabel} est actif`,
+          html: emailLayout(
+            "Merci, votre abonnement est actif",
+            `<p>Votre paiement de ${escapeHtml(formatFcfa(request.amount_fcfa))} a été confirmé.
+             Votre forfait <strong>${escapeHtml(planLabel)}</strong> est actif jusqu'au
+             <strong>${escapeHtml(formatDateFr(periodEnd))}</strong>.</p>
+             <p>Nous vous enverrons un rappel quelques jours avant l'échéance.</p>
+             ${email.appUrl ? `<p><a href="${escapeHtml(email.appUrl)}/dashboard">Ouvrir mon tableau de bord</a></p>` : ""}`,
+          ),
+        });
+      }
+      return jsonResponse({ success: true, currentPeriodEndsAt: periodEnd.toISOString() }, { cors: corsHeaders });
     }
 
     const targetId = body.userId;
@@ -210,7 +377,48 @@ serve(async (req) => {
 
     if (action === "set_plan") {
       if (!body.plan || !VALID_PLANS.has(body.plan)) return jsonResponse({ error: "Forfait invalide" }, { status: 400, cors: corsHeaders });
-      const { error } = await admin.from("profiles").update({ plan: body.plan }).eq("id", targetId);
+      // Setting a plan by hand activates it. A paid period still running
+      // keeps its end date (this is a plan change, not a free extension); an
+      // elapsed one is cleared, otherwise the account would stay expired and
+      // the change would appear to do nothing.
+      const { data: current, error: readError } = await admin
+        .from("profiles")
+        .select("current_period_ends_at")
+        .eq("id", targetId)
+        .maybeSingle();
+      if (readError) throw readError;
+      const stillRunning = current?.current_period_ends_at &&
+        new Date(current.current_period_ends_at).getTime() > Date.now();
+      const { error } = await admin.from("profiles").update({
+        plan: body.plan,
+        subscription_status: "active",
+        current_period_ends_at: stillRunning ? current.current_period_ends_at : null,
+      }).eq("id", targetId);
+      if (error) throw error;
+    } else if (action === "extend_trial") {
+      // For a prospect who needs a few more days to decide. Counted from the
+      // later of now and the current trial end, so extending an expired trial
+      // reopens it and extending a running one does not waste its remainder.
+      const days = Math.floor(Number(body.days));
+      if (!Number.isFinite(days) || days < 1 || days > MAX_TRIAL_EXTENSION_DAYS) {
+        return jsonResponse({ error: `Durée invalide (1 à ${MAX_TRIAL_EXTENSION_DAYS} jours)` }, { status: 400, cors: corsHeaders });
+      }
+      const { data: current, error: readError } = await admin
+        .from("profiles")
+        .select("subscription_status, trial_ends_at")
+        .eq("id", targetId)
+        .maybeSingle();
+      if (readError) throw readError;
+      if (!current) return jsonResponse({ error: "Compte introuvable" }, { status: 404, cors: corsHeaders });
+      if (current.subscription_status !== "trialing") {
+        return jsonResponse({ error: "Ce compte n'est pas en essai" }, { status: 400, cors: corsHeaders });
+      }
+      const currentEnd = current.trial_ends_at ? new Date(current.trial_ends_at).getTime() : 0;
+      const base = Math.max(Date.now(), currentEnd);
+      const { error } = await admin.from("profiles").update({
+        trial_ends_at: new Date(base + days * 24 * 60 * 60 * 1000).toISOString(),
+        expiry_reminder_sent_at: null,
+      }).eq("id", targetId);
       if (error) throw error;
     } else if (action === "set_role") {
       if (!body.role || !new Set(["user", "admin", "super_admin"]).has(body.role)) return jsonResponse({ error: "Rôle invalide" }, { status: 400, cors: corsHeaders });

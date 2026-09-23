@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { functionErrorMessage } from "@/lib/functionError";
 import { usePageMeta } from "@/lib/usePageMeta";
+import { ENTITLEMENT_COLUMNS, resolveEntitlement, type Entitlement } from "@/lib/plans";
 import {
   ArrowLeft,
   Bot,
@@ -45,9 +46,11 @@ const Comments = () => {
 
   const [autoReply, setAutoReply] = useState(false);
   const [instructions, setInstructions] = useState("");
-  const [plan, setPlan] = useState<string>("starter");
+  const [entitlement, setEntitlement] = useState<Entitlement>(() => resolveEntitlement(null));
   const [savingSettings, setSavingSettings] = useState(false);
-  const isEnterprise = plan === "enterprise";
+  // Same rule as sync-comments: the plan (or trial) must include the feature
+  // and the account must not have expired.
+  const isEnterprise = entitlement.canGenerate && entitlement.limits.aiAutoReply;
 
   const loadComments = async () => {
     const { data: userData } = await supabase.auth.getUser();
@@ -72,12 +75,12 @@ const Comments = () => {
     if (!userData?.user) return;
     const { data } = await supabase
       .from("profiles")
-      .select("auto_reply_enabled, auto_reply_instructions, plan")
+      .select(`auto_reply_enabled, auto_reply_instructions, ${ENTITLEMENT_COLUMNS}`)
       .eq("id", userData.user.id)
       .maybeSingle();
     setAutoReply(!!data?.auto_reply_enabled);
     setInstructions(data?.auto_reply_instructions || "");
-    setPlan((data as { plan?: string } | null)?.plan || "starter");
+    setEntitlement(resolveEntitlement(data));
   };
 
   useEffect(() => {
@@ -277,11 +280,9 @@ const Comments = () => {
                 <span className="font-medium text-foreground">Enterprise</span>. Vous pouvez
                 toujours répondre manuellement (avec l'aide de l'IA) ci-dessous.
               </p>
-              <a href="/#pricing">
-                <Button size="sm" className="bg-gradient-to-r from-primary to-secondary whitespace-nowrap">
-                  Voir les tarifs
-                </Button>
-              </a>
+              <Button asChild size="sm" className="bg-gradient-to-r from-primary to-secondary whitespace-nowrap">
+                <Link to="/abonnement?plan=enterprise">Passer à Enterprise</Link>
+              </Button>
             </div>
           )}
         </Card>

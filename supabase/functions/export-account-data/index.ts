@@ -34,7 +34,7 @@ serve(async (req) => {
   const userId = user.id;
 
   try {
-    const [profile, posts, comments, usage, connections] = await Promise.all([
+    const [profile, posts, comments, usage, connections, subscriptionRequests] = await Promise.all([
       admin.from("profiles").select("*").eq("id", userId).maybeSingle(),
       admin.from("posts").select("*").eq("user_id", userId),
       admin.from("social_comments").select("*").eq("user_id", userId),
@@ -47,6 +47,10 @@ serve(async (req) => {
           "id,provider,platform,account_name,account_username,created_at,updated_at,token_expires_at",
         )
         .eq("user_id", userId),
+      admin
+        .from("subscription_requests")
+        .select("id,plan,billing_period,amount_fcfa,payment_method,payer_phone,payment_reference,status,admin_note,decided_at,created_at")
+        .eq("user_id", userId),
     ]);
 
     const payload = {
@@ -57,6 +61,7 @@ serve(async (req) => {
       comments: comments.data ?? [],
       generation_usage: usage.data ?? [],
       social_connections: connections.data ?? [],
+      subscription_requests: subscriptionRequests.data ?? [],
     };
 
     return new Response(JSON.stringify(payload, null, 2), {

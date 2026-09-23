@@ -15,6 +15,13 @@ interface ImportMetaEnv {
   readonly VITE_SOCIAL_TWITTER?: string;
   readonly VITE_SOCIAL_LINKEDIN?: string;
   readonly VITE_SOCIAL_INSTAGRAM?: string;
+  /** Mobile Money receiving accounts: a phone number or an https:// payment link. */
+  readonly VITE_PAYMENT_WAVE?: string;
+  readonly VITE_PAYMENT_ORANGE_MONEY?: string;
+  readonly VITE_PAYMENT_MTN_MOMO?: string;
+  readonly VITE_PAYMENT_MOOV_MONEY?: string;
+  /** Account holder name shown next to the payment numbers. */
+  readonly VITE_PAYMENT_BENEFICIARY?: string;
 }
 
 interface ImportMeta {

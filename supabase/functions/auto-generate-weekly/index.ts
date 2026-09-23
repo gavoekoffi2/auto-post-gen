@@ -5,7 +5,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { chatText, getOpenRouterKey, getTextModel } from "../_shared/ai.ts";
 import { buildAudiencePrompt, normalizeAudiences } from "../_shared/audience.ts";
 import { ensurePostEngagement } from "../_shared/post-engagement.ts";
-import { planLimits } from "../_shared/plans.ts";
+import { resolveEntitlement } from "../_shared/plans.ts";
 import { buildInspirationBlock, researchInspiration } from "../_shared/research.ts";
 import { rehostToUserAssets, startPosterJob } from "../_shared/graphiste.ts";
 
@@ -150,7 +150,15 @@ serve(async (req) => {
         // The weekly volume the customer PAID for. post_frequency is written
         // by the client, so it is a request, not an entitlement: a Starter
         // account setting it to 10 used to receive the Enterprise volume.
-        const limits = planLimits(profile.plan);
+        //
+        // A trial or paid period that has ended gets no new posts; what was
+        // already scheduled still goes out (publish-scheduled does not check).
+        const entitlement = resolveEntitlement(profile);
+        if (!entitlement.canGenerate) {
+          results.push({ userId: profile.id, postsGenerated: 0, skipped: true, reason: "subscription_expired" });
+          continue;
+        }
+        const limits = entitlement.limits;
         const postsNeeded = Math.min(
           HARD_MAX_POSTS_PER_RUN,
           limits.postsPerWeek,

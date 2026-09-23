@@ -291,6 +291,11 @@ export type Database = {
           auto_reply_enabled: boolean | null
           auto_reply_instructions: string | null
           plan: string
+          subscription_status: string
+          trial_plan: string
+          trial_ends_at: string | null
+          current_period_ends_at: string | null
+          expiry_reminder_sent_at: string | null
         }
         Insert: {
           activity_keywords?: string[] | null
@@ -334,6 +339,11 @@ export type Database = {
           auto_reply_enabled?: boolean | null
           auto_reply_instructions?: string | null
           plan?: string
+          subscription_status?: string
+          trial_plan?: string
+          trial_ends_at?: string | null
+          current_period_ends_at?: string | null
+          expiry_reminder_sent_at?: string | null
         }
         Update: {
           activity_keywords?: string[] | null
@@ -377,6 +387,59 @@ export type Database = {
           auto_reply_enabled?: boolean | null
           auto_reply_instructions?: string | null
           plan?: string
+          subscription_status?: string
+          trial_plan?: string
+          trial_ends_at?: string | null
+          current_period_ends_at?: string | null
+          expiry_reminder_sent_at?: string | null
+        }
+        Relationships: []
+      }
+      subscription_requests: {
+        Row: {
+          id: string
+          user_id: string
+          plan: string
+          billing_period: string
+          amount_fcfa: number
+          payment_method: string
+          payer_phone: string
+          payment_reference: string
+          status: string
+          admin_note: string | null
+          decided_at: string | null
+          decided_by: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          plan: string
+          billing_period: string
+          amount_fcfa: number
+          payment_method: string
+          payer_phone: string
+          payment_reference: string
+          status?: string
+          admin_note?: string | null
+          decided_at?: string | null
+          decided_by?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          plan?: string
+          billing_period?: string
+          amount_fcfa?: number
+          payment_method?: string
+          payer_phone?: string
+          payment_reference?: string
+          status?: string
+          admin_note?: string | null
+          decided_at?: string | null
+          decided_by?: string | null
+          created_at?: string
         }
         Relationships: []
       }

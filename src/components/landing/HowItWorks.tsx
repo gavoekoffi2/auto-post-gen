@@ -97,7 +97,7 @@ export const HowItWorks = () => {
         
         {/* CTA */}
         <div className="text-center mt-16">
-          <Link to="/auth" className="inline-flex items-center gap-2 text-primary font-semibold hover:underline">
+          <Link to="/auth?mode=signup" className="inline-flex items-center gap-2 text-primary font-semibold hover:underline">
             Commencer maintenant
             <ArrowRight className="w-4 h-4" />
           </Link>

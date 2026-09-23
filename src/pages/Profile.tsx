@@ -8,12 +8,12 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ArrowLeft, Save, Building2, Settings, ImageIcon } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { supabase } from '@/integrations/supabase/client';
 import { AudienceEditor } from '@/components/AudienceEditor';
 import { AudienceSegment, normalizeAudienceSegments } from '@/lib/audiences';
 import { functionErrorMessage } from "@/lib/functionError";
-import { PLAN_LIMITS, isPlanId, type PlanId } from "@/lib/plans";
+import { resolveEntitlement, type Entitlement } from "@/lib/plans";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -50,10 +50,11 @@ export default function Profile() {
   const [userEmail, setUserEmail] = useState("");
   const [autoPublishConfirmOpen, setAutoPublishConfirmOpen] = useState(false);
   const [autoPublishAcknowledged, setAutoPublishAcknowledged] = useState(false);
-  // The plan drives what this screen is ALLOWED to offer (weekly volume,
-  // networks). It is read-only here: `plan` is trigger-protected server-side.
-  const [plan, setPlan] = useState<PlanId>("starter");
-  const limits = PLAN_LIMITS[plan];
+  // The entitlement (trial, paid plan or expired) drives what this screen is
+  // ALLOWED to offer (weekly volume, networks). It is read-only here: the
+  // subscription columns are trigger-protected server-side.
+  const [entitlement, setEntitlement] = useState<Entitlement>(() => resolveEntitlement(null));
+  const limits = entitlement.limits;
   const [profile, setProfile] = useState({
     company_name: "",
     logo_url: "",
@@ -115,7 +116,7 @@ export default function Profile() {
       if (error) throw error;
 
       if (data) {
-        setPlan(isPlanId(data.plan) ? data.plan : "starter");
+        setEntitlement(resolveEntitlement(data));
         setProfile({
           company_name: data.company_name || "",
           logo_url: data.logo_url || "",
@@ -577,7 +578,12 @@ export default function Profile() {
                     Forfait {limits.label} : jusqu'à {limits.postsPerWeek} posts/semaine,{" "}
                     {limits.socialAccounts} réseau{limits.socialAccounts > 1 ? "x" : ""} social
                     {limits.socialAccounts > 1 ? "aux" : ""}, {limits.monthlyTextGenerations} textes
-                    et {limits.monthlyImageGenerations} affiches IA par mois.
+                    et {limits.monthlyImageGenerations} affiches IA par mois
+                    {entitlement.state === "trialing" && ` (essai gratuit, encore ${entitlement.daysLeft} j)`}
+                    {entitlement.state === "expired" && " — abonnement expiré"}.{" "}
+                    <Link to="/abonnement" className="underline hover:text-primary">
+                      Gérer mon abonnement
+                    </Link>
                   </p>
                 </div>
 

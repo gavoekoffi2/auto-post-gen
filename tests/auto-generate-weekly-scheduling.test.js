@@ -51,6 +51,8 @@ test('the weekly volume is capped by the plan, not by what the client asked for'
   // post_frequency is written by the browser; it is a request, not an
   // entitlement. Without the clamp a Starter account received the
   // Enterprise volume just by picking a bigger number.
-  assert.match(source, /planLimits\(profile\.plan\)/);
+  // Limits come from the entitlement (trial plan, paid plan or expired).
+  assert.match(source, /const entitlement = resolveEntitlement\(profile\)/);
+  assert.match(source, /const limits = entitlement\.limits/);
   assert.match(source, /limits\.postsPerWeek/);
 });

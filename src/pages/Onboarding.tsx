@@ -13,7 +13,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { AudienceEditor } from "@/components/AudienceEditor";
 import { AudienceSegment, normalizeAudienceSegments } from "@/lib/audiences";
 import { functionErrorMessage } from "@/lib/functionError";
-import { PLAN_LIMITS } from "@/lib/plans";
+import { ENTITLEMENT_COLUMNS, PLAN_LIMITS, resolveEntitlement, type Entitlement } from "@/lib/plans";
 import { usePageMeta } from "@/lib/usePageMeta";
 
 export default function Onboarding() {
@@ -21,6 +21,10 @@ export default function Onboarding() {
 
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
+  // What the new account is entitled to: normally the free trial of the plan
+  // picked on the pricing page. Starter until loaded, the safe default.
+  const [entitlement, setEntitlement] = useState<Entitlement>(() => resolveEntitlement(null));
+  const limits = entitlement.limits;
   const [loading, setLoading] = useState(false);
   const [analyzingAudiences, setAnalyzingAudiences] = useState(false);
   const [audienceAnalysisFailed, setAudienceAnalysisFailed] = useState(false);
@@ -60,9 +64,10 @@ export default function Onboarding() {
       // If onboarding was already completed, skip back to the dashboard.
       const { data: profile } = await supabase
         .from('profiles')
-        .select('sector, tone, content_types, company_name')
+        .select(`sector, tone, content_types, company_name, ${ENTITLEMENT_COLUMNS}`)
         .eq('id', session.user.id)
         .maybeSingle();
+      if (profile) setEntitlement(resolveEntitlement(profile));
       if (
         profile &&
         profile.sector &&
@@ -144,12 +149,11 @@ export default function Onboarding() {
               sector: formData.sector,
               content_types: [formData.contentType],
               tone: formData.tone,
-              // Every new account starts on `starter` (DB default, enforced by
-              // the guard_profile_plan trigger), so clamp to what that plan
-              // includes instead of persisting a number the cron will ignore.
+              // Clamp to what the account's plan (usually its trial) includes
+              // instead of persisting a number the cron will ignore.
               post_frequency: Math.min(
                 parseInt(formData.frequency),
-                PLAN_LIMITS.starter.postsPerWeek,
+                limits.postsPerWeek,
               ),
               description: formData.description,
               style_example: formData.styleExample,
@@ -323,12 +327,11 @@ export default function Onboarding() {
                     <SelectValue placeholder="Nombre de posts par semaine" />
                   </SelectTrigger>
                   <SelectContent>
-                    {/* Only what a brand-new account can actually receive.
-                        Every signup starts on Starter (DB default + trigger),
-                        so offering the Pro and Enterprise volumes here meant
-                        the choice was silently rewritten on save. */}
+                    {/* Only what this account can actually receive: offering
+                        a volume the plan does not include meant the choice
+                        was silently rewritten on save. */}
                     {Array.from(
-                      { length: PLAN_LIMITS.starter.postsPerWeek },
+                      { length: limits.postsPerWeek },
                       (_, i) => i + 1,
                     ).map((n) => (
                       <SelectItem key={n} value={n.toString()}>
@@ -338,9 +341,10 @@ export default function Onboarding() {
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
-                  Votre compte démarre sur le forfait {PLAN_LIMITS.starter.label} (jusqu'à{" "}
-                  {PLAN_LIMITS.starter.postsPerWeek} posts/semaine). Vous pourrez en recevoir
-                  davantage en changeant de forfait, depuis votre profil.
+                  {entitlement.state === "trialing"
+                    ? `Votre essai gratuit du forfait ${limits.label} inclut jusqu'à ${limits.postsPerWeek} posts/semaine.`
+                    : `Votre forfait ${limits.label} inclut jusqu'à ${limits.postsPerWeek} posts/semaine.`}{" "}
+                  Vous pourrez changer de forfait à tout moment depuis la page Abonnement.
                 </p>
               </div>
             </div>
