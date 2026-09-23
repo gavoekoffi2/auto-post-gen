@@ -65,6 +65,10 @@ services:
       #   * a password containing @ : / ? # works, instead of silently
       #     producing an unparseable URL and an authentication failure.
       # The host is the compose service name: separate containers, not localhost.
+      # The verified production connection string wins over legacy component
+      # variables, which may belong to another historical service. It stays in
+      # the protected environment file and is never printed.
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env.selfhosted}
       PGHOST: postgres
       PGPORT: 5432
       PGUSER: ${POSTGRES_USER}
@@ -139,6 +143,10 @@ services:
       NODE_ENV: production
       # Same parts as the API, so both reach the same database by the same
       # rules. Never a URL with the password in it.
+      # The verified production connection string wins over legacy component
+      # variables, which may belong to another historical service. It stays in
+      # the protected environment file and is never printed.
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env.selfhosted}
       PGHOST: postgres
       PGPORT: 5432
       PGUSER: ${POSTGRES_USER}
