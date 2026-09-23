@@ -81,7 +81,7 @@ hebdomadaires, changement d'email). Voir §9.
 | | |
 |---|---|
 | **Branche** | `claude/selfhosted-subscriptions-release-q7t4` |
-| **SHA du code** | `__CODE_SHA__` |
+| **SHA du code** | `d0e06b95b560baa870535d79c142c484086988f0` |
 | **SHA à déployer** | la pointe de la branche (ce document est le seul commit au-dessus du code ; `git log -1 --format=%H`) |
 | **Base** | `claude/legacy-status-compat-9m2x` @ `783938efbf206055bf6cf67d6a684ef11656fc94` |
 | **Fonctionnalités intégrées depuis** | `claude/magical-thompson-mjuif9` @ `66416276127588bdb50f179b6e6566ddb50cb663` |
