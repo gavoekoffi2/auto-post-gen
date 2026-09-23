@@ -344,7 +344,7 @@ hebdomadaires, changement d'email). Voir §9.
 | | |
 |---|---|
 | **Branche** | `claude/poster-character-audit-h7n3` |
-| **SHA du code** | `__CODE_SHA__` |
+| **SHA du code** | `d3cc7a0ef6065910305db24aca4cdbf9806e0527` |
 | **SHA à déployer** | la pointe de la branche (ce document est le seul commit au-dessus du code ; `git log -1 --format=%H`) |
 | **Base** | `claude/poster-character-q2w6` @ `bfce311933fc72146c426bc6a17c06ce28481f1a` (personnage sur les affiches, §000) |
 | **Base de la base** | `claude/selfhosted-provider-compat-r5k8` @ `1218ee09feac7d69be203e0a7da1a3bc81b7e67b` (correctif `provider` + référence unique, §00) |
