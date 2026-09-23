@@ -11,7 +11,8 @@
 --     profiles.user_id — so `profiles` has NO `email` column, which is the
 --     exact cause of `FAILED 0001_core_schema.sql: column "email" does not
 --     exist`;
---   * child tables are keyed by `user_id`, not `profile_id`;
+--   * child tables are keyed by `user_id`, not `profile_id` — EXCEPT
+--     generation_jobs, which production already keys by profile_id;
 --   * legacy NOT NULL constraints on those owner columns (the second
 --     blocker: the new API never writes them, so the first signup after a
 --     migration would fail);
@@ -20,6 +21,10 @@
 --     — which knows none of the statuses this build writes ('pending',
 --     'validated', 'publishing'). This is the third blocker, found by the
 --     rehearsal on a copy of the real database;
+--   * generation_jobs EXACTLY as production defines it, confirmed column by
+--     column on the restored copy — notably `provider text NOT NULL`. The
+--     fourth blocker: the write probe inserted a job without a provider,
+--     which the API itself never does (it always writes 'graphiste');
 --   * one account with a bcrypt-style password (unreadable by this build)
 --     and one with this build's own scrypt format (must be carried over).
 --
@@ -70,12 +75,21 @@ CREATE TABLE media_assets (
   created_at   timestamptz NOT NULL DEFAULT now()
 );
 
+-- generation_jobs: the REAL production definition, confirmed column by
+-- column by the rehearsal on a restored copy. Unlike the other child tables it
+-- is already keyed by profile_id, and it requires a provider: the fourth
+-- blocker was the write probe inserting a job without one.
 CREATE TABLE generation_jobs (
-  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id    uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  kind       text NOT NULL DEFAULT 'image',
-  status     text NOT NULL DEFAULT 'processing',
-  created_at timestamptz NOT NULL DEFAULT now()
+  id            uuid NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+  profile_id    uuid NOT NULL,
+  provider      text NOT NULL,
+  kind          text NOT NULL,
+  status        text NOT NULL DEFAULT 'queued',
+  input         jsonb NOT NULL DEFAULT '{}',
+  output        jsonb NULL,
+  error_message text NULL,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  finished_at   timestamptz NULL
 );
 
 CREATE TABLE social_connections (
@@ -125,8 +139,13 @@ INSERT INTO media_assets (id, user_id, storage_path, mime_type, size_bytes) VALU
   ('cccccccc-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111111',
    '11111111-1111-1111-1111-111111111111/legacy-affiche.png', 'image/png', 204800);
 
-INSERT INTO generation_jobs (id, user_id, kind, status) VALUES
-  ('dddddddd-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111111', 'image', 'completed');
+-- Two historical jobs in production's own vocabulary (a finished one and one
+-- still queued), which the migration must keep exactly as they are.
+INSERT INTO generation_jobs (id, profile_id, provider, kind, status, input, output, finished_at) VALUES
+  ('dddddddd-1111-1111-1111-111111111111', 'aaaaaaaa-1111-1111-1111-111111111111', 'graphiste', 'image',
+   'completed', '{"prompt": "affiche historique"}', '{"url": "https://example.invalid/affiche.png"}', now()),
+  ('dddddddd-2222-2222-2222-222222222222', 'aaaaaaaa-2222-2222-2222-222222222222', 'openrouter', 'image',
+   'queued', '{}', NULL, NULL);
 
 INSERT INTO social_connections (id, user_id, platform, account_id) VALUES
   ('eeeeeeee-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111111',

@@ -69,16 +69,29 @@ async function main(): Promise<void> {
       console.log("DRY RUN — every pending migration is applied and then rolled back.\n");
     }
 
-    await client.query(`
+    const ledgerDdl = `
       CREATE TABLE IF NOT EXISTS schema_migrations (
         filename   text PRIMARY KEY,
         applied_at timestamptz NOT NULL DEFAULT now()
       )
-    `);
+    `;
+
+    // A rehearsal must leave the database EXACTLY as it found it — including
+    // the ledger table itself, which used to be created here, outside the
+    // rolled-back transaction, so a "dry run" on a restored copy left an empty
+    // schema_migrations behind. In dry-run mode the ledger is only read if it
+    // exists; it is created inside the rehearsal's transaction below.
+    const ledgerExists = Boolean(
+      (await client.query<{ t: string | null }>(`SELECT to_regclass('public.schema_migrations')::text AS t`))
+        .rows[0]?.t,
+    );
+    if (!dryRun && !ledgerExists) await client.query(ledgerDdl);
 
     const applied = new Set(
-      (await client.query<{ filename: string }>(`SELECT filename FROM schema_migrations`))
-        .rows.map((r) => r.filename),
+      ledgerExists || !dryRun
+        ? (await client.query<{ filename: string }>(`SELECT filename FROM schema_migrations`))
+            .rows.map((r) => r.filename)
+        : [],
     );
 
     const files = (await readdir(migrationsDir)).filter((f) => f.endsWith(".sql")).sort();
@@ -98,6 +111,7 @@ async function main(): Promise<void> {
       // undoes everything — including the ledger rows.
       await client.query("BEGIN");
       try {
+        await client.query(ledgerDdl);
         for (const file of pending) {
           console.log(`would apply  ${file}`);
           await client.query(await readFile(join(migrationsDir, file), "utf8"));

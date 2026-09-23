@@ -27,13 +27,29 @@ import { toSubscriptionFields } from "./entitlement.js";
 //     customer sends can change what they are asked to pay.
 //   * A declaration grants nothing. Only an approval (an operator action)
 //     changes the account's plan or its end date.
-//   * The database refuses a second pending request per account and a
-//     reference reused across requests (unique indexes, migration 0003).
+//   * The database refuses a second pending request per account (0003) and
+//     any reuse of a Mobile Money reference, whatever the status of the
+//     declaration that used it first — pending, approved, rejected or
+//     cancelled (0005). A reference never comes back into circulation: after
+//     a typo, the operator rejects with a reason and the customer declares a
+//     new reference.
 
 export const MAX_TRIAL_EXTENSION_DAYS = 30;
 
 const PHONE_RE = /^\+?[0-9 ().-]{8,20}$/;
-const REFERENCE_RE = /^[A-Za-z0-9][A-Za-z0-9 ._/:#-]{3,63}$/;
+// Validated on the CANONICAL form (see canonicalReference): no whitespace,
+// upper case.
+const REFERENCE_RE = /^[A-Z0-9][A-Z0-9._/:#-]{3,63}$/;
+
+/**
+ * The one form a Mobile Money reference is stored and compared in: every
+ * whitespace removed, upper-cased. " mp2309.01 ", "MP 2309.01" and
+ * "MP2309.01" are the same transaction, and migration 0005 indexes exactly
+ * this expression so no writer can slip a variant past the rule.
+ */
+export function canonicalReference(raw: unknown): string {
+  return typeof raw === "string" ? raw.replace(/\s+/g, "").toUpperCase() : "";
+}
 
 export interface SubscriptionRequestRow {
   id: string;
@@ -128,7 +144,7 @@ export async function createRequest(
   if (!PHONE_RE.test(payerPhone)) {
     throw badRequest("Numéro de téléphone invalide. Indiquez le numéro qui a effectué le paiement.");
   }
-  const reference = typeof input.paymentReference === "string" ? input.paymentReference.trim() : "";
+  const reference = canonicalReference(input.paymentReference);
   if (!REFERENCE_RE.test(reference)) {
     throw badRequest(
       "Référence de paiement invalide. Recopiez l'identifiant de transaction reçu par SMS " +
@@ -151,9 +167,14 @@ export async function createRequest(
     // Both unique indexes are business rules, not failures: say which one.
     const pgErr = err as { code?: string; constraint?: string };
     if (pgErr.code === "23505") {
-      if (pgErr.constraint === "subscription_requests_reference_unique") {
+      if (
+        pgErr.constraint === "subscription_requests_reference_once" ||
+        pgErr.constraint === "subscription_requests_reference_unique"
+      ) {
         throw conflict(
-          "Cette référence de paiement a déjà été déclarée. Vérifiez l'identifiant de transaction.",
+          "Cette référence de paiement a déjà été déclarée : une référence ne peut servir qu'une seule fois. " +
+            "Vérifiez l'identifiant de transaction reçu par SMS ; si vous pensez qu'il s'agit d'une erreur, " +
+            "contactez-nous.",
           "duplicate_reference",
         );
       }

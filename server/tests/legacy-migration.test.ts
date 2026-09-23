@@ -204,7 +204,8 @@ test("no legacy row is lost, and every id is preserved", async () => {
     // One per legacy status: draft, scheduled, published, failed.
     posts: "4",
     media_assets: "1",
-    generation_jobs: "1",
+    // Production's two historical jobs (completed, queued).
+    generation_jobs: "2",
     social_connections: "1",
     audit_log: "2",
   });
@@ -217,7 +218,9 @@ test("no legacy row is lost, and every id is preserved", async () => {
       WHERE table_schema = 'public' AND column_name = 'user_id'
         AND table_name IN ('profiles','posts','media_assets','generation_jobs','social_connections')`,
   );
-  assert.equal(legacyColumns.length, 5, "legacy user_id columns must survive the migration");
+  // Four, not five: production's generation_jobs never had a user_id — it is
+  // keyed by profile_id already (the shape confirmed on the real copy).
+  assert.equal(legacyColumns.length, 4, "legacy user_id columns must survive the migration");
 
   const post = await rows<{ id: string; content: string; status: string }>(
     db,
@@ -394,8 +397,13 @@ test("a rehearsal (--dry-run) reports what would happen and writes nothing", asy
     `SELECT 1 FROM information_schema.columns WHERE table_name='profiles' AND column_name='email'`,
   );
   assert.equal(emailColumn.length, 0, "a rehearsal must not alter the schema");
-  const ledger = await rows(db, `SELECT 1 FROM schema_migrations`);
-  assert.equal(ledger.length, 0, "a rehearsal must not write the ledger");
+  // Not even an empty ledger table: the rehearsal creates it inside the
+  // transaction it rolls back.
+  const [{ ledger }] = await rows<{ ledger: string | null }>(
+    db,
+    `SELECT to_regclass('public.schema_migrations')::text AS ledger`,
+  );
+  assert.equal(ledger, null, "a rehearsal must not create or write the ledger");
 });
 
 // ---------------------------------------------------------------------
@@ -690,4 +698,146 @@ test("the subscription lifecycle lands on the legacy shape without expiring anyo
     `SELECT subscription_status FROM profiles WHERE email = 'after-release@example.test'`,
   );
   assert.equal(still!.subscription_status, "trialing");
+});
+
+// ---------------------------------------------------------------------------
+// generation_jobs.provider — the fourth blocker, found by the rehearsal on a
+// restored copy of production: `provider text NOT NULL`, and a write probe
+// that inserted a job without one. The fixture now carries the table exactly
+// as production defines it.
+// ---------------------------------------------------------------------------
+
+test("the dry run passes on production's generation_jobs (provider NOT NULL) and changes nothing", async () => {
+  const db = await createScratchDatabase();
+  await loadSql(db, legacyFixture);
+  const [{ provider_nullable }] = await rows<{ provider_nullable: string }>(
+    db,
+    `SELECT is_nullable AS provider_nullable FROM information_schema.columns
+      WHERE table_name = 'generation_jobs' AND column_name = 'provider'`,
+  );
+  assert.equal(provider_nullable, "NO", "the fixture must carry production's provider NOT NULL");
+
+  const schemaSnapshot = async () =>
+    (await rows<{ c: string }>(
+      db,
+      `SELECT string_agg(table_name || '.' || column_name || ':' || data_type || ':' || is_nullable, ',' ORDER BY 1)
+         AS c FROM information_schema.columns WHERE table_schema = 'public'`,
+    ))[0]!.c;
+  const schemaBefore = await schemaSnapshot();
+
+  const rehearsal = await runMigrate(db, ["--dry-run"]);
+  assert.ok(rehearsal.ok, `dry run failed:\n${rehearsal.output}`);
+  assert.match(rehearsal.output, /write probe passed/);
+  assert.match(rehearsal.output, /DRY RUN OK/);
+  assert.match(rehearsal.output, /Rolled back: the database is unchanged\./);
+  assert.doesNotMatch(rehearsal.output, /null value in column "provider"/);
+
+  // Unchanged: no new column, no ledger row, the same two jobs.
+  const [{ n }] = await rows<{ n: string }>(
+    db,
+    `SELECT count(*)::text AS n FROM information_schema.columns WHERE table_name = 'generation_jobs'`,
+  );
+  assert.equal(n, "10", "the dry run must leave generation_jobs exactly as it found it");
+
+  // And the whole schema — no ledger table left behind either.
+  assert.equal(await schemaSnapshot(), schemaBefore, "a dry run must not change a single column of any table");
+  const [{ ledger }] = await rows<{ ledger: string | null }>(db, `SELECT to_regclass('public.schema_migrations')::text AS ledger`);
+  assert.equal(ledger, null, "the dry run must not create schema_migrations");
+});
+
+test("the migration keeps production's jobs, keeps provider mandatory, and accepts the API's own write", async () => {
+  const db = await createScratchDatabase();
+  await loadSql(db, legacyFixture);
+  const before = await rows<{ id: string; provider: string; status: string; input: unknown; output: unknown }>(
+    db,
+    `SELECT id::text, provider, status, input, output FROM generation_jobs ORDER BY id`,
+  );
+
+  const result = await runMigrate(db);
+  assert.ok(result.ok, `migration failed:\n${result.output}`);
+  assert.match(result.output, /\[0004\] generation_jobs\.provider is already NOT NULL/);
+
+  // Every historical job is still there, byte for byte.
+  const after = await rows<{ id: string; provider: string; status: string; input: unknown; output: unknown }>(
+    db,
+    `SELECT id::text, provider, status, input, output FROM generation_jobs ORDER BY id`,
+  );
+  assert.deepEqual(after, before);
+
+  // The constraint is still there: not relaxed to make the migration pass.
+  const [{ provider_nullable }] = await rows<{ provider_nullable: string }>(
+    db,
+    `SELECT is_nullable AS provider_nullable FROM information_schema.columns
+      WHERE table_name = 'generation_jobs' AND column_name = 'provider'`,
+  );
+  assert.equal(provider_nullable, "NO");
+
+  // The API's exact write (services/generation.ts recordJob) and its two
+  // outcomes (settleJob) are accepted, and the job carries its provider.
+  const profile = "aaaaaaaa-1111-1111-1111-111111111111";
+  const [job] = await rows<{ id: string; provider: string }>(
+    db,
+    `INSERT INTO generation_jobs
+       (profile_id, post_id, kind, status, provider, provider_job_id,
+        provider_status_url, result_url, error, format)
+     VALUES ($1, NULL, 'image', 'processing', 'graphiste', 'job-1', NULL, NULL, NULL, 'null'::jsonb)
+     RETURNING id::text, provider`,
+    [profile],
+  );
+  assert.equal(job!.provider, "graphiste");
+  await rows(db, `UPDATE generation_jobs SET status = 'completed', result_url = 'x', error = NULL WHERE id = $1`, [job!.id]);
+  await rows(db, `UPDATE generation_jobs SET status = 'failed', result_url = NULL, error = 'x' WHERE id = $1`, [job!.id]);
+
+  // A job without a provider is refused: every job must say which provider
+  // to ask when it is resumed.
+  await assert.rejects(
+    rows(db, `INSERT INTO generation_jobs (profile_id, kind, status) VALUES ($1, 'image', 'processing')`, [profile]),
+    /null value in column "provider"/,
+  );
+
+  // A second run changes nothing and destroys nothing.
+  const again = await runMigrate(db);
+  assert.ok(again.ok, again.output);
+  assert.match(again.output, /Schema already up to date\./);
+  const [{ n }] = await rows<{ n: string }>(db, `SELECT count(*)::text AS n FROM generation_jobs`);
+  assert.equal(n, "3", "two historical jobs + the API's one");
+});
+
+test("a fresh database gets the same provider rule as production", async () => {
+  const db = await createScratchDatabase();
+  const result = await runMigrate(db);
+  assert.ok(result.ok, result.output);
+  assert.match(result.output, /\[0004\] generation_jobs\.provider is now NOT NULL/);
+  const [{ provider_nullable }] = await rows<{ provider_nullable: string }>(
+    db,
+    `SELECT is_nullable AS provider_nullable FROM information_schema.columns
+      WHERE table_name = 'generation_jobs' AND column_name = 'provider'`,
+  );
+  assert.equal(provider_nullable, "NO");
+});
+
+test("historical jobs without a provider are kept, and new ones must name one", async () => {
+  // A database that reached this release from an older legacy shape, where
+  // 0000 had to ADD the provider column: its historical rows have none.
+  // Inventing one would be guessing — they stay as they are.
+  const db = await createScratchDatabase();
+  assert.ok((await runMigrate(db)).ok);
+  const sql = await readFile(join(migrationsDir, "0004_generation_job_provider.sql"), "utf8");
+  const [{ id: profile }] = await rows<{ id: string }>(
+    db,
+    `INSERT INTO profiles (email, password_hash, password_salt) VALUES ('old-jobs@example.test', 'x', 'y') RETURNING id::text`,
+  );
+  // Recreate the pre-0004 state: nullable provider, one historical row without it.
+  await loadSql(db, `ALTER TABLE generation_jobs ALTER COLUMN provider DROP NOT NULL`);
+  await rows(db, `INSERT INTO generation_jobs (profile_id, kind, status) VALUES ($1, 'image', 'completed')`, [profile]);
+
+  await loadSql(db, sql);
+  await loadSql(db, sql); // idempotent
+
+  const [{ n }] = await rows<{ n: string }>(db, `SELECT count(*)::text AS n FROM generation_jobs WHERE provider IS NULL`);
+  assert.equal(n, "1", "the historical row is kept unchanged");
+  await assert.rejects(
+    rows(db, `INSERT INTO generation_jobs (profile_id, kind, status) VALUES ($1, 'image', 'processing')`, [profile]),
+    /generation_jobs_provider_present/,
+  );
 });

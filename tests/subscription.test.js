@@ -238,3 +238,39 @@ test("the legal pages carry a real revision date", () => {
   }
   assert.match(read("src/lib/legal.ts"), /LEGAL_LAST_UPDATED = "\d{4}-\d{2}-\d{2}"/);
 });
+
+// ── Migrations 0004 / 0005 ─────────────────────────────────────────────
+
+test("the write probe mirrors the API's real job write, provider included", () => {
+  // Production's generation_jobs has `provider text NOT NULL`; a probe that
+  // inserted a job without one failed the rehearsal on the real copy.
+  const probe = read("server/migrations/0000_legacy_production_compat.sql");
+  const block = probe.slice(probe.indexOf("DO $probe$"), probe.indexOf("$probe$;"));
+  assert.match(block, /INSERT INTO generation_jobs\s*\(profile_id, post_id, kind, status, provider, provider_job_id,\s*provider_status_url, result_url, error, format\)/);
+  assert.match(block, /'image', 'processing', 'graphiste'/);
+  // …and the API really writes that provider.
+  assert.match(read("server/src/services/generation.ts"), /VALUES \(\$1, \$2, 'image', \$3, 'graphiste'/);
+});
+
+test("provider is mandatory everywhere, without rewriting historical jobs", () => {
+  const sql = stripComments(read("server/migrations/0004_generation_job_provider.sql"));
+  assert.match(sql, /ALTER COLUMN provider SET NOT NULL/);
+  assert.match(sql, /CHECK \(provider IS NOT NULL\) NOT VALID/);
+  assert.doesNotMatch(sql, /UPDATE generation_jobs/, "no provider is invented for historical rows");
+  assert.doesNotMatch(sql, /DROP NOT NULL/);
+});
+
+test("a Mobile Money reference serves once, whatever its status, in any spelling", () => {
+  const sql = stripComments(read("server/migrations/0005_payment_reference_once.sql"));
+  // One global unique index on the canonical form, with no status filter.
+  assert.match(sql, /CREATE UNIQUE INDEX subscription_requests_reference_once\s+ON subscription_requests \(upper\(regexp_replace\(payment_reference, '\\s', '', 'g'\)\)\);/);
+  const index = sql.slice(sql.indexOf("CREATE UNIQUE INDEX"));
+  assert.doesNotMatch(index.split(";")[0], /WHERE/, "no status may free a reference");
+  // Existing duplicates stop the migration instead of being silently kept or deleted.
+  assert.match(sql, /RAISE EXCEPTION/);
+  // The API stores the same canonical form it is compared in.
+  const service = read("server/src/services/subscriptions.ts");
+  assert.match(service, /raw\.replace\(\/\\s\+\/g, ""\)\.toUpperCase\(\)/);
+  assert.match(service, /const reference = canonicalReference\(input\.paymentReference\)/);
+  assert.match(service, /subscription_requests_reference_once/);
+});

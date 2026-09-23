@@ -123,8 +123,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS subscription_requests_one_pending
   ON subscription_requests (profile_id)
   WHERE status = 'pending';
 
--- The same Mobile Money reference cannot be claimed twice. A rejected or
--- withdrawn request frees it, so a typo can be corrected.
+-- The same Mobile Money reference cannot be claimed twice among pending and
+-- approved declarations. SUPERSEDED by 0005, which enforces the product rule
+-- in full: a reference serves once whatever the status, in any spelling. This
+-- narrower index is kept (0005 implies it; files already applied are never
+-- rewritten in substance).
 CREATE UNIQUE INDEX IF NOT EXISTS subscription_requests_reference_unique
   ON subscription_requests (payment_method, lower(payment_reference))
   WHERE status IN ('pending', 'approved');

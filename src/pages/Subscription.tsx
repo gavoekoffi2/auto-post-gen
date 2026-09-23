@@ -411,7 +411,11 @@ export default function Subscription() {
                         required
                         minLength={4}
                         maxLength={64}
+                        aria-describedby="payment-reference-rule"
                       />
+                      <p id="payment-reference-rule" className="text-xs text-muted-foreground">
+                        Une référence ne peut être déclarée qu'une seule fois : vérifiez-la avant d'envoyer.
+                      </p>
                     </div>
                     <div className="md:col-span-2 flex items-center justify-between gap-4 flex-wrap">
                       <p className="text-sm text-muted-foreground">

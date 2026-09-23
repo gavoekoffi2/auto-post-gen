@@ -372,7 +372,7 @@ Contraintes qui portent une règle produit :
 
 ## 8. Migrations à appliquer
 
-Quatre fichiers, dans l'ordre, **tous idempotents** :
+Six fichiers, dans l'ordre, **tous idempotents** :
 
 | Fichier | Contenu |
 | --- | --- |
@@ -380,6 +380,8 @@ Quatre fichiers, dans l'ordre, **tous idempotents** :
 | `0001_core_schema.sql` | Schéma complet : extensions, tables, index, contraintes, fonctions, déclencheurs. |
 | `0002_media_public_token.sql` | `media_assets.public_token` + son index unique partiel. |
 | `0003_trial_and_subscriptions.sql` | Essai gratuit et abonnements : colonnes de cycle de vie sur `profiles` (les comptes existants passent `active` sans échéance), table `subscription_requests` et ses index uniques. N'ajoute que ; ne supprime rien. |
+| `0004_generation_job_provider.sql` | `generation_jobs.provider` obligatoire partout (déjà `NOT NULL` en production ; rendu obligatoire sur une base neuve). Les jobs historiques sans fournisseur éventuels sont conservés tels quels ; une contrainte `NOT VALID` refuse les nouveaux. |
+| `0005_payment_reference_once.sql` | Une référence Mobile Money ne sert qu'**une fois**, quel que soit le statut de la déclaration (en attente, validée, refusée, annulée), sans tenir compte de la casse ni des espaces, tous moyens de paiement confondus. S'arrête avec un message si des doublons existent déjà. |
 
 ```bash
 cd /opt/pro-social-ai/server

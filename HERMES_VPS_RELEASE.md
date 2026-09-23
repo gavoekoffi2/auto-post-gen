@@ -12,7 +12,132 @@
 
 ---
 
-## 0. Cette livraison : essai gratuit, abonnements, forfaits appliqués
+## 00. Correctif : `generation_jobs.provider` et référence Mobile Money unique
+
+Correctif de `claude/selfhosted-subscriptions-release-q7t4` après la
+répétition de Hermes sur une **copie restaurée** de la production, qui
+échouait au dry-run :
+
+```text
+Legacy compatibility: the migrated schema still rejects a normal write from the API.
+null value in column "provider" of relation "generation_jobs" violates not-null constraint
+(SQLSTATE 23502)
+```
+
+**La contrainte réelle.** En production :
+
+```text
+generation_jobs
+- id uuid NOT NULL DEFAULT gen_random_uuid()
+- profile_id uuid NOT NULL
+- provider text NOT NULL          ← la contrainte en cause
+- kind text NOT NULL
+- status text NOT NULL DEFAULT 'queued'
+- input jsonb NOT NULL DEFAULT '{}'
+- output jsonb NULL
+- error_message text NULL
+- created_at timestamptz NOT NULL DEFAULT now()
+- finished_at timestamptz NULL
+```
+
+**La cause.** La sonde d'écriture de `0000` insérait un job
+`(profile_id, kind, status)` — sans `provider`. L'API, elle, n'écrit
+**jamais** de job sans fournisseur : `recordJob()`
+(`server/src/services/generation.ts`) écrit toujours `provider = 'graphiste'`
+(Graphiste GPT est le seul moteur d'affiches). C'était donc la **sonde** qui
+n'était pas fidèle, pas le schéma qui était incompatible.
+
+**Le correctif.**
+
+1. La sonde reproduit désormais **exactement** les écritures de l'API, chaque
+   instruction citant sa source : l'`INSERT` complet d'un job avec
+   `provider = 'graphiste'`, ses deux clôtures (`completed`, `failed`), le
+   reflet du job sur le post, l'`INSERT` des posts avec toutes ses colonnes,
+   et les deux genres de médias (`other`, `poster`).
+2. **`provider` reste obligatoire.** Rien n'est relâché : la valeur correcte
+   pour un job créé par l'API est `'graphiste'`. Pour que la règle soit la
+   même partout, `0004_generation_job_provider.sql` la rend aussi obligatoire
+   sur une base neuve (où `0001` la créait nullable) ; en production, où elle
+   l'est déjà, `0004` ne fait rien (`[0004] generation_jobs.provider is
+   already NOT NULL.`). Des jobs historiques sans fournisseur, s'il en
+   existait ailleurs, seraient conservés tels quels (aucun fournisseur
+   inventé) et une contrainte `NOT VALID` refuserait les nouveaux.
+3. Tous les jobs existants sont conservés à l'identique (vérifié champ par
+   champ par un test).
+
+**Référence Mobile Money : règle définitive.**
+
+> Une même référence Mobile Money ne sert **jamais** deux fois.
+
+- Refusée quel que soit le statut de la première déclaration : en attente,
+  validée, **refusée** ou **annulée**. Une référence n'est jamais libérée.
+- Comparée sous une forme canonique : **espaces supprimés** (avant, après et
+  à l'intérieur), **majuscules**. `" mp2309.01 "`, `"MP 2309.01"` et
+  `"MP2309.01"` sont la même référence, stockée `MP2309.01`.
+- Globale, tous moyens de paiement confondus : la même transaction ne peut
+  pas être redéclarée sous un autre canal.
+- Après une erreur de saisie : l'opérateur **refuse avec un motif**, puis le
+  client soumet une **nouvelle** référence.
+- Appliquée par la base (`0005_payment_reference_once.sql`, index unique sur
+  la forme canonique) pour tout écrivain, et par l'API
+  (`canonicalReference`). Si des doublons existaient déjà, `0005`
+  s'arrêterait en les nommant plutôt que d'en supprimer un.
+
+**Preuve à exécuter par Hermes sur la copie de production** (lecture seule
+pour la base : le dry-run annule tout) :
+
+```bash
+cd server
+npm ci --include=dev
+DATABASE_URL="postgres://…/psa_rehearsal" npm run migrate:dry-run
+```
+
+Attendu :
+
+```text
+would apply  0000_legacy_production_compat.sql
+  …
+  [NOTICE] [0000] write probe passed.
+would apply  0001_core_schema.sql
+would apply  0002_media_public_token.sql
+would apply  0003_trial_and_subscriptions.sql
+would apply  0004_generation_job_provider.sql
+  [NOTICE] [0004] generation_jobs.provider is already NOT NULL.
+would apply  0005_payment_reference_once.sql
+
+DRY RUN OK — 6 migration(s) would apply cleanly.
+Rolled back: the database is unchanged.
+```
+
+Puis, sur la même copie, pour vérifier que rien n'a bougé :
+
+```sql
+SELECT to_regclass('public.schema_migrations');               -- NULL : pas même une table de registre vide
+SELECT is_nullable FROM information_schema.columns
+ WHERE table_name = 'generation_jobs' AND column_name = 'provider';   -- NO
+SELECT count(*) FROM generation_jobs;                         -- identique à avant
+```
+
+**Et un défaut de la répétition elle-même.** `--dry-run` créait la table de
+registre `schema_migrations` (vide) **hors** de la transaction annulée : une
+répétition sur la copie laissait donc une table de plus derrière elle, alors
+qu'elle annonçait `the database is unchanged`. Le registre est désormais créé
+dans la transaction annulée : après un dry-run, le schéma est identique
+colonne pour colonne (vérifié par test).
+
+**Fichiers de ce correctif** : `server/src/migrate.ts` (dry-run sans effet de
+bord), `server/migrations/0000_legacy_production_compat.sql` (sonde), `server/migrations/0003_trial_and_subscriptions.sql` (commentaire
+seulement), `server/migrations/0004_generation_job_provider.sql` (nouveau),
+`server/migrations/0005_payment_reference_once.sql` (nouveau),
+`server/src/services/subscriptions.ts`, `src/pages/Subscription.tsx`,
+`server/tests/fixtures/legacy_production_schema.sql`,
+`server/tests/legacy-migration.test.ts`, `server/tests/subscriptions.test.ts`,
+`tests/subscription.test.js`, `HERMES_VPS_RELEASE.md`,
+`VPS_DEPLOYMENT_HANDOFF.md`.
+
+---
+
+## 0. Livraison précédente (incluse) : essai gratuit, abonnements, forfaits appliqués
 
 Construite **au-dessus** de `claude/legacy-status-compat-9m2x` (tout ce qui
 suit en §2–§3 reste inclus et valable). Elle intègre sur la pile
@@ -80,18 +205,20 @@ hebdomadaires, changement d'email). Voir §9.
 
 | | |
 |---|---|
-| **Branche** | `claude/selfhosted-subscriptions-release-q7t4` |
-| **SHA du code** | `d0e06b95b560baa870535d79c142c484086988f0` |
+| **Branche** | `claude/selfhosted-provider-compat-r5k8` |
+| **SHA du code** | `__CODE_SHA__` |
 | **SHA à déployer** | la pointe de la branche (ce document est le seul commit au-dessus du code ; `git log -1 --format=%H`) |
-| **Base** | `claude/legacy-status-compat-9m2x` @ `783938efbf206055bf6cf67d6a684ef11656fc94` |
+| **Base** | `claude/selfhosted-subscriptions-release-q7t4` @ `41d70d40b77ed561fa5fd96f4175d0d05e34bcb4` (bloquée par la répétition : `generation_jobs.provider`) |
+| **Base de la base** | `claude/legacy-status-compat-9m2x` @ `783938efbf206055bf6cf67d6a684ef11656fc94` |
 | **Fonctionnalités intégrées depuis** | `claude/magical-thompson-mjuif9` @ `66416276127588bdb50f179b6e6566ddb50cb663` |
 | **`main`** | non modifié, non poussé, non fusionné |
 
 ```bash
 git fetch origin
-# ce qu'apporte cette livraison par rapport à la précédente
-git diff --stat origin/claude/legacy-status-compat-9m2x..origin/claude/selfhosted-subscriptions-release-q7t4
-git log --oneline origin/claude/legacy-status-compat-9m2x..origin/claude/selfhosted-subscriptions-release-q7t4
+# ce qu'apporte ce correctif
+git diff --stat origin/claude/selfhosted-subscriptions-release-q7t4..origin/claude/selfhosted-provider-compat-r5k8
+# tout ce qui s'ajoute à la livraison auto-hébergée précédente
+git diff --stat origin/claude/legacy-status-compat-9m2x..origin/claude/selfhosted-provider-compat-r5k8
 ```
 
 ---
@@ -241,30 +368,28 @@ Vérifié aussi à la main, contre une base héritée migrée **portant la contr
 
 ---
 
-### 4 bis. Résultats de CETTE livraison
+### 4 bis. Résultats de CETTE livraison (correctif `provider` + référence unique)
 
-Exécutés dans le bac à sable sur PostgreSQL 16 local, bases jetables
-uniquement (`psa_*`), Node 22.22 :
+Exécutés dans le bac à sable, PostgreSQL 16 local, bases jetables `psa_*`
+uniquement, Node 22.22 — exactement les commandes demandées :
 
 | Vérification | Résultat |
 |---|---|
-| `npm test` (dépôt) | `# tests 190  # pass 190  # fail 0` (172 → 190) |
-| `npm run lint` (dépôt) | `0 errors, 8 warnings` — les 8 warnings shadcn/`session.tsx` préexistants, aucun nouveau |
-| `npm run typecheck` (dépôt) | OK |
-| `npm run build` (dépôt) | OK |
-| Garde CI « aucune dépendance Supabase » (les 4 `grep` de `ci.yml`) | propre ; `import.meta.env` dans `src/` : 0 |
-| `npm run typecheck` + `npm run build` (`server/`) | OK |
-| `npm test` (`server/`) | `# tests 61  # pass 61  # fail 0` (43 → 61) |
-| Migration **vierge** | `Applied 4 migration(s).` puis 2 rejeux complets de chaque fichier sans erreur ; relance du runner : `Schema already up to date.` |
-| Migration **legacy** (fixture du schéma de production) | `Applied 4 migration(s).` ; comptes hérités : `active`, sans échéance (2/2) ; statuts de posts hérités intacts (`draft`, `failed`, `published`, `scheduled`) |
-| Migration **dry-run** (fixture héritée) | `DRY RUN OK — 4 migration(s) would apply cleanly.` puis `Rolled back: the database is unchanged.` (colonnes de `profiles` : 7 avant, 7 après ; registre vide) |
-| Migration **incrémentale** (0000–0002 déjà appliquées, comme en production après la livraison précédente) | dry-run puis réel : seule `0003` s'applique (`Applied 1 migration(s).`) ; 3/3 comptes existants `active` |
-| `docker compose … --env-file deploy/fake.env config` | OK (volumes internes ET `VOLUMES_ARE_EXTERNAL=true`) ; aucune URL `postgres://` dans la configuration résolue |
-| Parcours réel navigateur → API locale → PostgreSQL | inscription depuis « Essai Starter » → bandeau « encore 7 jours » → déclaration Orange Money 15 000 FCFA → `/admin` « Valider » → compte `pro active` (+30 j) → expiration simulée : bandeau rouge, bouton « Choisir un forfait » |
+| `server`: `npm ci --include=dev` · `npm run build` · `typecheck` | OK · OK · OK |
+| `server`: `npm test` (base de test migrée) | `# tests 65  # pass 65  # fail 0` (61 → 65) |
+| dépôt : `npm ci --include=dev` | OK |
+| dépôt : `npm test` | `# tests 193  # pass 193  # fail 0` (190 → 193) |
+| dépôt : `npm run lint` | `0 errors, 8 warnings` — les 8 warnings préexistants, aucun nouveau |
+| dépôt : `npm run typecheck` · `npm run build` | OK · OK |
+| Garde CI anti-Supabase (4 `grep`) | 0 occurrence |
+| `docker compose -f deploy/docker-compose.vps.yml --env-file deploy/fake.env config` | OK (volumes internes et externes) |
+| **Migration vierge** | `Applied 6 migration(s).` ; `[0004] generation_jobs.provider is now NOT NULL.` ; 2 rejeux complets sans erreur ; relance : `Schema already up to date.` |
+| **Migration legacy** (fixture avec le `generation_jobs` RÉEL, `provider text NOT NULL`) | `write probe passed` ; `Applied 6 migration(s).` ; `[0004] … already NOT NULL` ; les 2 jobs historiques identiques champ par champ ; `provider` toujours `NOT NULL` ; comptes `active=2` ; posts `draft/failed/published/scheduled` intacts ; l'écriture réelle de l'API est acceptée (`provider = graphiste`) ; un job sans provider est refusé ; relance : `Schema already up to date.` |
+| **Dry-run** (même fixture) | `write probe passed` puis `DRY RUN OK — 6 migration(s) would apply cleanly.` et `Rolled back: the database is unchanged.` ; schéma identique colonne pour colonne avant/après ; aucune table `schema_migrations` créée |
+| Référence Mobile Money | refusée en double pour les statuts `pending`, `approved`, `rejected`, `cancelled` ; variantes de casse, d'espaces (avant, après, intérieur) et de canal refusées ; une référence différente est acceptée et stockée sous forme canonique ; l'index refuse aussi un `INSERT` SQL direct |
 
-Non exécuté ici : `docker build` (pas de démon Docker dans le bac à sable),
-envoi réel d'email (aucune clé Resend), migration sur une copie réelle de
-production (§6.0, à faire par Hermes).
+Non exécuté ici : `docker build` (pas de démon Docker), la répétition sur la
+**copie réelle** de production (§00, à faire par Hermes).
 
 ---
 
@@ -413,7 +538,7 @@ docker system df   # voir ce que récupérerait un `docker image prune`
 ```bash
 cd /opt/pro-social-ai   # ou le chemin réel du dépôt sur le VPS
 git fetch origin
-git checkout claude/selfhosted-subscriptions-release-q7t4
+git checkout claude/selfhosted-provider-compat-r5k8
 git rev-parse HEAD      # doit correspondre à la section 1
 ```
 
@@ -457,19 +582,15 @@ applied  0000_legacy_production_compat.sql
 applied  0001_core_schema.sql
 applied  0002_media_public_token.sql
 applied  0003_trial_and_subscriptions.sql
-Applied 4 migration(s).
+  [NOTICE] [0004] generation_jobs.provider is already NOT NULL.
+applied  0004_generation_job_provider.sql
+applied  0005_payment_reference_once.sql
+Applied 6 migration(s).
 ```
 
-Si la livraison précédente est **déjà** en production (0000–0002 appliquées),
-seule la nouvelle s'applique :
-
-```
-skip     0000_legacy_production_compat.sql (already applied)
-skip     0001_core_schema.sql (already applied)
-skip     0002_media_public_token.sql (already applied)
-applied  0003_trial_and_subscriptions.sql
-Applied 1 migration(s).
-```
+(Aucune migration n'est encore appliquée en production : les six passent,
+dans cet ordre, en une exécution. Sur une base où certaines le sont déjà,
+le registre les saute et seules les suivantes s'appliquent.)
 
 Contrôle immédiat de 0003 — **aucun compte existant ne doit être en essai** :
 

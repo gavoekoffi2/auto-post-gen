@@ -1011,7 +1011,14 @@ $checks$;
 -- A migration that only changes the schema can still leave the product
 -- unusable: a legacy NOT NULL, a legacy CHECK with a different value set, a
 -- legacy trigger. The probe answers the question directly by performing the
--- inserts the API performs, then unwinding them.
+-- writes the API performs, then unwinding them.
+--
+-- Each statement below mirrors a REAL statement of the API — same columns,
+-- same kind of values — and names where it comes from. A probe that writes
+-- less than the API does proves nothing: that is how production's
+-- `generation_jobs.provider text NOT NULL` got through, because the probe
+-- inserted a job without the provider the API always sets. Keep the two in
+-- step: when an API write changes, change its mirror here.
 --
 -- The whole probe runs in a subtransaction that is ALWAYS rolled back: the
 -- canary rows never exist outside this block. If an insert is rejected, the
@@ -1035,8 +1042,11 @@ BEGIN
       -- Every status the API moves a post through, not only the first one: a
       -- legacy CHECK that accepts 'pending' but not 'validated' would
       -- otherwise surface when a user approves their first post, in production.
-      INSERT INTO posts (profile_id, title, content, status, platforms)
-      VALUES (probe_profile, 'probe', 'probe', 'pending', ARRAY['LinkedIn']::text[]);
+      -- routes/posts.ts (manual post) and services/weekly.ts (weekly batch).
+      INSERT INTO posts (profile_id, title, content, content_category, platforms,
+                         scheduled_for, image_url, status)
+      VALUES (probe_profile, 'probe', 'probe', 'value', ARRAY['LinkedIn']::text[],
+              now() + interval '1 day', NULL, 'pending');
       UPDATE posts SET status = 'validated' WHERE profile_id = probe_profile;
       UPDATE posts SET status = 'publishing', publishing_started_at = now() WHERE profile_id = probe_profile;
       UPDATE posts SET status = 'published', published_at = now() WHERE profile_id = probe_profile;
@@ -1044,13 +1054,39 @@ BEGIN
     END IF;
 
     IF to_regclass('public.media_assets') IS NOT NULL THEN
+      -- routes/media.ts (user upload) and services/generation.ts (re-hosted poster).
       INSERT INTO media_assets (profile_id, kind, storage_path, mime_type, size_bytes)
       VALUES (probe_profile, 'other', 'probe/' || gen_random_uuid(), 'image/png', 1);
+      INSERT INTO media_assets (profile_id, kind, storage_path, mime_type, size_bytes)
+      VALUES (probe_profile, 'poster', 'probe/' || gen_random_uuid(), 'image/png', 1);
     END IF;
 
     IF to_regclass('public.generation_jobs') IS NOT NULL THEN
-      INSERT INTO generation_jobs (profile_id, kind, status)
-      VALUES (probe_profile, 'image', 'processing');
+      -- services/generation.ts recordJob(): every job names its provider.
+      -- Graphiste GPT is the only poster engine, so the API always writes
+      -- 'graphiste' — which is also what satisfies production's
+      -- `provider text NOT NULL`.
+      INSERT INTO generation_jobs
+        (profile_id, post_id, kind, status, provider, provider_job_id,
+         provider_status_url, result_url, error, format)
+      VALUES (probe_profile,
+              (SELECT id FROM posts WHERE profile_id = probe_profile LIMIT 1),
+              'image', 'processing', 'graphiste', 'probe-job',
+              NULL, NULL, NULL, 'null'::jsonb);
+      -- settleJob(): both outcomes.
+      UPDATE generation_jobs SET status = 'completed', result_url = 'probe', error = NULL
+       WHERE profile_id = probe_profile;
+      UPDATE generation_jobs SET status = 'failed', result_url = NULL, error = 'probe'
+       WHERE profile_id = probe_profile;
+      -- recordJob()/settleJob() mirror the job onto its post.
+      IF to_regclass('public.posts') IS NOT NULL THEN
+        UPDATE posts SET image_job_id = (SELECT id FROM generation_jobs WHERE profile_id = probe_profile LIMIT 1),
+                         image_status = 'processing'
+         WHERE profile_id = probe_profile;
+        UPDATE posts SET image_status = 'done', image_url = 'probe', image_job_id = NULL
+         WHERE profile_id = probe_profile;
+        UPDATE posts SET image_status = 'failed' WHERE profile_id = probe_profile;
+      END IF;
     END IF;
 
     IF to_regclass('public.social_connections') IS NOT NULL THEN

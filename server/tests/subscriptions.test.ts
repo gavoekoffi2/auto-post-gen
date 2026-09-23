@@ -242,28 +242,84 @@ test("only an operator can decide a payment, and an approval grants the plan exa
   assert.ok(daysLeft >= 364 && daysLeft <= 366, `an annual payment runs a year (got ${daysLeft})`);
 });
 
-test("a rejected or cancelled declaration frees its reference", async () => {
-  const account = await signup("rejected");
-  const declare = (reference: string) =>
-    call(account.cookie, "POST", "/api/subscription/requests", {
-      plan: "starter", billingPeriod: "monthly", paymentMethod: "wave",
+test("a Mobile Money reference is never accepted twice, whatever happened to the first declaration", async () => {
+  // Product rule: a reference serves once. A rejected or cancelled
+  // declaration does NOT free it — after a typo the operator rejects with a
+  // reason and the customer declares a NEW reference.
+  const first = await signup("ref-first");
+  const second = await signup("ref-second");
+  // Declarations are rate limited per account (10 an hour), so the many
+  // refused attempts below are spread over a third account.
+  const third = await signup("ref-third");
+  const declare = (who: { cookie: string }, reference: string, method = "wave") =>
+    call(who.cookie, "POST", "/api/subscription/requests", {
+      plan: "starter", billingPeriod: "monthly", paymentMethod: method,
       payerPhone: "+221 77 000 00 00", paymentReference: reference,
     });
+  const ref = (label: string) => `W${label}${stamp}`;
+  const refused = (res: { status: number; body: Json }, why: string) => {
+    assert.equal(res.status, 409, `${why}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.body.code, "duplicate_reference", why);
+  };
 
-  const first = await declare("W_TYPO1234");
-  assert.equal(first.status, 201);
-  const rejected = await call(operator.cookie, "POST", "/api/admin/actions", {
-    action: "reject_subscription", requestId: first.body.request.id, note: "Référence introuvable",
-  });
-  assert.equal(rejected.status, 200);
-  assert.equal((await declare("W_TYPO1234")).status, 201, "the same reference can be declared again");
+  // pending
+  const pending = await declare(first, ref("PEND"));
+  assert.equal(pending.status, 201);
+  refused(await declare(second, ref("PEND")), "a pending reference");
 
-  const list = await call(account.cookie, "GET", "/api/subscription");
-  const pendingId = list.body.requests.find((r: Json) => r.status === "pending").id;
-  const cancelled = await call(account.cookie, "POST", `/api/subscription/requests/${pendingId}/cancel`);
-  assert.equal(cancelled.status, 200);
-  const cancelAgain = await call(account.cookie, "POST", `/api/subscription/requests/${pendingId}/cancel`);
-  assert.equal(cancelAgain.status, 409);
+  // approved
+  assert.equal((await call(operator.cookie, "POST", "/api/admin/actions", {
+    action: "approve_subscription", requestId: pending.body.request.id,
+  })).status, 200);
+  refused(await declare(second, ref("PEND")), "an approved reference");
+
+  // rejected — the typo case: the reference stays used.
+  const typo = await declare(second, ref("REJ"));
+  assert.equal(typo.status, 201);
+  assert.equal((await call(operator.cookie, "POST", "/api/admin/actions", {
+    action: "reject_subscription", requestId: typo.body.request.id, note: "Référence introuvable",
+  })).status, 200);
+  refused(await declare(second, ref("REJ")), "a rejected reference, by its own author");
+  refused(await declare(first, ref("REJ")), "a rejected reference, by someone else");
+
+  // cancelled
+  const withdrawn = await declare(second, ref("CANC"));
+  assert.equal(withdrawn.status, 201);
+  assert.equal((await call(second.cookie, "POST", `/api/subscription/requests/${withdrawn.body.request.id}/cancel`)).status, 200);
+  assert.equal(
+    (await call(second.cookie, "POST", `/api/subscription/requests/${withdrawn.body.request.id}/cancel`)).status,
+    409,
+    "a decided declaration cannot be cancelled twice",
+  );
+  refused(await declare(second, ref("CANC")), "a cancelled reference");
+
+  // Case, surrounding and inner whitespace, and another channel are the same reference.
+  const canonical = ref("CANC");
+  for (const variant of [
+    canonical.toLowerCase(),
+    `  ${canonical}  `,
+    `\t${canonical}\n`,
+    `${canonical.slice(0, 4)} ${canonical.slice(4)}`,
+  ]) {
+    refused(await declare(third, variant), `variant ${JSON.stringify(variant)}`);
+  }
+  refused(await declare(third, canonical, "orange_money"), "the same reference under another channel");
+
+  // A genuinely different reference is accepted, and stored canonically.
+  const fresh = await declare(third, `  w new ${stamp} ok `);
+  assert.equal(fresh.status, 201, JSON.stringify(fresh.body));
+  assert.equal(fresh.body.request.payment_reference, `WNEW${stamp}OK`);
+
+  // The rule holds in the database for any writer, not only through the API.
+  await assert.rejects(
+    query(
+      `INSERT INTO subscription_requests
+         (profile_id, plan, billing_period, amount_fcfa, payment_method, payer_phone, payment_reference)
+       VALUES ($1, 'starter', 'monthly', 5000, 'mtn_momo', '+225 05 00 00 00 00', $2)`,
+      [first.id, ` ${ref("rej").toLowerCase()} `],
+    ),
+    (err: { constraint?: string }) => err.constraint === "subscription_requests_reference_once",
+  );
 });
 
 test("an operator can grant a plan by hand and extend a trial", async () => {
