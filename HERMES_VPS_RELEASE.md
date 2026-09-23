@@ -269,7 +269,7 @@ hebdomadaires, changement d'email). Voir §9.
 | | |
 |---|---|
 | **Branche** | `claude/poster-character-q2w6` |
-| **SHA du code** | `__CODE_SHA__` |
+| **SHA du code** | `6d86010bfa229021250d3acf5ac9e5e3dd02e6b8` |
 | **SHA à déployer** | la pointe de la branche (ce document est le seul commit au-dessus du code ; `git log -1 --format=%H`) |
 | **Base** | `claude/selfhosted-provider-compat-r5k8` @ `1218ee09feac7d69be203e0a7da1a3bc81b7e67b` (correctif `provider` + référence unique, §00) |
 | **Base précédente** | `claude/selfhosted-subscriptions-release-q7t4` @ `41d70d40b77ed561fa5fd96f4175d0d05e34bcb4` (bloquée par la répétition : `generation_jobs.provider`) |
