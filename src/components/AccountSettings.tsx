@@ -20,6 +20,7 @@ import { toast } from "sonner";
 import { functionErrorMessage } from "@/lib/functionError";
 import { PASSWORD_RULE_HINT, validatePassword } from "@/lib/password";
 import { useNavigate } from "react-router-dom";
+import { authErrorMessage } from "@/lib/authError";
 
 interface AccountSettingsProps {
   userEmail: string;
@@ -68,8 +69,7 @@ export function AccountSettings({ userEmail }: AccountSettingsProps) {
         { duration: 12000 },
       );
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : "Changement d'adresse impossible";
-      toast.error(message);
+      toast.error(authErrorMessage(error, "Changement d'adresse impossible."));
     } finally {
       setChangingEmail(false);
     }
@@ -130,8 +130,7 @@ export function AccountSettings({ userEmail }: AccountSettingsProps) {
       setNewPassword("");
       setConfirmPassword("");
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : "Erreur lors du changement de mot de passe";
-      toast.error(message);
+      toast.error(authErrorMessage(error, "Erreur lors du changement de mot de passe."));
     } finally {
       setChangingPassword(false);
     }

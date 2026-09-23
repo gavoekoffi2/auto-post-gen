@@ -9,6 +9,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { MIN_PASSWORD_LENGTH, PASSWORD_RULE_HINT, validatePassword } from "@/lib/password";
 import { usePageMeta } from "@/lib/usePageMeta";
+import { authErrorMessage } from "@/lib/authError";
 
 export default function ResetPassword() {
   usePageMeta("Nouveau mot de passe", "Choisissez un nouveau mot de passe pour votre compte.");
@@ -72,8 +73,7 @@ export default function ResetPassword() {
       toast.success("Mot de passe mis à jour avec succès !");
       setTimeout(() => navigate("/auth"), 3000);
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : "Erreur lors de la mise à jour du mot de passe";
-      toast.error(message);
+      toast.error(authErrorMessage(error, "Erreur lors de la mise à jour du mot de passe."));
     } finally {
       setLoading(false);
     }

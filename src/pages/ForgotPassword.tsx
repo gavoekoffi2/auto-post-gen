@@ -8,6 +8,7 @@ import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { usePageMeta } from "@/lib/usePageMeta";
+import { authErrorMessage } from "@/lib/authError";
 
 export default function ForgotPassword() {
   usePageMeta("Mot de passe oublié", "Recevez un lien pour réinitialiser votre mot de passe.");
@@ -30,8 +31,7 @@ export default function ForgotPassword() {
       setSent(true);
       toast.success("Email de réinitialisation envoyé !");
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : "Erreur lors de l'envoi";
-      toast.error(message);
+      toast.error(authErrorMessage(error, "Erreur lors de l'envoi de l'email."));
     } finally {
       setLoading(false);
     }

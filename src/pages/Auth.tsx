@@ -11,6 +11,7 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { MIN_PASSWORD_LENGTH, PASSWORD_RULE_HINT, validatePassword } from "@/lib/password";
 import { usePageMeta } from "@/lib/usePageMeta";
+import { authErrorMessage } from "@/lib/authError";
 
 export default function Auth() {
   usePageMeta("Connexion", "Connectez-vous ou créez votre compte Pro Social AI.");
@@ -57,8 +58,7 @@ export default function Auth() {
         toast.success("Compte créé ! Confirmez votre email pour continuer.");
       }
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : "Erreur lors de l'inscription";
-      toast.error(message);
+      toast.error(authErrorMessage(error, "Erreur lors de l'inscription."));
     } finally {
       setLoading(false);
     }
@@ -113,8 +113,7 @@ export default function Auth() {
       }
       navigate(destination);
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : "Erreur lors de la connexion";
-      toast.error(message);
+      toast.error(authErrorMessage(error, "Erreur lors de la connexion."));
     } finally {
       setLoading(false);
     }
