@@ -19,6 +19,7 @@ import {
   setPlanManually,
 } from "../services/subscriptions.js";
 import { isPlanId } from "../shared/plans.js";
+import { connectSocial, syncSocialAccounts } from "../services/social.js";
 
 /** Social accounts, comment inbox, admin console, account lifecycle, contact. */
 export async function miscRoutes(app: FastifyInstance): Promise<void> {
@@ -26,6 +27,7 @@ export async function miscRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/social/accounts", async (request, reply) => {
     const ctx = await requireTenant(request, reply);
+    const provisioned = await syncSocialAccounts(ctx.profileId);
     const rows = await query<{
       id: string;
       platform: string;
@@ -40,10 +42,8 @@ export async function miscRoutes(app: FastifyInstance): Promise<void> {
       [ctx.profileId],
     );
     return {
-      // "Provisioned" means isolated: a row without a provider profile key is
-      // not a usable connection, and reporting it as one would promise
-      // publishing that cannot work.
-      provisioned: rows.some((r) => Boolean(r.provider_profile_key)),
+      // Provisioning is a durable tenant mapping, even before OAuth completes.
+      provisioned,
       accounts: rows.map((r) => ({
         id: r.id,
         platform: r.platform,
@@ -56,24 +56,9 @@ export async function miscRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.post("/social/connect", async (request, reply) => {
-    await requireTenant(request, reply);
-    if (!env.zernioKey) {
-      throw notConfigured(
-        "La connexion des réseaux sociaux n'est pas configurée sur ce serveur (ZERNIO_API_KEY).",
-      );
-    }
-    // Implementing the provider handshake needs the operator's provider
-    // account; see VPS_DEPLOYMENT_HANDOFF.md, "travail non terminé".
-    //
-    // Whoever finishes it must enforce what the plans sell, as the rest of
-    // the API does: `requireActiveEntitlement(ctx.profileId)` for a NEW
-    // network (re-authorising one already linked stays allowed — it is a
-    // repair), and refuse beyond `entitlement.limits.socialAccounts` active
-    // accounts with code "plan_limit_reached". The pricing page advertises
-    // 2 / 3 / 8 networks.
-    throw notConfigured(
-      "La connexion des réseaux sociaux doit être finalisée côté serveur (voir le handoff).",
-    );
+    const ctx = await requireTenant(request, reply);
+    const body = asObject(request.body, "body");
+    return connectSocial(ctx.profileId, body.platform);
   });
 
   app.delete("/social/accounts/:id", async (request, reply) => {
