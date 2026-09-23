@@ -49,8 +49,13 @@ export function AccountSettings({ userEmail }: AccountSettingsProps) {
       const a = document.createElement("a");
       a.href = url;
       a.download = "mes-donnees-pro-social-ai.json";
+      // Attached, and revoked only once the download has started: Firefox
+      // ignores a click on a detached link, and revoking synchronously can
+      // cancel the download in Safari.
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
       toast.success("Vos données ont été téléchargées.");
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Erreur lors de l'export";

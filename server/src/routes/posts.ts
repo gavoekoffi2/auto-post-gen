@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { query, queryOne, transaction } from "../lib/db.js";
-import { badRequest, notFound } from "../lib/errors.js";
+import { badRequest, conflict, notFound } from "../lib/errors.js";
 import { env } from "../lib/env.js";
 import { clientIp, requireTenant } from "../lib/tenant.js";
 import { hitRateLimit } from "../lib/rateLimit.js";
@@ -124,6 +124,15 @@ export async function postRoutes(app: FastifyInstance): Promise<void> {
 
     if ("title" in body) set("title", asString(body.title, "title", { max: 200, optional: true }));
     if ("content" in body) set("content", asString(body.content, "content", { min: 1, max: 10000 }));
+    // Regenerated text can change the post's editorial category; left stale,
+    // the week's promo/research counts and the next poster used the old one.
+    if ("content_category" in body) {
+      const category = asString(body.content_category, "content_category", { max: 20, optional: true });
+      if (category && !["value", "research", "promo"].includes(category)) {
+        throw badRequest("Catégorie éditoriale inconnue.");
+      }
+      set("content_category", category || null);
+    }
     if ("platforms" in body) {
       set(
         "platforms",
@@ -184,17 +193,26 @@ export async function postRoutes(app: FastifyInstance): Promise<void> {
     // The retry budget is the server's to grant. Resetting it here — rather
     // than letting the browser write publish_attempts — is what stops a client
     // from handing itself unlimited publish attempts.
+    //
+    // Only from a state that has not gone out: validating a post the queue is
+    // sending ('publishing') or has sent ('published') put it back in the
+    // queue — and published it a second time.
     const row = await queryOne(
       `UPDATE posts
           SET status = 'validated',
               publish_error = NULL,
               publish_attempts = 0,
               next_publish_attempt_at = now()
-        WHERE id = $1 AND profile_id = $2
+        WHERE id = $1 AND profile_id = $2 AND status IN ('pending', 'validated', 'failed')
         RETURNING ${POST_COLUMNS}`,
       [postId, ctx.profileId],
     );
-    if (!row) throw notFound("Publication introuvable.");
+    if (!row) {
+      throw conflict(
+        "Cette publication est en cours d'envoi ou déjà publiée : elle ne peut pas être revalidée.",
+        "already_published",
+      );
+    }
     return row;
   });
 

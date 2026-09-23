@@ -6,6 +6,7 @@ import {
   mediaUrl,
   readStoredFile,
   rehostRemoteImage,
+  shareableMediaUrl,
   storeBuffer,
   type StoredFile,
 } from "../lib/media.js";
@@ -187,7 +188,14 @@ export async function startPosterJob(input: PosterRequest): Promise<JobRow> {
     mode: "async",
   };
   if (input.colors.length) requestBody.colors = input.colors;
-  if (input.logoUrl) requestBody.logo_urls = [input.logoUrl];
+  // The logo is stored here, behind a session: the renderer is handed a
+  // capability URL for that one file. Sending the relative path, as before,
+  // meant the logo never reached a single poster.
+  const logo = input.logoUrl ? await shareableMediaUrl(input.profileId, input.logoUrl) : null;
+  if (logo) requestBody.logo_urls = [logo];
+  else if (input.logoUrl) {
+    console.warn("[generation] logo not sent: set APP_PUBLIC_URL so the renderer can fetch it");
+  }
   if (input.leaderPhotoUrl) requestBody.reference_image_urls = [input.leaderPhotoUrl];
 
   const format = {
@@ -235,7 +243,7 @@ export async function startPosterJob(input: PosterRequest): Promise<JobRow> {
   }
 
   const providerJobId = extractJobId(payload);
-  const statusUrl = extractStatusUrl(payload);
+  const statusUrl = safeGraphisteStatusUrl(extractStatusUrl(payload));
   if (providerJobId || statusUrl) {
     return recordJob(input, "processing", { providerJobId, statusUrl, format, character });
   }
@@ -394,7 +402,9 @@ export async function readJob(profileId: string, jobId: string): Promise<JobRow 
     const base = env.graphisteUrl.replace(/\/generate\/?$/, "");
     candidates.push(`${base}/${encodeURIComponent(job.provider_job_id)}`);
   }
-  if (job.provider_status_url) candidates.push(job.provider_status_url);
+  // Re-checked here too: rows recorded before the check existed.
+  const statusUrl = safeGraphisteStatusUrl(job.provider_status_url);
+  if (statusUrl) candidates.push(statusUrl);
 
   for (const url of candidates) {
     try {
@@ -483,6 +493,24 @@ async function settleJob(
   }
 
   return row;
+}
+
+/**
+ * A provider status URL, resolved against the configured endpoint and kept
+ * only if it is on that same origin.
+ *
+ * The status read carries the API key. The URL comes from a response body,
+ * so a status URL on any other host would hand the key to that host.
+ */
+export function safeGraphisteStatusUrl(raw: string | null | undefined): string | null {
+  if (!raw || !env.graphisteUrl) return null;
+  try {
+    const base = new URL(env.graphisteUrl);
+    const url = new URL(raw, base);
+    return url.origin === base.origin ? url.toString() : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Upper bound of the prompt ("subject") sent to the poster provider. */

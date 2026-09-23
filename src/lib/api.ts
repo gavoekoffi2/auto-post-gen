@@ -453,7 +453,9 @@ export const posts = {
   update: (
     id: string,
     patch: Partial<
-      Pick<Post, "title" | "content" | "platforms" | "scheduled_for" | "status" | "image_url">
+      // No "status": the server never takes it from a PATCH (validating and
+      // publishing have their own routes).
+      Pick<Post, "title" | "content" | "content_category" | "platforms" | "scheduled_for" | "image_url">
     >,
   ) => request<Post>(`/posts/${encodeURIComponent(id)}`, { method: "PATCH", body: patch }),
 

@@ -12,6 +12,81 @@
 
 ---
 
+## 0000. Audit de pré-production (corrections uniquement)
+
+Branche `claude/poster-character-audit-h7n3`, créée depuis
+`claude/poster-character-q2w6` @ `bfce311933fc72146c426bc6a17c06ce28481f1a`
+(personnage sur les affiches, §000, inclus). Relecture complète de l'API, du
+dashboard et du déploiement ; **aucune fonctionnalité nouvelle**, seulement
+des défauts corrigés, chacun couvert par un test.
+
+### Ce que le déploiement doit savoir
+
+| | |
+|---|---|
+| **Migration** | `0007_publish_recovery_bounded.sql` — un seul `CREATE OR REPLACE FUNCTION recover_stuck_publishing()`. Aucune table touchée, aucune ligne réécrite par la migration. 8 migrations au total. |
+| **Variables** | aucune nouvelle. `APP_PUBLIC_URL` (déjà obligatoire dans le Compose) sert désormais aussi à transmettre le logo à Graphiste. |
+| **nginx / Compose / Dockerfile** | inchangés depuis §000. |
+| **Retour arrière** | revenir à l'image précédente suffit ; la fonction de 0007 reste compatible avec l'ancien code. |
+
+### Défauts corrigés
+
+**Argent et publication**
+
+| Défaut | Effet | Correction |
+|---|---|---|
+| Un post accepté par Zernio mais **mis en file** (`queued`) repassait en `validated` | **publié deux fois** sur le réseau au passage suivant | il reste « Publication en cours » avec l'identifiant Zernio enregistré ; la reprise le passe « publié » après 10 min, jamais en nouvelle tentative |
+| L'identifiant du post chez Zernio n'était jamais enregistré | la reprise après crash ne pouvait pas savoir qu'un post était déjà parti | `provider_post_id` enregistré |
+| « Valider » acceptait un post en cours d'envoi ou déjà publié | le remettait en file → double publication (le bouton apparaissait sur un post `publishing`, affiché « En attente ») | refus `409` hors `pending`/`validated`/`failed` ; statut « Publication en cours » affiché |
+| La reprise ne passait jamais un post en échec | un post qui bloque l'envoi était relancé toutes les 15 min, **indéfiniment** | 0007 : échec au bout de 5 tentatives, comme l'API |
+| Image non partageable (sans `APP_PUBLIC_URL`) : exception après la réservation du post | post bloqué en `publishing`, puis boucle ci-dessus | tentative enregistrée en échec, avec un message qui nomme la variable |
+| La génération hebdomadaire et « générer la semaine » **ne décomptaient rien** | textes et affiches premium hors plafond mensuel ; supprimer la semaine puis la regénérer = rendus payants **sans limite** | chaque texte et chaque affiche automatique est compté dans le plafond du forfait ; au-delà, arrêt (`plan_limit_reached`) ; « générer la semaine » limité à 6/h |
+| Analyse IA des cibles possible pour un compte expiré | contraire à l'invariant n°1 | refusée (`402`) comme toute génération |
+| Texte IA : jusqu'à 3 modèles × 90 s | le navigateur et nginx abandonnent à 120 s ; l'utilisateur relance et paie deux fois | budget total de 100 s pour toute la chaîne |
+
+**Sécurité**
+
+| Défaut | Correction |
+|---|---|
+| L'URL de statut d'un rendu, lue dans la réponse du fournisseur, était interrogée **avec la clé API Graphiste**, quel que soit son hôte | uniquement sur l'origine de `GRAPHISTE_GPT_API_URL` (vérifié à l'enregistrement et avant chaque lecture, lignes anciennes comprises) |
+| Récupération des affiches : redirections suivies sans contrôle, noms DNS jamais vérifiés | chaque redirection revalidée ; le résolveur du socket refuse toute adresse non publique (IPv4/IPv6, IPv4 mappée, CGNAT, métadonnées cloud), y compris un nom qui change d'adresse entre-temps |
+| `asImageUrl` laissait passer `[::ffff:127.0.0.1]`, `100.64.x.x`, `fd00::`, `*.internal` | refusés |
+| Réinitialisation du mot de passe : l'email était attendu avant de répondre | la durée de la réponse révélait si l'adresse a un compte ; l'email part sans être attendu |
+
+**Comptes et exploitation**
+
+| Défaut | Correction |
+|---|---|
+| Limite de connexion de 20 essais par IP | les opérateurs mobiles mettent des milliers d'abonnés derrière une IP : quelques erreurs de mot de passe bloquaient tout le monde. Désormais 10 essais par adresse email et par IP, 300 par IP |
+| Deux inscriptions simultanées (double clic) → `500` | `409` « Un compte existe déjà » (inscription et création par l'admin) |
+| Sessions expirées, événements de limite et jetons jamais purgés | tables en croissance infinie ; purge quotidienne |
+| Deux passages de la file de publication pouvaient se chevaucher | un seul à la fois |
+
+**Affiches et contenu**
+
+| Défaut | Correction |
+|---|---|
+| Le logo était envoyé à Graphiste en chemin relatif (`/api/media/…`) | **le logo n'apparaissait sur aucune affiche** ; il part désormais en lien signé que Graphiste peut télécharger |
+| Affiche renvoyée en `data:image/…;base64` | stockée comme fichier, au lieu d'enregistrer toute l'URI comme adresse de l'image |
+| Secteur, ton, types de contenu envoyés en codes anglais (« Secteur : food », « Ton : casual ») | traduits en français dans toutes les consignes (texte, semaine, cibles, affiches) |
+| Image personnalisée supprimée mais encore dans la liste enregistrée | la génération hebdomadaire pouvait l'attacher à un post (image cassée) ; liste enregistrée immédiatement, images disparues ignorées |
+| Texte régénéré : catégorie éditoriale non mise à jour | quotas promo/recherche et affiche suivante calculés sur l'ancienne |
+
+**Dashboard**
+
+| Défaut | Correction |
+|---|---|
+| Date d'un post calculée en UTC, heure en local | en UTC+1 (Bénin, Cameroun, Nigeria…), un post à 00 h 30 s'affichait la veille, et **« Enregistrer » sans rien changer le décalait d'un jour** |
+| Lecture du profil en échec (502 pendant un redéploiement) | un compte configuré était envoyé à l'onboarding, où enregistrer écrase le profil ; maintenant message + « Réessayer » |
+| Session expirée au même moment | « Chargement… » infini ; maintenant retour à la connexion |
+| Après connexion, toujours le tableau de bord | retour à la page demandée (ex. lien « Renouveler » d'un email vers `/abonnement`) |
+| Analyse des cibles depuis le Profil : lisait le profil **enregistré** | une description modifiée mais non enregistrée était ignorée ; elle est enregistrée d'abord |
+| Image d'un post en erreur puis régénérée | restait « Image indisponible » jusqu'au rechargement |
+| Export des données (Firefox, Safari) | le téléchargement pouvait ne pas démarrer |
+| Calendrier, statistiques, profil : messages d'erreur génériques | message réel du serveur (invariant n°6) |
+
+---
+
 ## 000. Personnage sur les affiches + passe de corrections
 
 Branche `claude/poster-character-q2w6`, créée depuis
@@ -268,10 +343,11 @@ hebdomadaires, changement d'email). Voir §9.
 
 | | |
 |---|---|
-| **Branche** | `claude/poster-character-q2w6` |
-| **SHA du code** | `6d86010bfa229021250d3acf5ac9e5e3dd02e6b8` |
+| **Branche** | `claude/poster-character-audit-h7n3` |
+| **SHA du code** | `__CODE_SHA__` |
 | **SHA à déployer** | la pointe de la branche (ce document est le seul commit au-dessus du code ; `git log -1 --format=%H`) |
-| **Base** | `claude/selfhosted-provider-compat-r5k8` @ `1218ee09feac7d69be203e0a7da1a3bc81b7e67b` (correctif `provider` + référence unique, §00) |
+| **Base** | `claude/poster-character-q2w6` @ `bfce311933fc72146c426bc6a17c06ce28481f1a` (personnage sur les affiches, §000) |
+| **Base de la base** | `claude/selfhosted-provider-compat-r5k8` @ `1218ee09feac7d69be203e0a7da1a3bc81b7e67b` (correctif `provider` + référence unique, §00) |
 | **Base précédente** | `claude/selfhosted-subscriptions-release-q7t4` @ `41d70d40b77ed561fa5fd96f4175d0d05e34bcb4` (bloquée par la répétition : `generation_jobs.provider`) |
 | **Base de la base** | `claude/legacy-status-compat-9m2x` @ `783938efbf206055bf6cf67d6a684ef11656fc94` |
 | **Fonctionnalités intégrées depuis** | `claude/magical-thompson-mjuif9` @ `66416276127588bdb50f179b6e6566ddb50cb663` |
@@ -279,10 +355,10 @@ hebdomadaires, changement d'email). Voir §9.
 
 ```bash
 git fetch origin
-# ce qu'apporte cette livraison (personnage + corrections)
-git diff --stat origin/claude/selfhosted-provider-compat-r5k8..origin/claude/poster-character-q2w6
+# ce qu'apporte cette livraison (audit de pré-production)
+git diff --stat origin/claude/poster-character-q2w6..origin/claude/poster-character-audit-h7n3
 # tout ce qui s'ajoute à la livraison auto-hébergée précédente
-git diff --stat origin/claude/legacy-status-compat-9m2x..origin/claude/poster-character-q2w6
+git diff --stat origin/claude/legacy-status-compat-9m2x..origin/claude/poster-character-audit-h7n3
 ```
 
 ---
@@ -432,7 +508,30 @@ Vérifié aussi à la main, contre une base héritée migrée **portant la contr
 
 ---
 
-### 4 ter. Résultats de CETTE livraison (personnage + corrections)
+### 4 quater. Résultats de CETTE livraison (audit de pré-production)
+
+Bac à sable, PostgreSQL 16 local, bases jetables `psa_*` uniquement, Node 22 :
+
+| Vérification | Résultat |
+|---|---|
+| `server`: `npm ci` · `npm run build` · `npm run typecheck` · `npm run fetch-model` | OK · OK · OK · modèle présent et vérifié |
+| `server`: `npm test` (base neuve migrée) | `# tests 91  # pass 91  # fail 0` (76 → 91 : +15 dans `tests/audit-fixes.test.ts`) |
+| Contre-épreuve | code d'origine remis temporairement : les tests des corrections échouent (statut Graphiste, logo, double publication, blocage `publishing`, inscription simultanée, limite de connexion, quota hebdomadaire, purge, URL internes) |
+| dépôt : `npm ci` · `npm test` | OK · `# tests 209  # pass 209  # fail 0` (202 → 209) |
+| dépôt : `npm run lint` | `0 errors, 8 warnings` — les 8 warnings préexistants, aucun nouveau |
+| dépôt : `npm run typecheck` · `npm run build` | OK · OK |
+| Garde CI anti-Supabase (4 `grep`) | 0 occurrence |
+| `docker compose … --env-file deploy/fake.env config` | OK |
+| `nginx -t` sur `nginx.vps.conf` | OK |
+| **Migration vierge** | `Applied 8 migration(s).` ; 2 rejeux complets (`psql -f`) sans erreur ; relance : `Schema already up to date.` |
+| **Migration legacy** (fixture du schéma réel) | `Applied 8 migration(s).` puis `Schema already up to date.` |
+| **Dry-run** (même fixture) | `DRY RUN OK — 8 migration(s) would apply cleanly.` · `Rolled back: the database is unchanged.` · schéma identique colonne pour colonne · aucune table `schema_migrations` laissée |
+| Navigateur réel (Chromium, fuseau `Africa/Lagos`) | post à 00 h 30 affiché le bon jour, « Enregistrer » sans changement → date inchangée en base ; « Publication en cours » sans bouton « Valider » ; API coupée → message + « Réessayer » (pas d'onboarding), puis reprise ; analyse des cibles → description enregistrée d'abord ; `/abonnement` → connexion → retour sur `/abonnement` |
+
+Non exécuté ici : `docker build` (pas de démon Docker), la répétition sur la
+**copie réelle** (§6.0).
+
+### 4 ter. Résultats de la livraison précédente (personnage + corrections)
 
 Bac à sable, PostgreSQL 16 local, bases jetables `psa_*` uniquement, Node 22 :
 

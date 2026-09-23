@@ -118,7 +118,7 @@ export async function destroyAllSessions(profileId: string): Promise<void> {
   await query(`DELETE FROM sessions WHERE profile_id = $1`, [profileId]);
 }
 
-/** Removes expired rows. Called from the scheduled maintenance endpoint. */
+/** Removes expired rows. Called by the daily maintenance (services/scheduler.ts). */
 export async function pruneExpiredSessions(): Promise<number> {
   const rows = await query<{ count: string }>(
     `WITH deleted AS (DELETE FROM sessions WHERE expires_at <= now() RETURNING 1)

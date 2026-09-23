@@ -25,6 +25,12 @@ test('a queued job is reported as pending, never as published', () => {
   // row to 'published'.
   assert.match(publish, /r\.status === "ok" && r\.externalUrl/);
   assert.match(publish, /const anyOk = results\.some\(\(r\) => r\.status === "ok"\)/);
+  // An accepted-but-queued post is never re-queued (it would be posted
+  // twice): it stays 'publishing' with the provider's id, which crash
+  // recovery settles as published, never as a retry.
+  assert.match(publish, /const accepted = !anyOk && results\.some\(\(r\) => r\.status === "pending"\)/);
+  assert.match(publish, /\? "publishing"/);
+  assert.match(publish, /provider_post_id = COALESCE\(\$8, provider_post_id\)/);
 });
 
 test('a platform URL is recorded so the user can open what was posted', () => {

@@ -8,6 +8,7 @@ import { consumeQuota, releaseQuota } from "../services/quota.js";
 import { monthlyUsage, requireActiveEntitlement } from "../services/entitlement.js";
 import { readJob, startPosterJob, type JobRow } from "../services/generation.js";
 import { generateText } from "../services/text.js";
+import { sectorLabel } from "../lib/labels.js";
 
 const IMAGE_HOURLY_MAX = 30;
 const TEXT_HOURLY_MAX = 20;
@@ -149,7 +150,7 @@ export async function generationRoutes(app: FastifyInstance): Promise<void> {
         contentCategory: category,
         platforms: platforms.length ? platforms : post.platforms,
         companyName: profile.company_name ?? "Entreprise",
-        sector: profile.sector ?? "",
+        sector: sectorLabel(profile.sector),
         description: profile.description ?? "",
         footerText: profile.poster_footer_text ?? "",
         colors: [

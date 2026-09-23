@@ -1,4 +1,6 @@
+import { isIP } from "node:net";
 import { badRequest } from "./errors.js";
+import { isNonPublicAddress } from "./network.js";
 
 // Input validation.
 //
@@ -178,7 +180,16 @@ export function asImageUrl(value: unknown, field: string, max = 500): string | n
   if (url.protocol !== "https:") {
     throw badRequest(`Le champ « ${field} » doit utiliser https.`);
   }
-  if (PRIVATE_HOST.test(url.hostname) || url.hostname.endsWith(".local")) {
+  // Also by address: an IP literal in any spelling (IPv6, IPv4-mapped,
+  // CGNAT…) that the name pattern does not list is still refused.
+  const host = url.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  if (
+    PRIVATE_HOST.test(host) ||
+    host.endsWith(".local") ||
+    host.endsWith(".localhost") ||
+    host.endsWith(".internal") ||
+    (isIP(host) !== 0 && isNonPublicAddress(host))
+  ) {
     throw badRequest(`Le champ « ${field} » ne peut pas pointer vers une adresse interne.`);
   }
   return raw;

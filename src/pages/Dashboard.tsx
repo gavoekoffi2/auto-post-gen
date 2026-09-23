@@ -28,7 +28,7 @@ import { SocialMediaConnect } from "@/components/SocialMediaConnect";
 import { SubscriptionBanner } from "@/components/SubscriptionBanner";
 import { resolveEntitlement, type SubscriptionFields } from "@/lib/plans";
 
-type PostStatus = "pending" | "validated" | "published" | "failed";
+type PostStatus = "pending" | "validated" | "publishing" | "published" | "failed";
 
 type Post = {
   id: string;
@@ -73,6 +73,25 @@ function formatPublishError(raw?: string | null): string | null {
     // Not JSON (legacy plain string) — fall through.
   }
   return String(raw).slice(0, 200);
+}
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+/**
+ * The LOCAL calendar date of an instant, as <input type="date"> expects it.
+ * toISOString() gives the UTC date: in UTC+1 (Cotonou, Douala, Lagos…) a post
+ * at 00:30 showed the day before — and saving the dialog unchanged moved it
+ * there for real.
+ */
+function localDateInput(instant: string): string {
+  const d = new Date(instant);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+/** The local wall-clock time of an instant, as <input type="time"> expects it. */
+function localTimeInput(instant: string): string {
+  const d = new Date(instant);
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
 // `<input type="date">` + `<input type="time">` give local wall-clock values.
@@ -260,9 +279,11 @@ export default function Dashboard() {
   const toViewPost = (post: ApiPost): Post => ({
     ...post,
     platform: post.platforms?.[0] || 'Instagram',
-    date: post.scheduled_for ? new Date(post.scheduled_for).toISOString().split('T')[0] : '',
-    time: post.scheduled_for ? new Date(post.scheduled_for).toTimeString().substring(0, 5) : '',
-    status: (post.status === "validated" || post.status === "published" || post.status === "failed"
+    date: post.scheduled_for ? localDateInput(post.scheduled_for) : '',
+    time: post.scheduled_for ? localTimeInput(post.scheduled_for) : '',
+    // 'publishing' is shown as such: displayed as "pending" it offered
+    // "Valider" on a post the queue was sending at that very moment.
+    status: (["validated", "publishing", "published", "failed"].includes(post.status)
       ? post.status
       : "pending") as PostStatus,
     image_url: post.image_url ?? undefined,
@@ -605,6 +626,7 @@ export default function Dashboard() {
       await postsApi.update(post.id, {
         title: updatedPost.title,
         content: updatedPost.content,
+        content_category: category as "value" | "research" | "promo",
         image_url: null,
       });
 
@@ -693,7 +715,10 @@ export default function Dashboard() {
   }
 
   const stats = {
-    scheduled: posts.length,
+    // Still to go out: a published or failed post is not "programmé".
+    scheduled: posts.filter(
+      (p) => p.scheduled_for && (p.status === "pending" || p.status === "validated" || p.status === "publishing"),
+    ).length,
     validated: posts.filter(p => p.status === 'validated').length,
     pending: posts.filter(p => p.status === 'pending').length,
     published: posts.filter(p => p.status === 'published').length,
@@ -842,6 +867,8 @@ export default function Dashboard() {
                           ? "bg-secondary/20 text-secondary"
                           : post.status === "failed"
                           ? "bg-destructive/20 text-destructive"
+                          : post.status === "publishing"
+                          ? "bg-primary/10 text-primary"
                           : "bg-accent/20 text-accent"
                       }`}>
                         {post.status === "published"
@@ -850,6 +877,8 @@ export default function Dashboard() {
                           ? "Validé"
                           : post.status === "failed"
                           ? "Échec"
+                          : post.status === "publishing"
+                          ? "Publication en cours"
                           : "En attente"}
                       </span>
                     </div>
@@ -870,7 +899,10 @@ export default function Dashboard() {
                       </div>
                      )}
                      {post.image_url ? (
-                       <div className="mb-4 rounded-lg overflow-hidden bg-muted">
+                       // Keyed by the URL: the error handler below replaces
+                       // this div's content by hand, so a new poster needs a
+                       // fresh element or it stays "Image indisponible".
+                       <div key={post.image_url} className="mb-4 rounded-lg overflow-hidden bg-muted">
                          <img
                            src={post.image_url}
                            alt="Post illustration"

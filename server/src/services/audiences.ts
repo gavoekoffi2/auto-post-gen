@@ -1,5 +1,6 @@
 import { queryOne } from "../lib/db.js";
 import { env } from "../lib/env.js";
+import { contentTypeLabel, sectorLabel } from "../lib/labels.js";
 import { normalizeAudiences, type AudienceSegment } from "../shared/audience.js";
 import { callClaude } from "./text.js";
 
@@ -45,10 +46,10 @@ export async function detectAudiences(profileId: string): Promise<AudienceSegmen
   );
 
   const companyName = clean(profile?.company_name, 120);
-  const sector = clean(profile?.sector, 100);
+  const sector = clean(sectorLabel(profile?.sector), 100);
   const description = clean(profile?.description, 2400);
   const contentTypes = (profile?.content_types ?? [])
-    .map((item) => clean(item, 60))
+    .map((item) => clean(contentTypeLabel(item), 60))
     .filter(Boolean)
     .slice(0, 8);
 

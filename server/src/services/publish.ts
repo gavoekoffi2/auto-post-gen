@@ -1,7 +1,7 @@
 import { query, queryOne } from "../lib/db.js";
 import { env } from "../lib/env.js";
 import { readJob } from "./generation.js";
-import { mediaAssetIdFromUrl, publicMediaUrl } from "../lib/media.js";
+import { mediaAssetIdFromUrl, shareableMediaUrl } from "../lib/media.js";
 
 // Publishing.
 //
@@ -44,15 +44,7 @@ async function publishableUrl(profileId: string, url: string): Promise<string> {
     // relative path the provider will silently drop.
     throw new Error("APP_PUBLIC_URL is required to publish a locally stored image");
   }
-  const row = await queryOne<{ public_token: string | null }>(
-    `UPDATE media_assets
-        SET public_token = COALESCE(public_token, encode(gen_random_bytes(32), 'hex'))
-      WHERE id = $1 AND profile_id = $2
-      RETURNING public_token`,
-    [assetId, profileId],
-  );
-  if (!row?.public_token) return url;
-  return publicMediaUrl(row.public_token);
+  return (await shareableMediaUrl(profileId, url)) ?? url;
 }
 
 function normalisePlatform(label: string): string {
@@ -110,7 +102,22 @@ export async function publishPost(profileId: string, postId: string): Promise<Pu
   // A re-hosted poster lives behind a session, which the provider does not
   // have. Mint (or reuse) a capability token for exactly that asset so it can
   // fetch the image it is asked to attach, and nothing else.
-  const publishableImageUrl = imageUrl ? await publishableUrl(profileId, imageUrl) : null;
+  //
+  // Failing here must not throw: the post is already claimed ('publishing'),
+  // and a throw left it there until crash recovery re-queued it — to fail the
+  // same way, forever. It is recorded as a failed attempt instead.
+  let publishableImageUrl: string | null = null;
+  let imageError: string | null = null;
+  if (imageUrl) {
+    try {
+      publishableImageUrl = await publishableUrl(profileId, imageUrl);
+    } catch (err) {
+      console.error(`[publish] image not shareable for ${postId}:`, (err as Error).message);
+      imageError =
+        "L'image de la publication ne peut pas être transmise au réseau social : " +
+        "l'adresse publique du site (APP_PUBLIC_URL) n'est pas configurée sur le serveur.";
+    }
+  }
 
   const connection = await queryOne<{ provider_profile_key: string | null }>(
     `SELECT provider_profile_key FROM social_connections
@@ -121,8 +128,15 @@ export async function publishPost(profileId: string, postId: string): Promise<Pu
 
   const platforms = claimed.platforms ?? [];
   let results: PublishResult[];
+  let providerPostId: string | null = null;
 
-  if (!connection) {
+  if (imageError) {
+    results = platforms.map((p) => ({
+      platform: normalisePlatform(p),
+      status: "error" as const,
+      message: imageError!,
+    }));
+  } else if (!connection) {
     results = platforms.map((p) => ({
       platform: normalisePlatform(p),
       status: "not_connected" as const,
@@ -144,16 +158,24 @@ export async function publishPost(profileId: string, postId: string): Promise<Pu
       message: "La publication sociale n'est pas configurée sur ce serveur (ZERNIO_API_KEY).",
     }));
   } else {
-    results = await publishViaZernio(
+    ({ results, providerPostId } = await publishViaZernio(
       connection.provider_profile_key,
       platforms,
       claimed.content,
       publishableImageUrl,
       claimed.id,
-    );
+    ));
   }
 
   const anyOk = results.some((r) => r.status === "ok");
+  // Accepted by the provider but not yet confirmed by the network: it is out
+  // of our hands, so it must never be sent again. It used to go back to the
+  // queue ('validated') and be posted a second time at the next attempt. It
+  // stays 'publishing' with the provider's post id recorded; crash recovery
+  // (recover_stuck_publishing) turns such a row into 'published' after ten
+  // minutes — never into a retry. Not 'published' now: the dashboard does
+  // not claim a post exists on a network before the network says so.
+  const accepted = !anyOk && results.some((r) => r.status === "pending");
   const allErrors = results.length > 0 && results.every((r) => r.status === "error");
   const attempts = (claimed.publish_attempts ?? 0) + 1;
   // After a bounded number of attempts the post becomes 'failed' and leaves
@@ -161,7 +183,13 @@ export async function publishPost(profileId: string, postId: string): Promise<Pu
   // tick and — because the batch is ordered oldest-first and capped — starves
   // every newer post behind it.
   const exhausted = attempts >= MAX_PUBLISH_ATTEMPTS;
-  const status = anyOk ? "published" : allErrors || exhausted ? "failed" : "validated";
+  const status = anyOk
+    ? "published"
+    : accepted
+      ? "publishing"
+      : allErrors || exhausted
+        ? "failed"
+        : "validated";
 
   const externalIds: Record<string, string> = {};
   for (const r of results) {
@@ -176,7 +204,8 @@ export async function publishPost(profileId: string, postId: string): Promise<Pu
             next_publish_attempt_at = $6,
             external_post_ids = $7,
             published_at = CASE WHEN $3 = 'published' THEN now() ELSE published_at END,
-            publishing_started_at = NULL
+            provider_post_id = COALESCE($8, provider_post_id),
+            publishing_started_at = CASE WHEN $3 = 'publishing' THEN publishing_started_at ELSE NULL END
       WHERE id = $1 AND profile_id = $2`,
     [
       postId,
@@ -186,6 +215,7 @@ export async function publishPost(profileId: string, postId: string): Promise<Pu
       anyOk ? 0 : attempts,
       status === "validated" ? nextAttemptAt(attempts) : new Date().toISOString(),
       JSON.stringify(externalIds),
+      providerPostId,
     ],
   );
 
@@ -198,7 +228,8 @@ async function publishViaZernio(
   content: string,
   imageUrl: string | null,
   requestId: string,
-): Promise<PublishResult[]> {
+): Promise<{ results: PublishResult[]; providerPostId: string | null }> {
+  const none = (results: PublishResult[]) => ({ results, providerPostId: null });
   const base = env.zernioUrl.replace(/\/+$/, "");
   const headers = {
     Authorization: `Bearer ${env.zernioKey}`,
@@ -217,11 +248,11 @@ async function publishViaZernio(
     });
     if (!accountsResponse.ok) {
       const detail = (await accountsResponse.text()).slice(0, 200);
-      return platforms.map((p) => ({
+      return none(platforms.map((p) => ({
         platform: normalisePlatform(p),
         status: "error" as const,
         message: `Impossible de lire les comptes connectés (${accountsResponse.status}). ${detail}`,
-      }));
+      })));
     }
     const accountsBody = (await accountsResponse.json()) as {
       accounts?: Array<{ _id: string; platform?: string; isActive?: boolean }>;
@@ -237,7 +268,7 @@ async function publishViaZernio(
       if (match) targets.push({ platform, accountId: match._id });
       else results.push({ platform, status: "not_connected" });
     }
-    if (targets.length === 0) return results;
+    if (targets.length === 0) return none(results);
 
     const postResponse = await fetch(`${base}/posts`, {
       method: "POST",
@@ -256,12 +287,17 @@ async function publishViaZernio(
       for (const t of targets) {
         results.push({ platform: t.platform, status: "error", message });
       }
-      return results;
+      return none(results);
     }
 
-    let parsed: { post?: { platforms?: Array<Record<string, unknown>> } } = {};
+    let parsed: { post?: { _id?: unknown; id?: unknown; platforms?: Array<Record<string, unknown>> } } = {};
     try { parsed = JSON.parse(text); } catch { /* an empty 200 is possible */ }
     const rows = parsed.post?.platforms ?? [];
+    // Recorded so crash recovery (recover_stuck_publishing) knows this post
+    // reached the provider and must not be sent again.
+    const rawId = parsed.post?._id ?? parsed.post?.id;
+    const providerPostId =
+      typeof rawId === "string" || typeof rawId === "number" ? String(rawId) : "accepted";
 
     for (const t of targets) {
       const row = rows.find(
@@ -279,7 +315,11 @@ async function publishViaZernio(
             ? { externalUrl: row.platformPostUrl }
             : {}),
         });
-      } else if (["queued", "processing", "scheduled", "pending", "created"].includes(rawStatus)) {
+      } else if (
+        !row ||
+        ["queued", "processing", "scheduled", "pending", "created"].includes(rawStatus)
+      ) {
+        // No per-network row at all is still an accepted post (a 2xx).
         results.push({
           platform: t.platform,
           status: "pending",
@@ -293,12 +333,12 @@ async function publishViaZernio(
         });
       }
     }
-    return results;
+    return { results, providerPostId };
   } catch (err) {
-    return platforms.map((p) => ({
+    return none(platforms.map((p) => ({
       platform: normalisePlatform(p),
       status: "error" as const,
       message: `Publication indisponible : ${(err as Error).message}`,
-    }));
+    })));
   }
 }

@@ -21,7 +21,9 @@ test('weekly generation attaches a custom-library image when the profile has one
 });
 
 test('weekly generation starts a poster job when there is no custom image', () => {
-  assert.match(weekly, /if \(!customImage && env\.graphisteKey\)/);
+  assert.match(weekly, /!customImage &&\s*env\.graphisteKey &&/);
+  // Counted against the plan's monthly poster ceiling, like a manual one.
+  assert.match(weekly, /reserve\(profileId, "generate-image", entitlement\.limits\.monthlyImageGenerations\)/);
   assert.match(weekly, /startPosterJob\(/);
   // Best-effort: a poster failure must not lose the text just generated.
   assert.match(weekly, /\[weekly\] poster failed/);
@@ -49,9 +51,11 @@ test('a finished poster is copied into our own storage, not linked', () => {
 
 test('re-hosting validates the URL, the type and the size before writing', () => {
   assert.match(media, /export async function rehostRemoteImage/);
-  assert.match(media, /asImageUrl\(url, "image_url"\)/);
-  // A redirect can land anywhere, so the type and size checks — not the
-  // initial URL — are what actually bound this.
+  // Every hop is re-validated (a redirect can land anywhere), and the socket
+  // resolves names through a resolver that refuses non-public addresses.
+  assert.match(media, /asImageUrl\(current, "image_url"\)/);
+  assert.match(media, /hop <= MAX_REDIRECTS/);
+  assert.match(media, /lookup: publicOnlyLookup/);
   assert.match(media, /extensionForType\(declared\)/);
   // Bounded by its own ceiling: a 2K PNG render exceeds the 5 MB of an
   // ordinary upload, and refusing it kept the expiring provider URL instead.
@@ -64,12 +68,15 @@ test('a locally stored poster is published through a capability URL', () => {
   // /api/media/:id/file needs a session, which the provider does not have.
   assert.match(publish, /async function publishableUrl/);
   assert.match(publish, /mediaAssetIdFromUrl\(url\)/);
-  assert.match(publish, /encode\(gen_random_bytes\(32\), 'hex'\)/);
+  assert.match(publish, /shareableMediaUrl\(profileId, url\)/);
+  // One implementation, shared with the poster renderer's logo.
+  assert.match(media, /export async function shareableMediaUrl/);
+  assert.match(media, /encode\(gen_random_bytes\(32\), 'hex'\)/);
   // Minted once and reused: regenerating it would break a provider that
   // re-fetches the image later.
-  assert.match(publish, /COALESCE\(public_token,/);
+  assert.match(media, /COALESCE\(public_token,/);
   // Scoped to the owner, like every other row access.
-  assert.match(publish, /WHERE id = \$1 AND profile_id = \$2/);
+  assert.match(media, /WHERE id = \$1 AND profile_id = \$2/);
   // Silently sending a relative path the provider drops would look like a
   // successful publish with no image.
   assert.match(publish, /APP_PUBLIC_URL is required/);

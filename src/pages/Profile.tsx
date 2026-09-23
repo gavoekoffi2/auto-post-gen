@@ -132,8 +132,8 @@ export default function Profile() {
         });
         setAutoPublishAcknowledged(!!data.auto_publish);
       }
-    } catch (_error) {
-      toast.error('Erreur lors du chargement du profil');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Erreur lors du chargement du profil');
     } finally {
       setLoading(false);
     }
@@ -148,7 +148,14 @@ export default function Profile() {
     try {
       // The server reads the company, sector and description from the saved
       // profile: sending them up would let the browser ask for an analysis of
-      // a business that is not its own.
+      // a business that is not its own. So what is typed here is saved first —
+      // otherwise an edited, unsaved description was ignored and the analysis
+      // answered "renseignez une description" about a field that was filled.
+      await profileApi.update({
+        company_name: profile.company_name,
+        sector: profile.sector,
+        description: profile.description,
+      });
       const data = await profileApi.detectAudiences();
       const audiences = normalizeAudienceSegments(data?.audiences);
       // One usable segment is still worth showing; rejecting anything under two
@@ -856,7 +863,18 @@ export default function Profile() {
             <CustomImageLibrary
               images={profile.custom_image_urls}
               useCustomImages={profile.use_custom_images}
-              onImagesChange={(urls) => setProfile({ ...profile, custom_image_urls: urls })}
+              onImagesChange={(urls) => {
+                setProfile((current) => ({ ...current, custom_image_urls: urls }));
+                // The files are uploaded and deleted at once, so the list that
+                // points at them is saved at once too. Saved only with the form,
+                // a deleted image stayed in the saved list and the weekly runner
+                // could still attach it to a post — a broken image.
+                profileApi.update({ custom_image_urls: urls }).catch((error: unknown) => {
+                  toast.error(
+                    error instanceof Error ? error.message : "La bibliothèque n'a pas pu être enregistrée.",
+                  );
+                });
+              }}
               onUseCustomImagesChange={(value) => setProfile({ ...profile, use_custom_images: value })}
             />
           </TabsContent>

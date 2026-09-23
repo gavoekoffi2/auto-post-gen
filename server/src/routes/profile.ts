@@ -5,7 +5,7 @@ import { badRequest, notConfigured, notFound, rateLimited } from "../lib/errors.
 import { env } from "../lib/env.js";
 import { mediaUrl } from "../lib/media.js";
 import { consumeQuota, releaseQuota } from "../services/quota.js";
-import { loadEntitlement } from "../services/entitlement.js";
+import { loadEntitlement, requireActiveEntitlement } from "../services/entitlement.js";
 import { AudienceProfileIncomplete, detectAudiences } from "../services/audiences.js";
 import {
   asBoolean,
@@ -206,6 +206,8 @@ export async function profileRoutes(app: FastifyInstance): Promise<void> {
    */
   app.post("/profile/audiences/detect", async (request, reply) => {
     const ctx = await requireTenant(request, reply);
+    // An AI call like any other generation: not for an expired account.
+    await requireActiveEntitlement(ctx.profileId);
 
     if (!env.openRouterKey) {
       throw notConfigured(

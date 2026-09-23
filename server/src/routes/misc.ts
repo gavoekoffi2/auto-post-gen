@@ -270,7 +270,13 @@ export async function miscRoutes(app: FastifyInstance): Promise<void> {
           : `INSERT INTO profiles (email, password_hash, password_salt, company_name, role)
              VALUES ($1, $2, $3, $4, $5) RETURNING id`,
         plan ? [email, hash, salt, companyName, role, plan] : [email, hash, salt, companyName, role],
-      );
+      ).catch((err: { code?: string }) => {
+        // Created concurrently (a double click): the unique index decides.
+        if (err.code === "23505") {
+          throw conflict("Un compte existe déjà pour cette adresse email.", "email_taken");
+        }
+        throw err;
+      });
       return { ok: true, id: created?.id };
     }
 
@@ -524,6 +530,12 @@ export async function miscRoutes(app: FastifyInstance): Promise<void> {
    */
   app.post("/posts/generate-week", async (request, reply) => {
     const ctx = await requireTenant(request, reply);
+    await hitRateLimit(
+      `generate-week:${ctx.profileId}`,
+      6,
+      3600,
+      "Trop de demandes de génération de la semaine. Réessayez dans une heure.",
+    );
     return generateWeekFor(ctx.profileId);
   });
 
