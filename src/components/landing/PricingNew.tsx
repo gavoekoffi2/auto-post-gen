@@ -14,15 +14,22 @@ const plans = [
     icon: Sparkles,
     gradient: "from-blue-400 to-blue-500",
     comingSoonVideo: null,
+    // Feature lists describe what the code actually enforces (see
+    // supabase/functions/_shared/plans.ts). They previously claimed
+    // differences that do not exist — "Analytics avancés" and "Posts
+    // personnalisables" were marked absent on Starter and present on Pro,
+    // while the statistics screen and the post editor are identical for every
+    // plan. Someone paying more for those would have got exactly what they
+    // already had.
     features: [
       { text: "3 posts par semaine", included: true },
       { text: "2 réseaux sociaux", included: true },
       { text: "Génération IA de texte", included: true },
       { text: "Génération IA d'images", included: true },
+      { text: "Modification et régénération des posts", included: true },
       { text: "Planification automatique", included: true },
+      { text: "Statistiques et calendrier", included: true },
       { text: "Support par email", included: true },
-      { text: "Analytics avancés", included: false },
-      { text: "Posts personnalisables", included: false },
       { text: "Réponses auto aux commentaires (IA)", included: false },
     ],
     cta: "Essai gratuit 7 jours",
@@ -42,10 +49,11 @@ const plans = [
     features: [
       { text: "1 post par jour (7/semaine)", included: true },
       { text: "3 réseaux sociaux", included: true },
-      { text: "Génération IA avancée", included: true },
+      { text: "Quota IA mensuel étendu (150 textes, 150 affiches)", included: true },
       { text: "Images IA personnalisées", included: true },
+      { text: "Modification et régénération des posts", included: true },
       { text: "Planification intelligente", included: true },
-      { text: "Analytics détaillés", included: true },
+      { text: "Statistiques et calendrier", included: true },
       { text: "Validation par email", included: true },
       { text: "Support prioritaire", included: true },
       { text: "Réponses auto aux commentaires (IA)", included: false },
@@ -67,10 +75,10 @@ const plans = [
     features: [
       { text: "Jusqu'à 10 posts/semaine", included: true },
       { text: "8 réseaux sociaux inclus", included: true },
-      { text: "IA premium (modèles avancés)", included: true },
+      { text: "Quota IA mensuel maximal (300 textes, 300 affiches)", included: true },
       { text: "Images IA haute qualité", included: true },
-      { text: "Fréquence personnalisable", included: true },
-      { text: "Analytics & rapports avancés", included: true },
+      { text: "Fréquence et mix éditorial personnalisables", included: true },
+      { text: "Statistiques et calendrier", included: true },
       { text: "Manager de compte dédié", included: true },
       { text: "Support prioritaire 24/7", included: true },
       { text: "Réponses automatiques aux commentaires (IA)", included: true },

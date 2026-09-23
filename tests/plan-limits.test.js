@@ -135,3 +135,26 @@ test("the network limit is visible before it is hit, not only when refused", () 
   // not a new account); only new ones are blocked at the ceiling.
   assert.match(ui, /disabled=\{zernioLoading \|\| \(atLimit && !connected\)\}/);
 });
+
+test("the pricing page only claims differences the code enforces", () => {
+  // Comments stripped: the fix is explained in one, and a test that matched
+  // the explanation would assert the opposite of what it means to check.
+  const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  const pricing = stripComments(readFileSync("src/components/landing/PricingNew.tsx", "utf8"));
+  const stats = stripComments(readFileSync("src/pages/Statistics.tsx", "utf8"));
+
+  // Starter was sold without "Analytics avancés" and "Posts personnalisables",
+  // and Pro with "Analytics détaillés" — but the statistics screen does not
+  // read `plan` at all and the editor is the same for everyone. Someone
+  // upgrading for those would have received exactly what they already had.
+  assert.equal(stats.includes("plan"), false, "Statistics does not vary by plan");
+  for (const claim of ["Analytics avancés", "Analytics détaillés", "Analytics & rapports avancés", "Posts personnalisables"]) {
+    assert.doesNotMatch(pricing, new RegExp(claim), `pricing still claims "${claim}"`);
+  }
+
+  // The real differentiators, and only those.
+  assert.match(pricing, /Quota IA mensuel étendu/);
+  assert.match(pricing, /Quota IA mensuel maximal/);
+  assert.match(pricing, /Réponses auto aux commentaires \(IA\)", included: false/);
+  assert.match(pricing, /Réponses automatiques aux commentaires \(IA\)", included: true/);
+});
