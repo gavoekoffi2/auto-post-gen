@@ -6,7 +6,11 @@ import { componentTagger } from "lovable-tagger";
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
   server: {
-    host: "::",
+    // `host: true` listens on every available interface. The previous "::"
+    // hard-coded IPv6, so `npm run dev` died with EAFNOSUPPORT on any machine
+    // or container without it — a new contributor could not start the project
+    // at all, and the error names a socket family rather than the cause.
+    host: true,
     port: 8080,
   },
   plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),

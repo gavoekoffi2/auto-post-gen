@@ -28,6 +28,7 @@ import {
 import { LogoUpload } from "@/components/LogoUpload";
 import { CustomImageLibrary } from "@/components/CustomImageLibrary";
 import { AccountSettings } from "@/components/AccountSettings";
+import { usePageMeta } from "@/lib/usePageMeta";
 
 const DAYS = [
   { id: "Lundi", label: "Lundi" },
@@ -40,6 +41,8 @@ const DAYS = [
 ];
 
 export default function Profile() {
+  usePageMeta("Profil");
+
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);

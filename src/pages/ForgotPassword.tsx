@@ -7,8 +7,11 @@ import { Sparkles, ArrowLeft, Mail } from "lucide-react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { usePageMeta } from "@/lib/usePageMeta";
 
 export default function ForgotPassword() {
+  usePageMeta("Mot de passe oublié", "Recevez un lien pour réinitialiser votre mot de passe.");
+
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
@@ -65,7 +68,7 @@ export default function ForgotPassword() {
           ) : (
             <>
               <div className="text-center mb-6">
-                <h2 className="text-xl font-bold mb-2">Mot de passe oublié ?</h2>
+                <h1 className="text-xl font-bold mb-2">Mot de passe oublié ?</h1>
                 <p className="text-muted-foreground text-sm">
                   Entrez votre email pour recevoir un lien de réinitialisation
                 </p>

@@ -5,10 +5,13 @@ import { Button } from "@/components/ui/button";
 import { CheckCircle2, XCircle, Loader2, Sparkles } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { functionErrorMessage } from "@/lib/functionError";
+import { usePageMeta } from "@/lib/usePageMeta";
 
 type Status = "confirm" | "loading" | "success" | "error";
 
 export default function ValidatePost() {
+  usePageMeta("Validation du post");
+
   const [params] = useSearchParams();
   const token = params.get("token");
   const [status, setStatus] = useState<Status>(token ? "confirm" : "error");

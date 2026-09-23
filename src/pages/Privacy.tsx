@@ -2,8 +2,11 @@ import { ArrowLeft } from "lucide-react";
 import { SUPPORT_EMAIL, formatLegalDate } from "@/lib/appConfig";
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
+import { usePageMeta } from "@/lib/usePageMeta";
 
 export default function Privacy() {
+  usePageMeta("Politique de confidentialité", "Comment vos données sont collectées, utilisées et protégées.");
+
   return (
     <div className="min-h-screen py-12 px-4">
       <div className="container mx-auto max-w-3xl">

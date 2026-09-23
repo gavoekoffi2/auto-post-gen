@@ -47,20 +47,26 @@ export const Navbar = () => {
             </Link>
           </div>
 
-          {/* Mobile Menu Button */}
+          {/* Mobile Menu Button.
+              An icon-only button has no text, so without aria-label a screen
+              reader announces "bouton" and nothing else — on a phone, where
+              this is the ONLY way to reach the navigation. */}
           <Button
             variant="ghost"
             size="sm"
             className="md:hidden"
             onClick={() => setIsMenuOpen(!isMenuOpen)}
+            aria-label={isMenuOpen ? "Fermer le menu" : "Ouvrir le menu"}
+            aria-expanded={isMenuOpen}
+            aria-controls="mobile-menu"
           >
-            {isMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+            {isMenuOpen ? <X className="w-5 h-5" aria-hidden="true" /> : <Menu className="w-5 h-5" aria-hidden="true" />}
           </Button>
         </div>
 
         {/* Mobile Menu */}
         {isMenuOpen && (
-          <div className="md:hidden py-4 border-t border-border/50">
+          <div id="mobile-menu" className="md:hidden py-4 border-t border-border/50">
             <div className="flex flex-col gap-4">
               <a 
                 href="/#features" 

@@ -1,6 +1,7 @@
 import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
 import { PLAN_LIMITS } from "@/lib/plans";
+import { usePageMeta } from "@/lib/usePageMeta";
 import {
   Accordion,
   AccordionContent,
@@ -52,6 +53,8 @@ const faqs = [
 ];
 
 export default function FAQ() {
+  usePageMeta("Questions fréquentes", "Tout ce que vous devez savoir sur Pro Social AI.");
+
   return (
     <div className="min-h-screen flex flex-col">
       <Navbar />

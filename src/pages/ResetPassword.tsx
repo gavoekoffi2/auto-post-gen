@@ -8,8 +8,11 @@ import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { MIN_PASSWORD_LENGTH, PASSWORD_RULE_HINT, validatePassword } from "@/lib/password";
+import { usePageMeta } from "@/lib/usePageMeta";
 
 export default function ResetPassword() {
+  usePageMeta("Nouveau mot de passe", "Choisissez un nouveau mot de passe pour votre compte.");
+
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [password, setPassword] = useState("");
@@ -94,7 +97,7 @@ export default function ResetPassword() {
               <div className="w-16 h-16 bg-secondary/20 rounded-full flex items-center justify-center mx-auto">
                 <CheckCircle className="w-8 h-8 text-secondary" />
               </div>
-              <h2 className="text-xl font-bold">Mot de passe mis à jour !</h2>
+              <h1 className="text-xl font-bold">Mot de passe mis à jour !</h1>
               <p className="text-muted-foreground">
                 Vous allez être redirigé vers la page de connexion...
               </p>
@@ -109,7 +112,7 @@ export default function ResetPassword() {
               <div className="w-16 h-16 bg-destructive/20 rounded-full flex items-center justify-center mx-auto">
                 <Lock className="w-8 h-8 text-destructive" />
               </div>
-              <h2 className="text-xl font-bold">Lien invalide ou expiré</h2>
+              <h1 className="text-xl font-bold">Lien invalide ou expiré</h1>
               <p className="text-muted-foreground">
                 Ce lien de réinitialisation est invalide ou a expiré. Veuillez en demander un nouveau.
               </p>
@@ -122,7 +125,7 @@ export default function ResetPassword() {
           ) : (
             <>
               <div className="text-center mb-6">
-                <h2 className="text-xl font-bold mb-2">Nouveau mot de passe</h2>
+                <h1 className="text-xl font-bold mb-2">Nouveau mot de passe</h1>
                 <p className="text-muted-foreground text-sm">
                   Choisissez un nouveau mot de passe pour votre compte
                 </p>

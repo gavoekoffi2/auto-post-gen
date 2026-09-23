@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { FloatingElements } from "./FloatingElements";
 import { DashboardPreview } from "./DashboardPreview";
 import { PlatformBadges } from "./PlatformBadges";
+import { CUSTOMER_LOGOS } from "@/lib/testimonials";
 
 export const HeroNew = () => {
   return (
@@ -89,17 +90,26 @@ export const HeroNew = () => {
           <DashboardPreview />
         </div>
         
-        {/* Social proof */}
-        <div className="mt-20 text-center opacity-0 animate-fade-in-up" style={{ animationDelay: '0.8s', animationFillMode: 'forwards' }}>
-          <p className="text-sm text-muted-foreground mb-6">Ils nous font déjà confiance</p>
-          <div className="flex flex-wrap justify-center items-center gap-8 md:gap-12 opacity-60">
-            {["TechStartup", "GrowthAgency", "MediaPro", "ContentFirst", "SocialMasters"].map((company, i) => (
-              <div key={i} className="text-xl font-bold text-muted-foreground/50 font-display">
-                {company}
-              </div>
-            ))}
+        {/* Customer logos.
+            This block used to read "Ils nous font déjà confiance" above five
+            invented company names — TechStartup, GrowthAgency, MediaPro,
+            ContentFirst, SocialMasters — for a product with no customers. Same
+            category of claim as the fabricated testimonials: a statement of
+            fact about who uses the product. It now draws from
+            src/lib/testimonials.ts, which ships empty, and renders nothing
+            until there is a real customer who has agreed to be named. */}
+        {CUSTOMER_LOGOS.length > 0 && (
+          <div className="mt-20 text-center opacity-0 animate-fade-in-up" style={{ animationDelay: '0.8s', animationFillMode: 'forwards' }}>
+            <p className="text-sm text-muted-foreground mb-6">Ils nous font déjà confiance</p>
+            <div className="flex flex-wrap justify-center items-center gap-8 md:gap-12 opacity-60">
+              {CUSTOMER_LOGOS.map((company) => (
+                <div key={company} className="text-xl font-bold text-muted-foreground/50 font-display">
+                  {company}
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
       </div>
       
       {/* Bottom gradient fade */}

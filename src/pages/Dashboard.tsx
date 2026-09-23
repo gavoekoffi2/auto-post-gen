@@ -16,6 +16,7 @@ import { useNavigate } from "react-router-dom";
 import SettingsDialog from "@/components/SettingsDialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { SocialMediaConnect } from "@/components/SocialMediaConnect";
+import { usePageMeta } from "@/lib/usePageMeta";
 
 type PostStatus = "pending" | "validated" | "published" | "failed";
 
@@ -137,6 +138,8 @@ async function generatePosterImage(
 }
 
 export default function Dashboard() {
+  usePageMeta("Tableau de bord");
+
   const navigate = useNavigate();
   const [posts, setPosts] = useState<Post[]>([]);
   const [editingPost, setEditingPost] = useState<Post | null>(null);

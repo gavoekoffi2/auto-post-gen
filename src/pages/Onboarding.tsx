@@ -14,8 +14,11 @@ import { AudienceEditor } from "@/components/AudienceEditor";
 import { AudienceSegment, normalizeAudienceSegments } from "@/lib/audiences";
 import { functionErrorMessage } from "@/lib/functionError";
 import { PLAN_LIMITS } from "@/lib/plans";
+import { usePageMeta } from "@/lib/usePageMeta";
 
 export default function Onboarding() {
+  usePageMeta("Configuration");
+
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);

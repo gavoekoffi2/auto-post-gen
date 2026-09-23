@@ -41,3 +41,12 @@ export interface PlatformStat {
  * regulator, or a customer, may ask.
  */
 export const PLATFORM_STATS: PlatformStat[] = [];
+
+/**
+ * Names shown under "Ils nous font déjà confiance" on the landing page.
+ *
+ * Also empty, and for the same reason: the hero listed five invented
+ * companies. Add a name only once that customer exists and has agreed to be
+ * named publicly — it is a statement about who uses the product, not styling.
+ */
+export const CUSTOMER_LOGOS: string[] = [];

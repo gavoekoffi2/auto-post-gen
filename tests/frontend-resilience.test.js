@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -126,4 +126,58 @@ test("container logs cannot fill the VPS disk", () => {
   // A full disk takes down every other service on the box, not just this one.
   assert.match(compose, /max-size: "10m"/);
   assert.match(compose, /max-file: "3"/);
+});
+
+test("every route names itself, in the tab and to a screen reader", () => {
+  const hook = read("src/lib/usePageMeta.ts");
+  assert.match(hook, /document\.title/);
+
+  // A single-page app keeps index.html's title on every route unless it is
+  // set per page. The FAQ, the terms and the sign-in screen all announced
+  // themselves as the landing page — which is the tab name, the bookmark, the
+  // history entry, what a screen reader reads on navigation, and what a
+  // search engine indexes.
+  const pages = readdirSync(join(root, "src/pages")).filter((f) => f.endsWith(".tsx"));
+  for (const page of pages) {
+    assert.match(
+      read(`src/pages/${page}`),
+      /usePageMeta\(/,
+      `src/pages/${page} does not set its own title`,
+    );
+  }
+});
+
+test("the icon-only mobile menu button has an accessible name", () => {
+  const navbar = read("src/components/Navbar.tsx");
+  // On a phone this is the ONLY way to reach the navigation, and an icon
+  // button with no text announces as "bouton" and nothing else.
+  assert.match(navbar, /aria-label=\{isMenuOpen \? "Fermer le menu" : "Ouvrir le menu"\}/);
+  assert.match(navbar, /aria-expanded=\{isMenuOpen\}/);
+  assert.match(navbar, /aria-controls="mobile-menu"/);
+  assert.match(navbar, /id="mobile-menu"/);
+});
+
+test("the authentication pages have a top-level heading", () => {
+  // A page with no <h1> is unnavigable by screen reader and structureless for
+  // a crawler. The product name beside the logo is a <span>.
+  for (const page of ["src/pages/Auth.tsx", "src/pages/ForgotPassword.tsx", "src/pages/ResetPassword.tsx"]) {
+    assert.match(read(page), /<h1/, `${page} has no <h1>`);
+  }
+});
+
+test("decorative floating icons do not sit on the headline on a phone", () => {
+  const floating = read("src/components/landing/FloatingElements.tsx");
+  // The icon tiles and the solid dots are positioned as a percentage of the
+  // width, so on a phone they land ON TOP of the hero text — and the target
+  // market reads this page on a phone.
+  //
+  // The diffuse gradient orbs (blur-3xl, ~15% opacity) are excluded on
+  // purpose: they sit behind everything as a colour wash and cost nothing in
+  // legibility, so hiding them would flatten the design for no gain.
+  const positioned = (floating.match(/<div className="[^"]*absolute (?:top|bottom)-[^"]*"/g) || [])
+    .filter((el) => !el.includes("blur-3xl"));
+  assert.ok(positioned.length >= 6, "expected the icon tiles and dots to be found");
+  for (const el of positioned) {
+    assert.match(el, /hidden md:block/, `a decorative element is drawn on phones: ${el.slice(0, 70)}`);
+  }
 });

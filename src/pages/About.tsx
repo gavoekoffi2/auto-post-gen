@@ -3,8 +3,11 @@ import { PLATFORM_STATS } from "@/lib/testimonials";
 import { Footer } from "@/components/Footer";
 import { Card } from "@/components/ui/card";
 import { Sparkles, Target, Users, Zap } from "lucide-react";
+import { usePageMeta } from "@/lib/usePageMeta";
 
 export default function About() {
+  usePageMeta("À propos", "Notre mission : rendre la présence sociale accessible à toutes les entreprises.");
+
   return (
     <div className="min-h-screen flex flex-col">
       <Navbar />

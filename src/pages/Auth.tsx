@@ -10,8 +10,11 @@ import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { MIN_PASSWORD_LENGTH, PASSWORD_RULE_HINT, validatePassword } from "@/lib/password";
+import { usePageMeta } from "@/lib/usePageMeta";
 
 export default function Auth() {
+  usePageMeta("Connexion", "Connectez-vous ou créez votre compte Pro Social AI.");
+
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState("");
@@ -166,6 +169,10 @@ export default function Auth() {
         ) : (
         <Card className="glass-card p-8">
           <Tabs defaultValue="signin" className="w-full">
+            {/* The page needs a top-level heading. The product name beside
+                the logo is a <span>, and the tab labels are controls, so
+                without this the sign-in page had no <h1> at all. */}
+            <h1 className="sr-only">Connexion à Pro Social AI</h1>
             <TabsList className="grid w-full grid-cols-2 mb-8">
               <TabsTrigger value="signin">Connexion</TabsTrigger>
               <TabsTrigger value="signup">Inscription</TabsTrigger>

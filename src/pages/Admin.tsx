@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { Activity, AlertTriangle, BarChart3, Ban, CheckCircle2, HeartPulse, KeyRound, LogOut, Plus, RefreshCw, Search, Send, ShieldCheck, Trash2, Unplug, Users, XCircle } from "lucide-react";
+import { usePageMeta } from "@/lib/usePageMeta";
 
 type AdminUser = {
   id: string;
@@ -59,6 +60,8 @@ const HEALTH_TONE: Record<CheckStatus, { icon: typeof CheckCircle2; text: string
 };
 
 export default function Admin() {
+  usePageMeta("Centre de contrôle");
+
   const navigate = useNavigate();
   const [data, setData] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(true);

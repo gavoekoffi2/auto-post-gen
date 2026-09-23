@@ -11,6 +11,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
+import { usePageMeta } from "@/lib/usePageMeta";
 
 type Post = {
   id: string;
@@ -23,6 +24,8 @@ type Post = {
 };
 
 export default function CalendarPage() {
+  usePageMeta("Calendrier");
+
   const navigate = useNavigate();
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date());
   const [posts, setPosts] = useState<Post[]>([]);

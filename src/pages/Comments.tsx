@@ -9,6 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { functionErrorMessage } from "@/lib/functionError";
+import { usePageMeta } from "@/lib/usePageMeta";
 import {
   ArrowLeft,
   Bot,
@@ -32,6 +33,8 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 const Comments = () => {
+  usePageMeta("Commentaires");
+
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);

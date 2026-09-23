@@ -2,8 +2,11 @@ import { useLocation, Link } from "react-router-dom";
 import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft } from "lucide-react";
+import { usePageMeta } from "@/lib/usePageMeta";
 
 const NotFound = () => {
+  usePageMeta("Page introuvable", "Cette page n'existe pas.");
+
   const location = useLocation();
 
   useEffect(() => {

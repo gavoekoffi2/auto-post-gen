@@ -2,8 +2,11 @@ import { ArrowLeft } from "lucide-react";
 import { SUPPORT_EMAIL, formatLegalDate } from "@/lib/appConfig";
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
+import { usePageMeta } from "@/lib/usePageMeta";
 
 export default function Terms() {
+  usePageMeta("Conditions d'utilisation", "Les conditions d'utilisation du service Pro Social AI.");
+
   return (
     <div className="min-h-screen py-12 px-4">
       <div className="container mx-auto max-w-3xl">
