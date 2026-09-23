@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { resolveEntitlement, type Entitlement } from "@/lib/plans";
 import {
   comments as commentsApi,
   profile as profileApi,
@@ -44,9 +45,11 @@ const Comments = () => {
 
   const [autoReply, setAutoReply] = useState(false);
   const [instructions, setInstructions] = useState("");
-  const [plan, setPlan] = useState<string>("starter");
+  const [entitlement, setEntitlement] = useState<Entitlement>(() => resolveEntitlement(null));
   const [savingSettings, setSavingSettings] = useState(false);
-  const isEnterprise = plan === "enterprise";
+  // Same rule as the server: the plan (or the trial's plan) must include the
+  // feature and the account must not have expired.
+  const isEnterprise = entitlement.canGenerate && entitlement.limits.aiAutoReply;
 
   const loadComments = async () => {
     try {
@@ -63,7 +66,7 @@ const Comments = () => {
       const data = await profileApi.get();
       setAutoReply(!!data.auto_reply_enabled);
       setInstructions(data.auto_reply_instructions || "");
-      setPlan(data.plan || "starter");
+      setEntitlement(resolveEntitlement(data));
     } catch {
       // The page still renders without the auto-reply settings; the toggle
       // simply stays off until the profile can be read.
@@ -247,11 +250,9 @@ const Comments = () => {
                 <span className="font-medium text-foreground">Enterprise</span>. Vous pouvez
                 toujours répondre manuellement (avec l'aide de l'IA) ci-dessous.
               </p>
-              <a href="/#pricing">
-                <Button size="sm" className="bg-gradient-to-r from-primary to-secondary whitespace-nowrap">
-                  Voir les tarifs
-                </Button>
-              </a>
+              <Button asChild size="sm" className="bg-gradient-to-r from-primary to-secondary whitespace-nowrap">
+                <Link to="/abonnement?plan=enterprise">Passer à Enterprise</Link>
+              </Button>
             </div>
           )}
         </Card>

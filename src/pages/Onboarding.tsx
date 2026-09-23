@@ -10,11 +10,15 @@ import { ArrowRight, ArrowLeft, Sparkles } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { ApiError, profile as profileApi } from "@/lib/api";
+import { resolveEntitlement, type Entitlement } from "@/lib/plans";
 import { AudienceEditor } from "@/components/AudienceEditor";
 import { AudienceSegment, isUsableAudience, normalizeAudienceSegments } from "@/lib/audiences";
 
 export default function Onboarding() {
   const navigate = useNavigate();
+  // Starter until the profile loads: the safe default.
+  const [entitlement, setEntitlement] = useState<Entitlement>(() => resolveEntitlement(null));
+  const limits = entitlement.limits;
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [analyzingAudiences, setAnalyzingAudiences] = useState(false);
@@ -24,7 +28,7 @@ export default function Onboarding() {
     sector: "",
     contentType: "",
     tone: "",
-    frequency: "2",
+    frequency: "3",
     description: "",
     styleExample: "",
     platforms: [] as string[],
@@ -56,6 +60,9 @@ export default function Onboarding() {
         }
         return;
       }
+      // What the new account may receive: normally the free trial of the plan
+      // picked on the pricing page.
+      if (profile) setEntitlement(resolveEntitlement(profile));
       if (
         profile &&
         profile.sector &&
@@ -129,7 +136,9 @@ export default function Onboarding() {
               sector: formData.sector,
               content_types: [formData.contentType],
               tone: formData.tone,
-              post_frequency: parseInt(formData.frequency),
+              // Clamped to what the account includes, instead of persisting a
+              // number the weekly runner will ignore.
+              post_frequency: Math.min(parseInt(formData.frequency), limits.postsPerWeek),
               description: formData.description,
               style_example: formData.styleExample,
               platforms: formData.platforms.length > 0 ? formData.platforms : ['Instagram'],
@@ -303,11 +312,23 @@ export default function Onboarding() {
                     <SelectValue placeholder="Nombre de posts par semaine" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="2">2 posts/semaine (Starter)</SelectItem>
-                    <SelectItem value="5">5 posts/semaine (Pro)</SelectItem>
-                    <SelectItem value="10">10 posts/semaine (Enterprise)</SelectItem>
+                    {/* Only what this account can actually receive. The list
+                        used to offer 2/5/10 labelled Starter/Pro/Enterprise —
+                        volumes no plan sells (they are 3/7/10), silently
+                        rewritten by the weekly runner. */}
+                    {Array.from({ length: limits.postsPerWeek }, (_, i) => i + 1).map((n) => (
+                      <SelectItem key={n} value={n.toString()}>
+                        {n} post{n > 1 ? "s" : ""}/semaine
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
+                <p className="text-xs text-muted-foreground">
+                  {entitlement.state === "trialing"
+                    ? `Votre essai gratuit du forfait ${limits.label} inclut jusqu'à ${limits.postsPerWeek} posts/semaine.`
+                    : `Votre forfait ${limits.label} inclut jusqu'à ${limits.postsPerWeek} posts/semaine.`}{" "}
+                  Vous pourrez changer de forfait à tout moment depuis la page Abonnement.
+                </p>
               </div>
             </div>
           )}

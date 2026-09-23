@@ -109,6 +109,19 @@ export const env = {
   resendFrom: optional("RESEND_FROM"),
   contactTo: optional("CONTACT_TO"),
   cronSecret: optional("CRON_SECRET"),
+
+  // --- Subscriptions. Public by nature (they are shown to paying customers),
+  // but read here rather than baked into the bundle so an operator changes a
+  // number by restarting the API, not by rebuilding the dashboard. Each is a
+  // phone number to transfer to, or an https:// payment link (a Wave
+  // merchant link, for instance). Only configured channels are offered.
+  paymentAccounts: {
+    wave: optional("PAYMENT_WAVE"),
+    orange_money: optional("PAYMENT_ORANGE_MONEY"),
+    mtn_momo: optional("PAYMENT_MTN_MOMO"),
+    moov_money: optional("PAYMENT_MOOV_MONEY"),
+  },
+  paymentBeneficiary: optional("PAYMENT_BENEFICIARY") ?? optional("APP_NAME") ?? "Pro Social AI",
   // TAVILY_API_KEY / BRAVE_SEARCH_API_KEY are deliberately absent: web
   // research is not implemented on this stack (see the handoff). Declaring
   // them would advertise a capability nothing reads.
@@ -131,6 +144,12 @@ export function missingCapabilities(): string[] {
     );
   }
   if (!env.zernioKey) missing.push("ZERNIO_API_KEY — social publishing is unavailable");
+  if (!Object.values(env.paymentAccounts).some(Boolean)) {
+    missing.push(
+      "PAYMENT_WAVE / PAYMENT_ORANGE_MONEY / PAYMENT_MTN_MOMO / PAYMENT_MOOV_MONEY — " +
+        "the subscription page cannot show where to pay",
+    );
+  }
   if (!env.resendKey || !env.resendFrom) {
     missing.push("RESEND_API_KEY / RESEND_FROM — outbound email is unavailable");
   }

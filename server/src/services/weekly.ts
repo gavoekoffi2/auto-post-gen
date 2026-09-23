@@ -5,6 +5,7 @@ import { ensurePostEngagement } from "../shared/postEngagement.js";
 import { getTextLimit, tightLengthBrief } from "../shared/platformTextLimits.js";
 import { callClaude } from "./text.js";
 import { startPosterJob } from "./generation.js";
+import { loadEntitlement } from "./entitlement.js";
 import {
   buildEditorialPlan,
   isoWeekNumber,
@@ -84,9 +85,18 @@ export async function generateWeekFor(profileId: string): Promise<WeeklyResult> 
   if (!profile) return { profileId, generated: 0, skipped: "profile_not_found" };
   if (!env.openRouterKey) return { profileId, generated: 0, skipped: "text_generation_unavailable" };
 
+  // A trial or paid period that has ended gets no new posts; what is already
+  // scheduled still goes out (the publish queue does not check this).
+  const entitlement = await loadEntitlement(profileId);
+  if (!entitlement.canGenerate) return { profileId, generated: 0, skipped: "subscription_expired" };
+
+  // The weekly volume the customer is entitled to. post_frequency is written
+  // by the client, so it is a request, not an entitlement: without the clamp
+  // a Starter account setting it to 10 would receive the Enterprise volume.
   const now = new Date();
   const wanted = Math.min(
     HARD_MAX_POSTS_PER_RUN,
+    entitlement.limits.postsPerWeek,
     Math.max(0, Number(profile.post_frequency ?? 2)),
   );
 
@@ -122,7 +132,14 @@ export async function generateWeekFor(profileId: string): Promise<WeeklyResult> 
   // the user capped at two.
   const alreadyPromo = existing.filter((p) => p.content_category === "promo").length;
   const alreadyResearch = existing.filter((p) => p.content_category === "research").length;
-  const promoTarget = Math.max(0, Number(profile.promo_posts_per_week ?? 1) - alreadyPromo);
+  // Promotion never takes the whole week: with promo_posts_per_week equal to
+  // the (plan-clamped) volume, every post would have been an advertisement.
+  // At least one post a week is non-promotional.
+  const maxPromo = wanted > 1 ? wanted - 1 : wanted;
+  const promoTarget = Math.max(
+    0,
+    Math.min(Number(profile.promo_posts_per_week ?? 1), maxPromo) - alreadyPromo,
+  );
   const researchTarget = Math.max(0, Number(profile.research_posts_per_week ?? 1) - alreadyResearch);
   const plan = buildEditorialPlan(promoTarget, researchTarget, toGenerate);
 

@@ -19,6 +19,8 @@
 //   * Errors arrive as readable French messages (see ApiError), not as a raw
 //     status code or an unhandled rejection.
 
+import type { BillingPeriod, Entitlement, PaymentMethod, PlanId } from "./plans";
+
 /** Error carrying the server's message, its HTTP status and an optional code. */
 export class ApiError extends Error {
   constructor(
@@ -223,6 +225,12 @@ export interface Profile {
   /** Set by the user before any photo of a real person may be sent to the
    *  image provider. Never inferred; see consent handling in the UI. */
   leader_photo_consent_at: string | null;
+  /** Billing lifecycle. Read-only: written by the server alone. Pass the
+   *  profile to resolveEntitlement (src/lib/plans.ts) to know what it allows. */
+  subscription_status: string;
+  trial_plan: string;
+  trial_ends_at: string | null;
+  current_period_ends_at: string | null;
 }
 
 export interface Post {
@@ -315,10 +323,11 @@ export interface PublishResult {
 // ---------------------------------------------------------------------------
 
 export const auth = {
-  register: (email: string, password: string) =>
+  /** `requestedPlan` is the plan the free trial starts on (the pricing CTA's). */
+  register: (email: string, password: string, requestedPlan?: string) =>
     request<{ user: SessionUser }>("/auth/register", {
       method: "POST",
-      body: { email, password },
+      body: { email, password, ...(requestedPlan ? { requestedPlan } : {}) },
     }),
 
   login: (email: string, password: string) =>
@@ -582,6 +591,53 @@ export const admin = {
    */
   action: <T = unknown>(body: Record<string, unknown>) =>
     request<T>("/admin/actions", { method: "POST", body, timeoutMs: 60_000 }),
+};
+
+// ---------------------------------------------------------------------------
+// Subscription — free trial, Mobile Money payment declarations.
+// ---------------------------------------------------------------------------
+
+export interface SubscriptionRequest {
+  id: string;
+  plan: string;
+  billing_period: "monthly" | "annual";
+  amount_fcfa: number;
+  payment_method: string;
+  payer_phone: string;
+  payment_reference: string;
+  status: "pending" | "approved" | "rejected" | "cancelled";
+  admin_note: string | null;
+  decided_at: string | null;
+  created_at: string;
+}
+
+export interface SubscriptionState {
+  entitlement: Entitlement;
+  requests: SubscriptionRequest[];
+  /** The Mobile Money channels the operator configured on the server. */
+  paymentAccounts: Array<{ method: PaymentMethod; label: string; value: string }>;
+  beneficiary: string;
+}
+
+export const subscription = {
+  get: () => request<SubscriptionState>("/subscription"),
+  /** Declares a payment. The server computes the amount; this grants nothing
+   *  until an operator verifies it. */
+  declarePayment: (input: {
+    plan: PlanId;
+    billingPeriod: BillingPeriod;
+    paymentMethod: PaymentMethod;
+    payerPhone: string;
+    paymentReference: string;
+  }) =>
+    request<{ request: SubscriptionRequest; operatorNotified: boolean }>("/subscription/requests", {
+      method: "POST",
+      body: input,
+    }),
+  cancel: (requestId: string) =>
+    request<{ ok: true }>(`/subscription/requests/${encodeURIComponent(requestId)}/cancel`, {
+      method: "POST",
+    }),
 };
 
 export const account = {

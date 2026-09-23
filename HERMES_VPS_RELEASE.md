@@ -12,32 +12,91 @@
 
 ---
 
+## 0. Cette livraison : essai gratuit, abonnements, forfaits appliqués
+
+Construite **au-dessus** de `claude/legacy-status-compat-9m2x` (tout ce qui
+suit en §2–§3 reste inclus et valable). Elle intègre sur la pile
+auto-hébergée les fonctionnalités de `claude/magical-thompson-mjuif9` qui
+ont un sens ici — réécrites pour l'API Fastify et PostgreSQL, **sans aucune
+dépendance Supabase**.
+
+**Ce qui change pour les utilisateurs**
+
+- **Essai gratuit de 7 jours** du forfait choisi sur la page tarifs
+  (`/auth?plan=starter|pro|enterprise`, Pro par défaut), sans carte.
+- **Forfaits réellement appliqués par l'API** (ils ne l'étaient pas du tout) :
+  volume hebdomadaire (3 / 7 / 10), plafonds mensuels IA (60 / 150 / 300
+  textes et affiches), réponses automatiques réservées à Enterprise. La
+  promotion ne peut plus occuper toute la semaine.
+- **À l'expiration** (essai ou période payée) : la génération s'arrête
+  (402 `subscription_expired`), **les posts déjà programmés sont publiés**.
+- **Paiement Mobile Money** sur `/abonnement` : le client paie (Wave, Orange
+  Money, MTN, Moov) et déclare la référence ; l'opérateur est prévenu par
+  email et **valide dans `/admin`** ; le client reçoit la confirmation. Le
+  montant est calculé par le serveur ; une déclaration n'accorde rien.
+- **Rappel par email** 2 jours avant la fin d'essai et 3 jours avant
+  l'échéance (runner interne quotidien, ou `POST /api/cron/subscription-reminders`).
+- **Console `/admin` réparée** : elle plantait au premier affichage (forme de
+  données différente de ce que renvoyait l'API) et trois de ses boutons
+  appelaient des actions inexistantes (`create_user`, `reset_password`,
+  `delete_user`) — elles existent désormais, avec leurs protections.
+- Pages publiques corrigées : plus de promesse de « recherche web »,
+  d'« email de validation », de paiement par carte, d'options à la carte, ni
+  de « 10 h gagnées » ; dates de révision réelles sur les CGU et la politique
+  de confidentialité, qui décrivent maintenant l'essai et le paiement.
+
+**Ce qui n'a PAS été porté, et pourquoi** : tout ce qui, dans
+`magical-thompson`, visait des Edge Functions Supabase absentes de cette pile
+(diagnostic `/admin` et alertes `health-alert`, fuite de clé Graphiste dans
+une Edge Function, runner de migrations Supabase, emails de validation
+hebdomadaires, changement d'email). Voir §9.
+
+**Fichiers de cette livraison**
+
+| Fichier | Nature |
+|---|---|
+| `server/migrations/0003_trial_and_subscriptions.sql` | **nouveau** — colonnes de cycle de vie sur `profiles`, rattrapage des comptes existants (actifs, sans échéance), table `subscription_requests` + index uniques. Idempotent, n'ajoute que. |
+| `server/src/shared/plans.ts` · `src/lib/plans.ts` | **nouveaux**, identiques octet pour octet — limites, prix, `resolveEntitlement` |
+| `server/src/services/entitlement.ts` | **nouveau** — droit lu en base, garde 402, usage mensuel |
+| `server/src/services/subscriptions.ts` | **nouveau** — déclaration, validation atomique, forfait manuel, prolongation, rappels |
+| `server/src/routes/billing.ts` | **nouveau** — `GET /subscription`, déclaration, annulation |
+| `server/src/lib/html.ts` | **nouveau** — échappement et gabarit des emails |
+| `server/src/routes/generations.ts` | garde d'abonnement + plafonds mensuels du forfait |
+| `server/src/services/weekly.ts` | comptes expirés ignorés, volume borné par le forfait, promotion bornée |
+| `server/src/routes/profile.ts` | réponses auto selon le droit ; colonnes d'abonnement en lecture seule |
+| `server/src/routes/auth.ts` | l'inscription démarre l'essai du forfait demandé |
+| `server/src/routes/misc.ts` | console admin (forme corrigée, actions manquantes, paiements), export RGPD, cron des rappels |
+| `server/src/services/scheduler.ts` · `server/src/index.ts` · `server/src/lib/env.ts` | rappels quotidiens, routes, variables `PAYMENT_*` |
+| `server/tests/subscriptions.test.ts` · `server/tests/admin.test.ts` | **nouveaux** — 17 cas sur les vraies routes et un vrai PostgreSQL |
+| `server/tests/legacy-migration.test.ts` | +1 cas : 0003 sur le schéma hérité (dry-run puis réel, rejeu) |
+| `src/pages/Subscription.tsx` · `src/components/SubscriptionBanner.tsx` · `src/lib/legal.ts` | **nouveaux** |
+| `src/pages/*` , `src/components/*`, `src/lib/api.ts`, `src/lib/session.tsx` | intégration UI, textes publics |
+| `tests/subscription.test.js` | **nouveau** — 18 cas (politique exécutée + invariants) |
+| `deploy/docker-compose.vps.yml` · `.env.selfhosted.example` | variables `PAYMENT_*` transmises à l'API |
+
+---
+
 ## 1. Ce qu'il faut déployer
 
 | | |
 |---|---|
-| **Branche** | `claude/legacy-status-compat-9m2x` |
-| **SHA du code** | `27544ce633845d54d75318cefc5621de05071609` |
+| **Branche** | `claude/selfhosted-subscriptions-release-q7t4` |
+| **SHA du code** | `__CODE_SHA__` |
 | **SHA à déployer** | la pointe de la branche (ce document est le seul commit au-dessus du code ; `git log -1 --format=%H`) |
-| **Branche précédente** | `claude/legacy-db-compat-b7k3` @ `07d8d0d2f8c13facf1fdfc9646d1e560cea96d4d` (bloquée par la répétition générale) |
-| **Branche d'origine** | `claude/lucid-johnson-14zub1` @ `f3479c2428a45e696e0c48ce679df3946a94b689` |
+| **Base** | `claude/legacy-status-compat-9m2x` @ `783938efbf206055bf6cf67d6a684ef11656fc94` |
+| **Fonctionnalités intégrées depuis** | `claude/magical-thompson-mjuif9` @ `66416276127588bdb50f179b6e6566ddb50cb663` |
 | **`main`** | non modifié, non poussé, non fusionné |
-
-Comparer avec la branche Claude initiale :
 
 ```bash
 git fetch origin
-# depuis la branche précédente (ce que corrige cette livraison)
-git diff --stat origin/claude/legacy-db-compat-b7k3..origin/claude/legacy-status-compat-9m2x
-git log --oneline origin/claude/legacy-db-compat-b7k3..origin/claude/legacy-status-compat-9m2x
-
-# depuis la branche Claude initiale
-git diff --stat f3479c2428a45e696e0c48ce679df3946a94b689..origin/claude/legacy-status-compat-9m2x
+# ce qu'apporte cette livraison par rapport à la précédente
+git diff --stat origin/claude/legacy-status-compat-9m2x..origin/claude/selfhosted-subscriptions-release-q7t4
+git log --oneline origin/claude/legacy-status-compat-9m2x..origin/claude/selfhosted-subscriptions-release-q7t4
 ```
 
 ---
 
-## 2. Les blocages traités
+## 2. Les blocages traités (livraison précédente, inclus)
 
 Sur une **copie isolée** de la base de production, la migration échouait :
 
@@ -109,7 +168,7 @@ d'écriture.
 
 ---
 
-## 3. Fichiers modifiés
+## 3. Fichiers modifiés par la livraison précédente (inclus)
 
 | Fichier | Nature |
 |---|---|
@@ -127,8 +186,8 @@ d'écriture.
 | `nginx.vps.conf` | `/api` sans slash final est proxifié au lieu de servir la SPA |
 | `.env.selfhosted.example` | sépare explicitement obligatoire / facultatif ; aucune valeur réelle |
 
-Aucun fichier applicatif (`src/`, routes, services) n'a été modifié : le
-comportement du produit est inchangé.
+Cette livraison-là ne modifiait aucun fichier applicatif ; la présente, si
+(voir §0).
 
 ---
 
@@ -179,6 +238,33 @@ Vérifié aussi à la main, contre une base héritée migrée **portant la contr
 | Ses anciens posts (`published`, `draft`) listés par `GET /api/posts` | visibles, statuts d'origine |
 | API démarrée **sans `DATABASE_URL`**, avec seulement `PGHOST/PGUSER/PGDATABASE` | `/api/health` 200, `/api/posts` 200 |
 | Mot de passe contenant `@ : / # ? & = +` | assemblé, encodé, relu identique par le parseur de `pg` |
+
+---
+
+### 4 bis. Résultats de CETTE livraison
+
+Exécutés dans le bac à sable sur PostgreSQL 16 local, bases jetables
+uniquement (`psa_*`), Node 22.22 :
+
+| Vérification | Résultat |
+|---|---|
+| `npm test` (dépôt) | `# tests 190  # pass 190  # fail 0` (172 → 190) |
+| `npm run lint` (dépôt) | `0 errors, 8 warnings` — les 8 warnings shadcn/`session.tsx` préexistants, aucun nouveau |
+| `npm run typecheck` (dépôt) | OK |
+| `npm run build` (dépôt) | OK |
+| Garde CI « aucune dépendance Supabase » (les 4 `grep` de `ci.yml`) | propre ; `import.meta.env` dans `src/` : 0 |
+| `npm run typecheck` + `npm run build` (`server/`) | OK |
+| `npm test` (`server/`) | `# tests 61  # pass 61  # fail 0` (43 → 61) |
+| Migration **vierge** | `Applied 4 migration(s).` puis 2 rejeux complets de chaque fichier sans erreur ; relance du runner : `Schema already up to date.` |
+| Migration **legacy** (fixture du schéma de production) | `Applied 4 migration(s).` ; comptes hérités : `active`, sans échéance (2/2) ; statuts de posts hérités intacts (`draft`, `failed`, `published`, `scheduled`) |
+| Migration **dry-run** (fixture héritée) | `DRY RUN OK — 4 migration(s) would apply cleanly.` puis `Rolled back: the database is unchanged.` (colonnes de `profiles` : 7 avant, 7 après ; registre vide) |
+| Migration **incrémentale** (0000–0002 déjà appliquées, comme en production après la livraison précédente) | dry-run puis réel : seule `0003` s'applique (`Applied 1 migration(s).`) ; 3/3 comptes existants `active` |
+| `docker compose … --env-file deploy/fake.env config` | OK (volumes internes ET `VOLUMES_ARE_EXTERNAL=true`) ; aucune URL `postgres://` dans la configuration résolue |
+| Parcours réel navigateur → API locale → PostgreSQL | inscription depuis « Essai Starter » → bandeau « encore 7 jours » → déclaration Orange Money 15 000 FCFA → `/admin` « Valider » → compte `pro active` (+30 j) → expiration simulée : bandeau rouge, bouton « Choisir un forfait » |
+
+Non exécuté ici : `docker build` (pas de démon Docker dans le bac à sable),
+envoi réel d'email (aucune clé Resend), migration sur une copie réelle de
+production (§6.0, à faire par Hermes).
 
 ---
 
@@ -327,7 +413,7 @@ docker system df   # voir ce que récupérerait un `docker image prune`
 ```bash
 cd /opt/pro-social-ai   # ou le chemin réel du dépôt sur le VPS
 git fetch origin
-git checkout claude/legacy-db-compat-b7k3
+git checkout claude/selfhosted-subscriptions-release-q7t4
 git rev-parse HEAD      # doit correspondre à la section 1
 ```
 
@@ -370,7 +456,28 @@ applied  0000_legacy_production_compat.sql
   [NOTICE] [0000] write probe passed.
 applied  0001_core_schema.sql
 applied  0002_media_public_token.sql
-Applied 3 migration(s).
+applied  0003_trial_and_subscriptions.sql
+Applied 4 migration(s).
+```
+
+Si la livraison précédente est **déjà** en production (0000–0002 appliquées),
+seule la nouvelle s'applique :
+
+```
+skip     0000_legacy_production_compat.sql (already applied)
+skip     0001_core_schema.sql (already applied)
+skip     0002_media_public_token.sql (already applied)
+applied  0003_trial_and_subscriptions.sql
+Applied 1 migration(s).
+```
+
+Contrôle immédiat de 0003 — **aucun compte existant ne doit être en essai** :
+
+```sql
+SELECT subscription_status, count(*) FROM profiles GROUP BY 1;
+-- attendu : uniquement 'active' (les comptes existants), aucun 'trialing'
+SELECT count(*) FROM profiles WHERE subscription_status = 'trialing' AND trial_ends_at IS NULL;
+-- attendu : 0
 ```
 
 Puis, tout de suite :
@@ -448,6 +555,14 @@ docker run --rm -v pro-social-ai_media:/data -v /opt/backups/<date>:/backup \
   alpine sh -c "rm -rf /data/* && tar xzf /backup/media.tar.gz -C /data"
 ```
 
+**Spécifique à 0003.** Elle n'ajoute que des colonnes, une table et des
+index : l'image précédente les ignore et fonctionne telle quelle, sans
+restauration. Revenir à l'image précédente suffit donc pour annuler la
+fonctionnalité (les forfaits cessent d'être appliqués, l'essai n'est plus
+affiché). Si vous voulez aussi retirer les objets de 0003 — **jamais
+nécessaire** — faites-le à la main après sauvegarde : la règle du dépôt est
+qu'aucune migration ne supprime de données.
+
 Deux propriétés rendent le retour arrière possible **sans restaurer la base**
 dans la plupart des cas : la migration n'a rien supprimé ni renommé (les
 colonnes héritées `user_id`, la table `users` et leurs données sont intactes),
@@ -474,6 +589,11 @@ quelles. La restauration de la base reste la voie sûre si un doute subsiste.
 | 9 | `/login` puis F5 | l'application, pas un 404 |
 | 10 | `docker compose … ps` | `postgres`, `api`, `frontend` en `healthy` |
 | 11 | `docker exec <postgres> psql -c "\d profiles"` depuis l'hôte uniquement | PostgreSQL n'est **pas** joignable depuis l'extérieur |
+| 12 | `SELECT subscription_status, count(*) FROM profiles GROUP BY 1;` | aucun compte existant en `trialing` (tous `active`) |
+| 13 | Inscription depuis « Essai gratuit » du forfait Starter | le tableau de bord affiche « Essai gratuit Starter — encore 7 jours » |
+| 14 | `/abonnement` | les moyens de paiement configurés (`PAYMENT_*`) s'affichent avec le bon montant |
+| 15 | Déclarer un paiement de test, puis `/admin` → « Paiements à vérifier » → **Valider** | le compte passe `active` ; email de confirmation reçu si Resend est configuré |
+| 16 | `curl -fsS -X POST -H "x-cron-secret: …" https://<domaine>/api/cron/subscription-reminders` | `{"sent":…,"failed":…}` (facultatif : le runner interne le fait chaque jour) |
 
 ---
 
@@ -527,6 +647,30 @@ quelles. La restauration de la base reste la voie sûre si un doute subsiste.
 9. **Recherche web** : non implémentée sur cette pile (voir
    `VPS_DEPLOYMENT_HANDOFF.md`) ; `TAVILY_API_KEY` / `BRAVE_SEARCH_API_KEY`
    n'existent plus.
+
+---
+
+### Propres à cette livraison
+
+10. **La connexion des réseaux sociaux n'est toujours pas terminée**
+    (`POST /social/connect` → 503, livraison précédente). Tant qu'elle ne
+    l'est pas, **aucun post ne peut être publié** : un client peut essayer puis
+    payer un produit qui ne publie pas. C'est le premier chantier produit. Le
+    contrat à respecter (plafond `limits.socialAccounts`, refus d'un compte
+    expiré) est écrit dans le code de la route.
+11. **Vérification des paiements à la main.** Chaque déclaration doit être
+    contrôlée dans l'application Mobile Money avant « Valider ». Sans
+    `RESEND_API_KEY`/`RESEND_FROM`, rien ne prévient l'opérateur : consultez
+    `/admin` chaque jour.
+12. **Politique de remboursement non décidée.** Les CGU décrivent le mécanisme
+    sans promettre ni exclure de remboursement : décision du propriétaire.
+13. **Supprimer un compte supprime son historique de paiements**
+    (`ON DELETE CASCADE`). Si la comptabilité doit le conserver, exportez-le
+    avant (`GET /api/account/export` le contient).
+14. **Non porté depuis `magical-thompson`** (propre à Supabase) : diagnostic
+    « État de la plateforme » et alertes `health-alert`, emails de validation
+    hebdomadaires, changement d'email par l'utilisateur. À reconstruire sur
+    cette pile si besoin.
 
 ---
 

@@ -5,11 +5,11 @@ import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Sparkles } from "lucide-react";
-import { Link } from "react-router-dom";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { profile as profileApi } from "@/lib/api";
 import { useSession } from "@/lib/session";
+import { PLAN_LIMITS, TRIAL_DAYS, isPlanId } from "@/lib/plans";
 
 export default function Auth() {
   const navigate = useNavigate();
@@ -17,6 +17,12 @@ export default function Auth() {
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  // Pricing CTAs link here with ?plan=<id>: the free trial starts on that
+  // plan. Visitors who arrive otherwise get Pro, the plan the pricing page
+  // features. The server re-validates the value.
+  const [searchParams] = useSearchParams();
+  const requestedPlan = searchParams.get("plan");
+  const trialPlan = isPlanId(requestedPlan) ? requestedPlan : "pro";
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -26,7 +32,7 @@ export default function Auth() {
       // The API creates the account and sets the session cookie in the same
       // response, so a new user lands straight in onboarding. There is no
       // email-confirmation round trip to wait on.
-      await signUp(email, password);
+      await signUp(email, password, trialPlan);
       toast.success("Compte créé !");
       navigate("/onboarding");
     } catch (error: unknown) {
@@ -88,7 +94,7 @@ export default function Auth() {
         </Link>
 
         <Card className="glass-card p-8">
-          <Tabs defaultValue="signin" className="w-full">
+          <Tabs defaultValue={requestedPlan || searchParams.get("mode") === "signup" ? "signup" : "signin"} className="w-full">
             <TabsList className="grid w-full grid-cols-2 mb-8">
               <TabsTrigger value="signin">Connexion</TabsTrigger>
               <TabsTrigger value="signup">Inscription</TabsTrigger>
@@ -134,6 +140,14 @@ export default function Auth() {
 
             <TabsContent value="signup">
               <form onSubmit={handleSignUp} className="space-y-6">
+                <div className="rounded-xl border border-green-500/20 bg-green-500/10 px-4 py-3 text-sm">
+                  <p className="font-semibold text-green-600 dark:text-green-400">
+                    Essai gratuit {TRIAL_DAYS} jours — forfait {PLAN_LIMITS[trialPlan].label}
+                  </p>
+                  <p className="text-muted-foreground">
+                    Sans carte bancaire, sans prélèvement automatique.
+                  </p>
+                </div>
                 <div className="space-y-2">
                   <Label htmlFor="signup-email">Email</Label>
                   <Input
@@ -156,7 +170,7 @@ export default function Auth() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
-                    minLength={6}
+                    minLength={8}
                     className="glass-card"
                   />
                 </div>

@@ -14,10 +14,13 @@ const capabilities = [
     body:
       "Vous décrivez votre activité et vos cibles pendant l'onboarding. Chaque publication est ensuite rédigée en français à partir de ce profil, avec un angle imposé différent à chaque fois pour éviter les textes qui se ressemblent.",
   },
+  // A card here promised live web research (Google News, Wikipédia,
+  // DuckDuckGo). The self-hosted API does not implement it, so it described a
+  // feature a customer would never get. Replaced by one the code does honour.
   {
-    title: "Ancrés dans l'actualité de votre secteur",
+    title: "Un mix éditorial que vous choisissez",
     body:
-      "Avant d'écrire, la plateforme interroge des sources web gratuites (Google News, Wikipédia, DuckDuckGo) et ne garde que ce qui concerne réellement votre activité. Aucun abonnement de recherche n'est nécessaire.",
+      "Vous fixez chaque semaine la part de conseils, de posts d'information et de promotion. La promotion ne prend jamais toute la semaine : au moins un post par semaine apporte de la valeur sans rien vendre.",
   },
   {
     title: "Une affiche au bon format",
@@ -32,7 +35,7 @@ const capabilities = [
 ];
 
 const facts = [
-  { value: "4", label: "Réseaux publiables aujourd'hui" },
+  { value: "4", label: "Réseaux pris en charge" },
   { value: "100%", label: "Contenu rédigé en français" },
   { value: "2K", label: "Résolution des affiches générées" },
   { value: "0", label: "Post publié sans votre validation" },

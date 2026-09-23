@@ -16,7 +16,7 @@ interface SessionState {
   /** Re-reads the session from the server (after login, logout, role change). */
   refresh: () => Promise<SessionUser | null>;
   signIn: (email: string, password: string) => Promise<SessionUser>;
-  signUp: (email: string, password: string) => Promise<SessionUser>;
+  signUp: (email: string, password: string, requestedPlan?: string) => Promise<SessionUser>;
   signOut: () => Promise<void>;
 }
 
@@ -57,8 +57,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     return signedIn;
   }, []);
 
-  const signUp = useCallback(async (email: string, password: string) => {
-    const { user: created } = await auth.register(email, password);
+  const signUp = useCallback(async (email: string, password: string, requestedPlan?: string) => {
+    const { user: created } = await auth.register(email, password, requestedPlan);
     setUser(created);
     return created;
   }, []);

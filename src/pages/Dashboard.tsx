@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Calendar, TrendingUp, CheckCircle, Clock, Edit2, Sparkles, Settings, Share2, Calendar as CalendarIcon, Trash2, User, BarChart3, Send, ImageIcon, Loader2, MessageSquare, RefreshCw } from "lucide-react";
+import { Calendar, TrendingUp, CheckCircle, Clock, CreditCard, Edit2, Sparkles, Settings, Share2, Calendar as CalendarIcon, Trash2, User, BarChart3, Send, ImageIcon, Loader2, MessageSquare, RefreshCw } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -25,6 +25,8 @@ import { useNavigate } from "react-router-dom";
 import SettingsDialog from "@/components/SettingsDialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { SocialMediaConnect } from "@/components/SocialMediaConnect";
+import { SubscriptionBanner } from "@/components/SubscriptionBanner";
+import { resolveEntitlement, type SubscriptionFields } from "@/lib/plans";
 
 type PostStatus = "pending" | "validated" | "published" | "failed";
 
@@ -47,7 +49,7 @@ type Post = {
   publish_error?: string | null;
 };
 
-type UserProfile = {
+type UserProfile = SubscriptionFields & {
   id?: string;
   description?: string | null;
   company_name?: string | null;
@@ -418,10 +420,18 @@ export default function Dashboard() {
     }
   };
 
+  // Mirrors the server gate so an expired account is sent to renew instead of
+  // watching a generation fail. The server refuses regardless (402).
+  const canGenerate = userProfile ? resolveEntitlement(userProfile).canGenerate : true;
+
   const handleGenerate = async () => {
     if (generating) return;
+    if (!canGenerate) {
+      navigate("/abonnement");
+      return;
+    }
     setGenerating(true);
-    const loadingToast = toast.loading("Recherche web + génération IA en cours...");
+    const loadingToast = toast.loading("Génération IA en cours...");
     try {
       const generationPlatforms =
         userProfile?.platforms && userProfile.platforms.length > 0
@@ -718,6 +728,10 @@ export default function Dashboard() {
                 <User className="w-4 h-4 mr-2" />
                 Profil
               </Button>
+              <Button onClick={() => navigate("/abonnement")} variant="outline" size="sm" className="glass-card">
+                <CreditCard className="w-4 h-4 mr-2" />
+                Abonnement
+              </Button>
               <Button onClick={handleSettings} variant="outline" size="sm" className="glass-card">
                 <Settings className="w-4 h-4 mr-2" />
                 Paramètres
@@ -731,6 +745,8 @@ export default function Dashboard() {
       </header>
 
       <div className="container mx-auto max-w-7xl px-4 py-8">
+        <SubscriptionBanner profile={userProfile} />
+
         {/* First-run nudge: no social account connected yet. */}
         {hasConnection === false && (
           <Card className="glass-card p-4 mb-6 border-primary/40">
@@ -753,19 +769,10 @@ export default function Dashboard() {
           </Card>
         )}
 
-        {/* Web research signal: reassure first users that content is grounded. */}
-        <Card className="glass-card p-4 mb-6 border-secondary/30 bg-secondary/5">
-          <div className="flex items-start gap-3">
-            <Sparkles className="w-5 h-5 text-secondary shrink-0 mt-0.5" />
-            <div>
-              <p className="text-sm font-medium">Génération enrichie par recherche web</p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Les posts utilisent des tendances et faits récents issus de Google News, Wikipedia et sources web gratuites,
-                puis l’IA filtre ce qui est pertinent pour votre activité.
-              </p>
-            </div>
-          </div>
-        </Card>
+        {/* This card used to promise "génération enrichie par recherche web"
+            (Google News, Wikipedia…). Web research is not implemented on the
+            self-hosted API (usedWebInspiration is always false), so the claim
+            is gone rather than shown to every user on every visit. */}
 
         {/* Stats */}
         <div className="grid md:grid-cols-4 gap-6 mb-8">
@@ -811,7 +818,7 @@ export default function Dashboard() {
                 <p className="text-muted-foreground mb-4">Aucun post pour le moment</p>
                 <Button onClick={handleGenerate} disabled={generating} className="bg-gradient-to-r from-primary to-secondary">
                   <Sparkles className="w-4 h-4 mr-2" />
-                  {generating ? "Génération..." : "Générer votre premier post"}
+                  {!canGenerate ? "Choisir un forfait" : generating ? "Génération..." : "Générer votre premier post"}
                 </Button>
               </Card>
             ) : (
@@ -1030,7 +1037,7 @@ export default function Dashboard() {
                   disabled={generating}
                 >
                   <Sparkles className="w-4 h-4 mr-2" />
-                  {generating ? "Génération..." : "Générer"}
+                  {!canGenerate ? "Choisir un forfait" : generating ? "Génération..." : "Générer"}
                 </Button>
               </Card>
 

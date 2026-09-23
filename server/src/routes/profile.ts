@@ -4,6 +4,7 @@ import { requireTenant } from "../lib/tenant.js";
 import { badRequest, notConfigured, notFound, rateLimited } from "../lib/errors.js";
 import { env } from "../lib/env.js";
 import { consumeQuota, releaseQuota } from "../services/quota.js";
+import { loadEntitlement } from "../services/entitlement.js";
 import { AudienceProfileIncomplete, detectAudiences } from "../services/audiences.js";
 import {
   asBoolean,
@@ -17,9 +18,11 @@ import { normalizeAudiences } from "../shared/audience.js";
 
 // Columns a user may write about their own account.
 //
-// This allow-list is the point of the route. `plan`, `role`, `blocked_at` and
-// `leader_photo_consent_at` are absent on purpose: they are privileges and
-// consents, and a PATCH body must never be able to grant one. Adding a column
+// This allow-list is the point of the route. `plan`, `role`, `blocked_at`,
+// `leader_photo_consent_at` and the subscription columns (`subscription_status`,
+// `trial_plan`, `trial_ends_at`, `current_period_ends_at`) are absent on
+// purpose: they are privileges and consents, and a PATCH body must never be
+// able to grant one — or extend a trial. Adding a column
 // here makes it user-writable, so add deliberately.
 const WRITABLE = {
   company_name: (v: unknown) => asString(v, "company_name", { max: 160, optional: true }) || null,
@@ -105,7 +108,8 @@ const SELECT_COLUMNS = `
   use_custom_images, custom_image_urls, brand_primary_color, brand_secondary_color,
   brand_accent_color, brand_font, logo_url, poster_footer_text, audience_suggestions,
   target_audiences, audiences_confirmed_at, auto_reply_enabled, auto_reply_instructions,
-  plan, leader_photo_consent_at
+  plan, leader_photo_consent_at,
+  subscription_status, trial_plan, trial_ends_at, current_period_ends_at
 `;
 
 export async function loadProfile(profileId: string) {
@@ -139,11 +143,14 @@ export async function profileRoutes(app: FastifyInstance): Promise<void> {
       assignments.push(`${column} = $${params.length}`);
     }
 
-    // auto_reply_enabled is gated on the plan, which only the server knows.
-    // A client sending `true` on a starter account does not get the feature.
+    // auto_reply_enabled is gated on the entitlement, which only the server
+    // knows: the plan (or the trial's plan) must include it and the account
+    // must not have expired. A client sending `true` on a starter account
+    // does not get the feature.
     if ("auto_reply_enabled" in body) {
       const wanted = asBoolean(body.auto_reply_enabled, "auto_reply_enabled", false);
-      params.push(wanted && ctx.user.plan === "enterprise");
+      const entitlement = await loadEntitlement(ctx.profileId);
+      params.push(wanted && entitlement.canGenerate && entitlement.limits.aiAutoReply);
       assignments.push(`auto_reply_enabled = $${params.length}`);
     }
 

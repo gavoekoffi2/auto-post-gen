@@ -19,6 +19,7 @@ import { asEmail, asString } from "../lib/validate.js";
 import { hitRateLimit } from "../lib/rateLimit.js";
 import { sendMail } from "../lib/mail.js";
 import { env } from "../lib/env.js";
+import { TRIAL_DAYS, isPlanId } from "../shared/plans.js";
 
 const RESET_TTL_MS = 60 * 60 * 1000;
 
@@ -60,6 +61,11 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     const body = (request.body ?? {}) as Record<string, unknown>;
     const email = asEmail(body.email);
     const password = asString(body.password, "password", { min: MIN_PASSWORD_LENGTH, max: 200 });
+    // Pricing CTAs link to signup with ?plan=<id>; the trial starts on that
+    // plan. Anything else gets Pro, the plan the pricing page features.
+    const requestedPlan = typeof body.requestedPlan === "string" && isPlanId(body.requestedPlan)
+      ? body.requestedPlan
+      : "pro";
 
     const existing = await queryOne<{ id: string }>(
       `SELECT id FROM profiles WHERE email = $1`,
@@ -74,10 +80,11 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
     const { hash, salt } = await hashPassword(password);
     const created = await queryOne<ProfileAuthRow>(
-      `INSERT INTO profiles (email, password_hash, password_salt)
-       VALUES ($1, $2, $3)
+      `INSERT INTO profiles
+         (email, password_hash, password_salt, subscription_status, trial_plan, trial_ends_at)
+       VALUES ($1, $2, $3, 'trialing', $4, now() + make_interval(days => $5))
        RETURNING id, email, role, plan, created_at, blocked_at, password_hash, password_salt`,
-      [email, hash, salt],
+      [email, hash, salt, requestedPlan, TRIAL_DAYS],
     );
     if (!created) throw badRequest("La création du compte a échoué.");
 

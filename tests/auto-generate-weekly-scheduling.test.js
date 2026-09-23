@@ -82,7 +82,9 @@ test('the quotas count what is already queued, so a top-up cannot exceed them', 
   // Otherwise a second run in the same week adds a third promo to a week the
   // user capped at two.
   assert.match(source, /alreadyPromo/);
-  assert.match(source, /promo_posts_per_week \?\? 1\) - alreadyPromo/);
+  // The promo quota is also capped so promotion never takes the whole week.
+  assert.match(source, /Math\.min\(Number\(profile\.promo_posts_per_week \?\? 1\), maxPromo\) - alreadyPromo/);
+  assert.match(source, /const maxPromo = wanted > 1 \? wanted - 1 : wanted/);
   assert.match(source, /research_posts_per_week \?\? 1\) - alreadyResearch/);
 });
 

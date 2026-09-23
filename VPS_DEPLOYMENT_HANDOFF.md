@@ -310,10 +310,14 @@ n'accepte un `profileId` ou un `userId` envoyé par le navigateur**.
 | GET | `/account/export` | session | → toutes les données du compte, **sans le hachage ni le sel** |
 | DELETE | `/account` | session | `{"password":"…"}` → `204`. Irréversible ; mot de passe re-vérifié. |
 | GET | `/admin/me` | session **admin** | → `{"user":{…}}`, sinon `403` |
-| POST | `/admin/actions` | session **admin** | `{"action":"set_plan","userId":"…","plan":"pro"}`. Le `userId` désigne la **cible**, jamais l'appelant. |
+| POST | `/admin/actions` | session **admin** | `{"action":"set_plan","userId":"…","plan":"pro"}`. Le `userId` désigne la **cible**, jamais l'appelant. Actions : `overview`, `create_user`, `set_plan`, `set_role`, `set_blocked`, `reset_password`, `delete_user`, `subscriptions`, `approve_subscription`, `reject_subscription`, `extend_trial`. |
+| GET | `/subscription` | session | → `{"entitlement","requests","paymentAccounts","beneficiary"}` : essai / actif / expiré, calculé côté serveur |
+| POST | `/subscription/requests` | session (10/h) | `{"plan","billingPeriod","paymentMethod","payerPhone","paymentReference"}` → `201`. **Le montant est calculé par le serveur**, jamais lu dans la requête. Ne donne aucun droit tant qu'un opérateur n'a pas validé. `409` si une demande est déjà en attente ou si la référence est déjà déclarée. |
+| POST | `/subscription/requests/:id/cancel` | session | → `{"ok":true}` ; `409` si déjà traitée |
 | POST | `/contact` | non (5/h par IP) | `{"name","email","subject","message"}` → `{"ok":true}` |
 | POST | `/cron/publish` | `x-cron-secret` | → `{"recovered","attempted","published"}` |
 | POST | `/cron/weekly` | `x-cron-secret` | → `{"results":[…]}` |
+| POST | `/cron/subscription-reminders` | `x-cron-secret` | → `{"sent","failed"}`. Le runner interne l'exécute déjà une fois par jour. |
 | GET | `/health` | non | → `{"ok":true}` |
 
 Un secret cron absent ou faux répond **404**, pas 401 : une route qui répond
@@ -368,12 +372,14 @@ Contraintes qui portent une règle produit :
 
 ## 8. Migrations à appliquer
 
-Deux fichiers, dans l'ordre, **tous deux idempotents** :
+Quatre fichiers, dans l'ordre, **tous idempotents** :
 
 | Fichier | Contenu |
 | --- | --- |
+| `0000_legacy_production_compat.sql` | Mise en compatibilité du schéma hérité de production (voir `HERMES_VPS_RELEASE.md`). No-op sur une base vierge. |
 | `0001_core_schema.sql` | Schéma complet : extensions, tables, index, contraintes, fonctions, déclencheurs. |
 | `0002_media_public_token.sql` | `media_assets.public_token` + son index unique partiel. |
+| `0003_trial_and_subscriptions.sql` | Essai gratuit et abonnements : colonnes de cycle de vie sur `profiles` (les comptes existants passent `active` sans échéance), table `subscription_requests` et ses index uniques. N'ajoute que ; ne supprime rien. |
 
 ```bash
 cd /opt/pro-social-ai/server
@@ -428,8 +434,23 @@ ZERNIO_API_KEY
 ZERNIO_API_URL
 RESEND_API_KEY
 RESEND_FROM
-CONTACT_TO
+CONTACT_TO                  boîte de l'opérateur : formulaire de contact ET
+                            alertes « nouveau paiement à vérifier »
 ```
+
+### Abonnements (Mobile Money) — valeurs publiques, affichées aux clients
+
+```
+PAYMENT_WAVE                numéro, ou lien https:// (lien marchand Wave)
+PAYMENT_ORANGE_MONEY
+PAYMENT_MTN_MOMO
+PAYMENT_MOOV_MONEY
+PAYMENT_BENEFICIARY         nom du titulaire affiché (défaut : APP_NAME)
+```
+
+Lues par l'API (pas par le bundle) : un changement demande un redémarrage de
+l'API, pas une reconstruction du frontend. Sans aucune, `/abonnement` invite
+le client à écrire au support.
 
 ### Exploitation
 

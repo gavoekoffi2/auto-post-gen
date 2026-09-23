@@ -24,8 +24,8 @@ const features = [
   },
   {
     icon: BarChart3,
-    title: "Analytics avancés",
-    description: "Suivez vos performances et optimisez votre stratégie avec des insights détaillés.",
+    title: "Statistiques de publication",
+    description: "Suivez le volume de vos posts par semaine et par réseau, et ce qui reste à valider.",
     gradient: "from-orange-500 to-amber-500",
     delay: "0.3s"
   },
@@ -46,7 +46,7 @@ const features = [
   {
     icon: Clock,
     title: "Gain de temps",
-    description: "Économisez plus de 10 heures par semaine sur la gestion de vos réseaux sociaux.",
+    description: "Plus besoin de trouver chaque jour quoi publier : le contenu de la semaine est prêt, vous validez.",
     gradient: "from-cyan-500 to-sky-500",
     delay: "0.6s"
   },

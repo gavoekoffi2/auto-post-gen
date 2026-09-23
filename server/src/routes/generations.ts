@@ -5,6 +5,7 @@ import { env } from "../lib/env.js";
 import { requireTenant } from "../lib/tenant.js";
 import { asObject, asString, asStringArray, asUuid } from "../lib/validate.js";
 import { consumeQuota, releaseQuota } from "../services/quota.js";
+import { monthlyUsage, requireActiveEntitlement } from "../services/entitlement.js";
 import { readJob, startPosterJob, type JobRow } from "../services/generation.js";
 import { generateText } from "../services/text.js";
 
@@ -30,9 +31,24 @@ export async function generationRoutes(app: FastifyInstance): Promise<void> {
     const platforms = asStringArray(body.platforms, "platforms", { maxItems: 8, maxLength: 40 });
     const prompt = asString(body.prompt, "prompt", { max: 2000, optional: true });
 
+    // The entitlement first: an expired account is told to renew, not that
+    // the server is misconfigured. Then the provider, then the plan's
+    // monthly ceiling and the hourly burst limit — all enforced here because
+    // the plan columns are server-owned and a client cannot raise either one.
+    const entitlement = await requireActiveEntitlement(ctx.profileId);
+    const limits = entitlement.limits;
+
     if (!env.openRouterKey) {
       throw notConfigured(
         "La génération de texte n'est pas configurée sur ce serveur (OPENROUTER_API_KEY).",
+      );
+    }
+    if ((await monthlyUsage(ctx.profileId, "generate-text")) >= limits.monthlyTextGenerations) {
+      throw rateLimited(
+        `Limite mensuelle du forfait ${limits.label} atteinte ` +
+          `(${limits.monthlyTextGenerations} générations de texte). ` +
+          `Passez à un forfait supérieur ou attendez le renouvellement.`,
+        "plan_limit_reached",
       );
     }
 
@@ -101,6 +117,20 @@ export async function generationRoutes(app: FastifyInstance): Promise<void> {
       | "value" | "research" | "promo";
     if (!["value", "research", "promo"].includes(category)) {
       throw badRequest("Catégorie éditoriale inconnue.");
+    }
+
+    // Each poster is a paid premium render: the plan's monthly ceiling is the
+    // main cost control. Resuming an existing job (GET /generations/:id) is
+    // not gated — that render was already paid for.
+    const entitlement = await requireActiveEntitlement(ctx.profileId);
+    const limits = entitlement.limits;
+    if ((await monthlyUsage(ctx.profileId, "generate-image")) >= limits.monthlyImageGenerations) {
+      throw rateLimited(
+        `Limite mensuelle du forfait ${limits.label} atteinte ` +
+          `(${limits.monthlyImageGenerations} affiches). ` +
+          `Passez à un forfait supérieur ou attendez le renouvellement.`,
+        "plan_limit_reached",
+      );
     }
 
     const reserved = await consumeQuota(ctx.profileId, "generate-image", IMAGE_HOURLY_MAX, 3600);

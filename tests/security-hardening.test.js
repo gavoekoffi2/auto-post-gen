@@ -184,12 +184,18 @@ test('privileges are never writable by the account that would gain them', () => 
     profileRoutes.indexOf('const WRITABLE = {'),
     profileRoutes.indexOf('function asHexColor'),
   );
-  for (const column of ['plan:', 'role:', 'blocked_at:', 'leader_photo_consent_at:', 'email:']) {
+  for (const column of [
+    'plan:', 'role:', 'blocked_at:', 'leader_photo_consent_at:', 'email:',
+    // The billing lifecycle: writable, it would let anyone extend their own
+    // trial or mark themselves as paid.
+    'subscription_status:', 'trial_plan:', 'trial_ends_at:', 'current_period_ends_at:',
+    'expiry_reminder_sent_at:',
+  ]) {
     assert.equal(writable.includes(column), false, `${column} must not be user-writable`);
   }
-  // The one plan-gated feature is resolved from the session's plan, never
-  // from what the request claims.
-  assert.match(profileRoutes, /ctx\.user\.plan === "enterprise"/);
+  // The one plan-gated feature is resolved from the entitlement the server
+  // reads from the database, never from what the request claims.
+  assert.match(profileRoutes, /const entitlement = await loadEntitlement\(ctx\.profileId\)/);
 });
 
 test('the admin control plane is authorised server-side', () => {
@@ -271,7 +277,9 @@ test('a validation link cannot roll back a post that is already published', () =
 });
 
 test('AI comment auto-reply is gated to the Enterprise plan (server-side)', () => {
-  assert.match(profileRoutes, /wanted && ctx\.user\.plan === "enterprise"/);
+  // Through the entitlement: an Enterprise TRIAL includes it, an expired
+  // account does not, and the value is read from the database.
+  assert.match(profileRoutes, /wanted && entitlement\.canGenerate && entitlement\.limits\.aiAutoReply/);
   // The UI locks the toggle too, but the server is what decides.
   const commentsUi = read('src/pages/Comments.tsx');
   assert.match(commentsUi, /isEnterprise/);

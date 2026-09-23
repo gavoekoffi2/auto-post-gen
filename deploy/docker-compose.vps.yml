@@ -86,6 +86,15 @@ services:
       RESEND_FROM: ${RESEND_FROM:-}
       CONTACT_TO: ${CONTACT_TO:-}
       CRON_SECRET: ${CRON_SECRET:-}
+      # Subscriptions: where customers send Mobile Money payments. Public
+      # values (shown on /abonnement), read by the API so a change needs a
+      # restart, not a frontend rebuild. Each is a phone number or an
+      # https:// payment link; unset channels are simply not offered.
+      PAYMENT_WAVE: ${PAYMENT_WAVE:-}
+      PAYMENT_ORANGE_MONEY: ${PAYMENT_ORANGE_MONEY:-}
+      PAYMENT_MTN_MOMO: ${PAYMENT_MTN_MOMO:-}
+      PAYMENT_MOOV_MONEY: ${PAYMENT_MOOV_MONEY:-}
+      PAYMENT_BENEFICIARY: ${PAYMENT_BENEFICIARY:-}
     volumes:
       # User media lives on a volume, never inside the image: an image layer is
       # copied around and cached, user uploads must not be.

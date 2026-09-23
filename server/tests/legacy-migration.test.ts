@@ -644,3 +644,50 @@ test("the migration output stays readable: bookkeeping hidden, warnings never", 
   assert.match(result.output, /\[NOTICE\] \[0000\] write probe passed/);
   assert.match(result.output, /posts_status_check now accepts/);
 });
+
+test("the subscription lifecycle lands on the legacy shape without expiring anyone", async () => {
+  const db = await createScratchDatabase();
+  await loadSql(db, legacyFixture);
+
+  // The rehearsal first: every migration, including 0003, applied and rolled
+  // back on the legacy shape.
+  const rehearsal = await runMigrate(db, ["--dry-run"]);
+  assert.ok(rehearsal.ok, `dry run failed:\n${rehearsal.output}`);
+  assert.match(rehearsal.output, /would apply {2}0003_trial_and_subscriptions\.sql/);
+  assert.match(rehearsal.output, /Rolled back: the database is unchanged\./);
+
+  const result = await runMigrate(db);
+  assert.ok(result.ok, `migration failed:\n${result.output}`);
+  assert.match(result.output, /applied {2}0003_trial_and_subscriptions\.sql/);
+
+  // Customers who were using the product before this release keep it: active,
+  // no end date. None is left trialing without a trial end (= expired).
+  const states = await rows<{ subscription_status: string; ends: string | null; n: string }>(
+    db,
+    `SELECT subscription_status, current_period_ends_at::text AS ends, count(*)::text AS n
+       FROM profiles GROUP BY 1, 2`,
+  );
+  assert.deepEqual(states, [{ subscription_status: "active", ends: null, n: "2" }]);
+
+  // A new signup after the release starts a trial by default.
+  await rows(
+    db,
+    `INSERT INTO profiles (email, password_hash, password_salt)
+     VALUES ('after-release@example.test', 'x', 'y')`,
+  );
+  const [fresh] = await rows<{ subscription_status: string; days: string }>(
+    db,
+    `SELECT subscription_status, round(extract(epoch FROM trial_ends_at - now()) / 86400)::text AS days
+       FROM profiles WHERE email = 'after-release@example.test'`,
+  );
+  assert.deepEqual(fresh, { subscription_status: "trialing", days: "7" });
+
+  // Replaying the file is a no-op: the backfill touches nothing twice.
+  const sql = await readFile(join(migrationsDir, "0003_trial_and_subscriptions.sql"), "utf8");
+  await loadSql(db, sql);
+  const [still] = await rows<{ subscription_status: string }>(
+    db,
+    `SELECT subscription_status FROM profiles WHERE email = 'after-release@example.test'`,
+  );
+  assert.equal(still!.subscription_status, "trialing");
+});

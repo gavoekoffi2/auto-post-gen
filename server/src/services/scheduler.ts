@@ -1,6 +1,7 @@
 import { query } from "../lib/db.js";
 import { publishPost } from "./publish.js";
 import { runWeeklyGeneration } from "./weekly.js";
+import { runSubscriptionReminders } from "./subscriptions.js";
 
 // The publish queue runner.
 //
@@ -113,6 +114,19 @@ export async function runWeeklyTick(log: (message: string) => void): Promise<voi
   const today = new Date().toISOString().slice(0, 10);
   if (lastWeeklyRunDay === today) return;
   lastWeeklyRunDay = today;
+
+  // Trial and renewal reminders ride the same once-a-day tick, in their own
+  // try: a generation failure must not stop a customer being told their
+  // subscription ends, and vice versa.
+  try {
+    const reminders = await runSubscriptionReminders();
+    if (reminders.sent || reminders.failed) {
+      log(`subscription reminders: ${reminders.sent} sent, ${reminders.failed} failed`);
+    }
+  } catch (err) {
+    console.error("[scheduler] subscription reminders failed:", (err as Error).message);
+  }
+
   const results = await runWeeklyGeneration();
   const total = results.reduce((sum, r) => sum + r.generated, 0);
   if (total) log(`weekly generation: ${total} post(s) across ${results.length} account(s)`);

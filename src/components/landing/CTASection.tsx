@@ -37,7 +37,7 @@ export const CTASection = () => {
           
           {/* CTA buttons */}
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-8">
-            <Link to="/auth">
+            <Link to="/auth?mode=signup">
               <Button 
                 size="lg" 
                 className="group h-14 px-10 text-base font-semibold bg-gradient-to-r from-primary via-primary to-accent hover:opacity-90 transition-all shadow-glow animate-gradient rounded-2xl"

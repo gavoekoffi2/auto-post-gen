@@ -1,6 +1,7 @@
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
+import { formatLegalDate } from "@/lib/legal";
 
 export default function Privacy() {
   return (
@@ -16,13 +17,16 @@ export default function Privacy() {
         <h1 className="text-4xl font-bold mb-8">Politique de confidentialité</h1>
 
         <div className="prose prose-invert max-w-none space-y-6 text-muted-foreground">
-          <p>Dernière mise à jour : {new Date().toLocaleDateString('fr-FR')}</p>
+          <p>Dernière mise à jour : {formatLegalDate()}</p>
 
           <section>
             <h2 className="text-2xl font-semibold text-foreground mb-4">1. Collecte des données</h2>
             <p>
               Nous collectons les informations que vous nous fournissez directement lors de votre inscription, 
               notamment votre adresse email, le nom de votre entreprise, et vos préférences de contenu.
+              Lorsque vous souscrivez un abonnement, nous enregistrons également le numéro de téléphone
+              ayant effectué le paiement Mobile Money et la référence de la transaction, afin de vérifier
+              le paiement et d'en conserver la trace.
             </p>
           </section>
 
@@ -33,6 +37,7 @@ export default function Privacy() {
               <li>Générer du contenu personnalisé pour vos réseaux sociaux</li>
               <li>Améliorer nos services et algorithmes d'IA</li>
               <li>Vous contacter concernant votre compte ou nos services</li>
+              <li>Vérifier vos paiements et gérer votre abonnement</li>
               <li>Assurer la sécurité de notre plateforme</li>
             </ul>
           </section>
