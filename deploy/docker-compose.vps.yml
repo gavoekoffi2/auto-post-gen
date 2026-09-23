@@ -196,9 +196,12 @@ volumes:
   # applied twice, and so an EXISTING volume can be adopted by naming it here
   # rather than starting from an empty one. Check what the VPS already has
   # (`docker volume ls`) before the first start.
+  # This release adopts the verified, pre-existing production volumes.
+  # Keep this boolean literal: Docker Compose v5 rejects an interpolated
+  # string in `external`, and false here could create an empty replacement.
   pgdata:
     name: ${PGDATA_VOLUME:-pro-social-ai_pgdata}
-    external: ${VOLUMES_ARE_EXTERNAL:-false}
+    external: true
   media:
     name: ${MEDIA_VOLUME:-pro-social-ai_media}
-    external: ${VOLUMES_ARE_EXTERNAL:-false}
+    external: true
