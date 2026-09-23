@@ -206,7 +206,7 @@ hebdomadaires, changement d'email). Voir §9.
 | | |
 |---|---|
 | **Branche** | `claude/selfhosted-provider-compat-r5k8` |
-| **SHA du code** | `__CODE_SHA__` |
+| **SHA du code** | `ec4e889cc7fd99309a852441d2933459b5561a60` |
 | **SHA à déployer** | la pointe de la branche (ce document est le seul commit au-dessus du code ; `git log -1 --format=%H`) |
 | **Base** | `claude/selfhosted-subscriptions-release-q7t4` @ `41d70d40b77ed561fa5fd96f4175d0d05e34bcb4` (bloquée par la répétition : `generation_jobs.provider`) |
 | **Base de la base** | `claude/legacy-status-compat-9m2x` @ `783938efbf206055bf6cf67d6a684ef11656fc94` |
