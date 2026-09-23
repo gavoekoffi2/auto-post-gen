@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdir, rm, stat } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, normalize, resolve, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
 import type { Readable } from "node:stream";
@@ -24,6 +24,14 @@ const ALLOWED_IMAGE_TYPES = new Map<string, string>([
 ]);
 
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+
+/**
+ * Ceiling for a poster copied back from the renderer. A premium 2K render in
+ * PNG is routinely larger than the 5 MB allowed for a user upload: capping it
+ * at 5 MB made the copy fail, the expiring provider URL was kept instead, and
+ * the poster later vanished from the post it was attached to.
+ */
+export const REMOTE_POSTER_MAX_BYTES = 25 * 1024 * 1024;
 
 export type MediaKind = "logo" | "custom_image" | "poster" | "other";
 const KINDS: readonly MediaKind[] = ["logo", "custom_image", "poster", "other"];
@@ -129,6 +137,28 @@ export async function storeUpload(
   return { storagePath, mimeType, sizeBytes: info.size };
 }
 
+/**
+ * Writes an in-memory image (a processed cut-out, a composited poster) under
+ * the account's own directory, with a generated name.
+ */
+export async function storeBuffer(
+  profileId: string,
+  buffer: Buffer,
+  mimeType: string,
+): Promise<StoredFile> {
+  const ext = extensionForType(mimeType);
+  const storagePath = join(profileId, `${randomUUID()}.${ext}`);
+  const absolute = resolveMediaPath(storagePath);
+  await mkdir(dirname(absolute), { recursive: true });
+  await writeFile(absolute, buffer);
+  return { storagePath, mimeType, sizeBytes: buffer.length };
+}
+
+/** Reads a stored file back. */
+export async function readStoredFile(storagePath: string): Promise<Buffer> {
+  return readFile(resolveMediaPath(storagePath));
+}
+
 /** Deletes a stored file. Missing is success — the goal is that it is gone. */
 export async function deleteStoredFile(storagePath: string): Promise<void> {
   await rm(resolveMediaPath(storagePath), { force: true }).catch(() => {});
@@ -207,10 +237,12 @@ export async function rehostRemoteImage(
   extensionForType(declared);
 
   const declaredLength = Number(response.headers.get("content-length") ?? 0);
-  if (declaredLength > MAX_UPLOAD_BYTES) {
+  if (declaredLength > REMOTE_POSTER_MAX_BYTES) {
     throw tooLarge("L'image générée est trop volumineuse.");
   }
 
   const { Readable } = await import("node:stream");
-  return storeUpload(profileId, Readable.fromWeb(response.body as never), declared);
+  return storeUpload(profileId, Readable.fromWeb(response.body as never), declared, {
+    maxBytes: REMOTE_POSTER_MAX_BYTES,
+  });
 }

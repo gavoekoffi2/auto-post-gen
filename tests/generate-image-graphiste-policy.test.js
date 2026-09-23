@@ -34,7 +34,7 @@ test('an SVG is never accepted as a finished poster, even from the provider', ()
 });
 
 test('the request sends the documented v1.1 contract fields', () => {
-  assert.match(generation, /subject: buildSubject\(input, spec\)/);
+  assert.match(generation, /subject: buildSubject\(input, spec, character\?\.position \?\? null\)/);
   assert.match(generation, /title:/);
   assert.match(generation, /aspect_ratio: aspectRatio\(spec\)/);
   assert.match(generation, /resolution: "2K"/);

@@ -44,7 +44,10 @@ test('non-promotional text never mentions or promotes the company name', () => {
 
 test('generated images complement the post and use a fixed discreet brand signature', () => {
   assert.match(generation, /complémentaire au texte/);
-  assert.match(generation, /signature de marque discrète dans l'angle inférieur droit/);
+  // Bottom-right by default; with a poster character it moves to the top of
+  // the free side, but it is always one small signature in a fixed corner.
+  assert.match(generation, /signature de marque discrète dans l'angle \$\{brandCorner\}/);
+  assert.match(generation, /const brandCorner = characterSide \? `supérieur \$\{freeSide\}` : "inférieur droit";/);
   assert.match(generation, /ne transforme pas le visuel en publicité/);
   assert.match(generation, /contentCategory/);
   // The dashboard passes the post's editorial category when it creates the

@@ -1,7 +1,15 @@
 import { queryOne, query } from "../lib/db.js";
 import { env } from "../lib/env.js";
 import { badRequest, notConfigured } from "../lib/errors.js";
-import { mediaUrl, rehostRemoteImage } from "../lib/media.js";
+import {
+  deleteStoredFile,
+  mediaUrl,
+  readStoredFile,
+  rehostRemoteImage,
+  storeBuffer,
+  type StoredFile,
+} from "../lib/media.js";
+import { compositeCharacter, type CharacterPosition } from "./character.js";
 import { getSocialImageSpec } from "../shared/socialImageSpecs.js";
 import {
   extractImageUrl,
@@ -47,6 +55,33 @@ export interface JobRow {
   result_url: string | null;
   error: string | null;
   format: unknown;
+  /** The character this render was started with, laid on when it completes. */
+  character_overlay?: CharacterOverlay | null;
+}
+
+/** A job's character, snapshotted when the render starts. */
+export interface CharacterOverlay {
+  assetId: string;
+  position: CharacterPosition;
+}
+
+/**
+ * The account's poster character, if it has one switched on.
+ *
+ * Read here, where every poster starts — the dashboard's and the weekly
+ * runner's alike — so no caller can forget it. The asset must still exist
+ * and belong to the account.
+ */
+async function loadCharacterOverlay(profileId: string): Promise<CharacterOverlay | null> {
+  const row = await queryOne<{ asset_id: string; position: string }>(
+    `SELECT m.id AS asset_id, p.poster_character_position AS position
+       FROM profiles p
+       JOIN media_assets m ON m.id = p.poster_character_asset_id AND m.profile_id = p.id
+      WHERE p.id = $1 AND p.poster_character_enabled`,
+    [profileId],
+  );
+  if (!row) return null;
+  return { assetId: row.asset_id, position: row.position === "left" ? "left" : "right" };
 }
 
 /** Turns a provider HTTP failure into a message an operator can act on. */
@@ -137,10 +172,13 @@ export async function startPosterJob(input: PosterRequest): Promise<JobRow> {
 
   const spec = getSocialImageSpec(input.platforms);
   const endpoint = env.graphisteUrl;
+  const character = await loadCharacterOverlay(input.profileId);
 
+  // Only the LAYOUT is sent — which side to keep free. The character's photo
+  // itself never leaves this server: it is laid onto the finished render.
   const requestBody: Record<string, unknown> = {
     domain: "business",
-    subject: buildSubject(input, spec),
+    subject: buildSubject(input, spec, character?.position ?? null),
     title: input.postContent.split(/[.!?\n]/)[0]?.trim().slice(0, 70) || input.companyName,
     quality: "premium",
     reliability_mode: true,
@@ -185,25 +223,27 @@ export async function startPosterJob(input: PosterRequest): Promise<JobRow> {
     clearTimeout(timer);
   }
 
-  if (failure) return recordJob(input, "failed", { error: failure, format });
+  if (failure) return recordJob(input, "failed", { error: failure, format, character });
 
   const direct = extractImageUrl(payload);
   if (direct) {
     return recordJob(input, "completed", {
-      resultUrl: await persistPoster(input.profileId, direct),
+      resultUrl: (await persistPoster(input.profileId, direct, character)).url,
       format,
+      character,
     });
   }
 
   const providerJobId = extractJobId(payload);
   const statusUrl = extractStatusUrl(payload);
   if (providerJobId || statusUrl) {
-    return recordJob(input, "processing", { providerJobId, statusUrl, format });
+    return recordJob(input, "processing", { providerJobId, statusUrl, format, character });
   }
 
   return recordJob(input, "failed", {
     error: "Graphiste GPT n'a retourné ni affiche ni identifiant de tâche.",
     format,
+    character,
   });
 }
 
@@ -216,20 +256,67 @@ export async function startPosterJob(input: PosterRequest): Promise<JobRow> {
  * provider URL is kept, which is worse but still better than losing the render
  * we already paid for.
  */
-async function persistPoster(profileId: string, remoteUrl: string): Promise<string> {
+async function persistPoster(
+  profileId: string,
+  remoteUrl: string,
+  character: CharacterOverlay | null = null,
+): Promise<{ url: string; assetId: string | null }> {
   try {
-    const stored = await rehostRemoteImage(profileId, remoteUrl);
+    let stored = await rehostRemoteImage(profileId, remoteUrl);
+    if (character) stored = await applyCharacter(profileId, stored, character);
     const asset = await queryOne<{ id: string }>(
       `INSERT INTO media_assets (profile_id, kind, storage_path, mime_type, size_bytes)
        VALUES ($1, 'poster', $2, $3, $4)
        RETURNING id`,
       [profileId, stored.storagePath, stored.mimeType, stored.sizeBytes],
     );
-    if (asset) return mediaUrl(asset.id);
+    if (asset) return { url: mediaUrl(asset.id), assetId: asset.id };
   } catch (err) {
     console.error("[generation] poster re-host failed:", (err as Error).message);
   }
-  return remoteUrl;
+  return { url: remoteUrl, assetId: null };
+}
+
+/** Removes a stored poster that ended up attached to nothing. */
+async function discardPoster(profileId: string, assetId: string | null): Promise<void> {
+  if (!assetId) return;
+  const row = await queryOne<{ storage_path: string }>(
+    `DELETE FROM media_assets WHERE id = $1 AND profile_id = $2 RETURNING storage_path`,
+    [assetId, profileId],
+  );
+  if (row) await deleteStoredFile(row.storage_path);
+}
+
+/**
+ * Lays the account's character onto a stored poster.
+ *
+ * Never fails the render: the poster was paid for, so if the character
+ * cannot be applied (image deleted meanwhile, unreadable file) the poster is
+ * kept as rendered and the reason is logged.
+ */
+export async function applyCharacter(
+  profileId: string,
+  poster: StoredFile,
+  character: CharacterOverlay,
+): Promise<StoredFile> {
+  try {
+    const asset = await queryOne<{ storage_path: string }>(
+      `SELECT storage_path FROM media_assets WHERE id = $1 AND profile_id = $2`,
+      [character.assetId, profileId],
+    );
+    if (!asset) return poster;
+    const composed = await compositeCharacter(
+      await readStoredFile(poster.storagePath),
+      await readStoredFile(asset.storage_path),
+      character.position,
+    );
+    const stored = await storeBuffer(profileId, composed, "image/jpeg");
+    await deleteStoredFile(poster.storagePath);
+    return stored;
+  } catch (err) {
+    console.error("[generation] character not applied:", (err as Error).message);
+    return poster;
+  }
 }
 
 async function recordJob(
@@ -241,15 +328,18 @@ async function recordJob(
     resultUrl?: string | null;
     error?: string | null;
     format: unknown;
+    character?: CharacterOverlay | null;
   },
 ): Promise<JobRow> {
+  // The columns up to `format` are exactly what the write probe in migration
+  // 0000 mirrors; character_overlay comes from 0006 and is nullable.
   const row = await queryOne<JobRow>(
     `INSERT INTO generation_jobs
        (profile_id, post_id, kind, status, provider, provider_job_id,
-        provider_status_url, result_url, error, format)
-     VALUES ($1, $2, 'image', $3, 'graphiste', $4, $5, $6, $7, $8)
+        provider_status_url, result_url, error, format, character_overlay)
+     VALUES ($1, $2, 'image', $3, 'graphiste', $4, $5, $6, $7, $8, $9)
      RETURNING id, profile_id, post_id, kind, status, provider_job_id,
-               provider_status_url, result_url, error, format`,
+               provider_status_url, result_url, error, format, character_overlay`,
     [
       input.profileId,
       input.postId,
@@ -259,6 +349,7 @@ async function recordJob(
       extra.resultUrl ?? null,
       extra.error ?? null,
       JSON.stringify(extra.format ?? null),
+      extra.character ? JSON.stringify(extra.character) : null,
     ],
   );
   if (!row) throw new Error("failed to record generation job");
@@ -290,12 +381,7 @@ async function recordJob(
  * what makes it safe for the client to call repeatedly and after a reload.
  */
 export async function readJob(profileId: string, jobId: string): Promise<JobRow | null> {
-  const job = await queryOne<JobRow>(
-    `SELECT id, profile_id, post_id, kind, status, provider_job_id,
-            provider_status_url, result_url, error, format
-       FROM generation_jobs WHERE id = $1 AND profile_id = $2`,
-    [jobId, profileId],
-  );
+  const job = await loadJob(profileId, jobId);
   if (!job) return null;
   if (job.status !== "processing") return job;
   // Without both halves of the provider configuration there is nothing to ask.
@@ -326,14 +412,20 @@ export async function readJob(profileId: string, jobId: string): Promise<JobRow 
 
       const imageUrl = extractImageUrl(data);
       if (imageUrl) {
-        return await settleJob(job, "completed", {
-          resultUrl: await persistPoster(job.profile_id, imageUrl),
-        });
+        const poster = await persistPoster(job.profile_id, imageUrl, asOverlay(job.character_overlay));
+        const settled = await settleJob(job, "completed", { resultUrl: poster.url });
+        if (settled) return settled;
+        // Another reader — a second tab, the publisher — completed this job
+        // while we were copying it: theirs is the poster on record, ours
+        // would be an orphan file nobody can see or delete.
+        await discardPoster(job.profile_id, poster.assetId);
+        return (await loadJob(profileId, jobId)) ?? job;
       }
       if (jobFailed(data)) {
-        return await settleJob(job, "failed", {
+        const settled = await settleJob(job, "failed", {
           error: "Graphiste GPT a signalé l'échec de cette génération.",
         });
+        return settled ?? (await loadJob(profileId, jobId)) ?? job;
       }
       break;
     } catch {
@@ -344,19 +436,35 @@ export async function readJob(profileId: string, jobId: string): Promise<JobRow 
   return job;
 }
 
+function loadJob(profileId: string, jobId: string): Promise<JobRow | null> {
+  return queryOne<JobRow>(
+    `SELECT id, profile_id, post_id, kind, status, provider_job_id,
+            provider_status_url, result_url, error, format, character_overlay
+       FROM generation_jobs WHERE id = $1 AND profile_id = $2`,
+    [jobId, profileId],
+  );
+}
+
+/**
+ * Moves a processing job to its final state — only if it is still
+ * processing. Returns null when another reader settled it first: concurrent
+ * polls (two tabs, the publisher) must not both write a result and both
+ * point the post at their own copy.
+ */
 async function settleJob(
   job: JobRow,
   status: "completed" | "failed",
   extra: { resultUrl?: string; error?: string },
-): Promise<JobRow> {
+): Promise<JobRow | null> {
   const row = await queryOne<JobRow>(
     `UPDATE generation_jobs
         SET status = $2, result_url = $3, error = $4
-      WHERE id = $1
+      WHERE id = $1 AND status = 'processing'
       RETURNING id, profile_id, post_id, kind, status, provider_job_id,
-                provider_status_url, result_url, error, format`,
+                provider_status_url, result_url, error, format, character_overlay`,
     [job.id, status, extra.resultUrl ?? null, extra.error ?? null],
   );
+  if (!row) return null;
 
   if (job.post_id) {
     await query(
@@ -374,38 +482,81 @@ async function settleJob(
     );
   }
 
-  return row ?? job;
+  return row;
 }
 
-function buildSubject(
+/** Upper bound of the prompt ("subject") sent to the poster provider. */
+export const SUBJECT_MAX_LENGTH = 1800;
+
+/** A job's stored overlay, validated — the column is jsonb and could hold anything. */
+function asOverlay(value: unknown): CharacterOverlay | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as { assetId?: unknown; position?: unknown };
+  if (typeof v.assetId !== "string" || !/^[0-9a-f-]{36}$/i.test(v.assetId)) return null;
+  return { assetId: v.assetId, position: v.position === "left" ? "left" : "right" };
+}
+
+export function buildSubject(
   input: PosterRequest,
   spec: { label: string; orientation: string },
+  characterSide: CharacterPosition | null = null,
 ): string {
   const isPromo = input.contentCategory === "promo";
+  // Without a character, the permanent message sits bottom-left and the brand
+  // bottom-right. With one, the character's side is kept entirely free, so
+  // both move to the other side: the message stays at the bottom, the brand
+  // goes to the top.
+  const freeSide = characterSide === "left" ? "droit" : "gauche";
+  const characterSideFr = characterSide === "left" ? "gauche" : "droite";
+  const footerCorner = characterSide ? `inférieur ${freeSide}` : "inférieur gauche";
+  const brandCorner = characterSide ? `supérieur ${freeSide}` : "inférieur droit";
   const footer = input.footerText.trim()
     ? `Texte permanent utilisateur : écris le texte exact "${input.footerText.trim().slice(0, 120)}" ` +
-      `dans l'angle inférieur gauche, dans un cartouche élégant à fort contraste. Ne le reformule pas.`
-    : `L'utilisateur n'a défini aucun message permanent : n'ajoute aucun texte dans l'angle inférieur gauche.`;
+      `dans l'angle ${footerCorner}, dans un cartouche élégant à fort contraste. Ne le reformule pas.`
+    : `L'utilisateur n'a défini aucun message permanent : n'ajoute aucun texte dans l'angle ${footerCorner}.`;
+  const characterZone = characterSide
+    ? `Zone réservée : un personnage détouré sera ajouté après coup au premier plan, debout sur le ` +
+      `bord bas, côté ${characterSideFr} (environ 45 % de la largeur et les deux tiers inférieurs de la ` +
+      `hauteur de ce côté). Dans cette zone, ne place ni texte, ni logo, ni visage, ni personnage : ` +
+      `seulement le décor de fond, simple et sans détail important. Place l'accroche et les ` +
+      `éléments de texte du côté ${freeSide}. Ne représente aucune autre personne au premier plan.`
+    : null;
 
-  return [
+  // The prompt has a hard budget. It used to be sliced at the END, which
+  // silently dropped the brand placement and the prohibitions (fake text,
+  // watermarks) whenever the post or the activity description was long —
+  // and, with a character, the reserved zone. Every instruction is now kept
+  // whole; only the source message, which the poster merely illustrates,
+  // gives way.
+  const MESSAGE_MARKER = "\u0000message\u0000";
+  const lines = [
     isPromo
       ? `Affiche publicitaire professionnelle premium pour les réseaux sociaux (${spec.label}).`
       : `Visuel éditorial professionnel premium pour les réseaux sociaux (${spec.label}).`,
-    [input.sector ? `Secteur : ${input.sector}` : null,
+    [input.sector ? `Secteur : ${input.sector.slice(0, 80)}` : null,
      input.description ? `Activité : ${input.description.slice(0, 220)}` : null]
       .filter(Boolean).join(". "),
     `Le visuel doit être complémentaire au texte, pas une copie intégrale : transforme l'idée ` +
-      `centrale en une scène ou une composition claire. Message source : ${input.postContent.slice(0, 700)}`,
+      `centrale en une scène ou une composition claire. Message source : ${MESSAGE_MARKER}`,
     `Composition : visuel complet, accroche courte et très lisible, hiérarchie visuelle forte, ` +
       `éclairage cinématographique, mise en page moderne de bord à bord.`,
     isPromo
       ? `Appel à l'action commercial clair.`
       : `N'invente aucun appel à l'action commercial, prix ou offre : ne transforme pas le visuel en publicité.`,
+    characterZone,
     footer,
-    `Identité de marque : place le logo fourni et/ou le nom exact "${input.companyName}" comme ` +
-      `signature de marque discrète dans l'angle inférieur droit, petite mais lisible.`,
+    `Identité de marque : place le logo fourni et/ou le nom exact "${input.companyName.slice(0, 80)}" comme ` +
+      `signature de marque discrète dans l'angle ${brandCorner}, petite mais lisible.`,
     `Interdictions : pas de petit texte illisible, pas de fausses lettres, pas de watermark, ` +
       `pas d'élément d'interface, pas d'image vide.`,
-    `Si des personnes sont représentées, privilégier des personnes africaines/noires professionnelles.`,
-  ].join("\n").slice(0, 1800);
+    characterSide
+      ? null
+      : `Si des personnes sont représentées, privilégier des personnes africaines/noires professionnelles.`,
+  ].filter(Boolean).join("\n");
+
+  const room = Math.max(120, SUBJECT_MAX_LENGTH - (lines.length - MESSAGE_MARKER.length));
+  const message = input.postContent.replace(/\s+/g, " ").trim();
+  const clipped = message.length > room ? `${message.slice(0, room - 1).trimEnd()}…` : message;
+  // A replacer function: a string replacement would expand "$&" or "$'" typed in the post.
+  return lines.replace(MESSAGE_MARKER, () => clipped).slice(0, SUBJECT_MAX_LENGTH);
 }

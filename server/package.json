@@ -13,13 +13,16 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "migrate": "npm run build && node dist/src/migrate.js",
     "migrate:dry-run": "npm run build && node dist/src/migrate.js --dry-run",
-    "test": "npm run build && node --test --experimental-strip-types tests/*.test.ts"
+    "test": "npm run build && node scripts/fetch-bg-model.mjs && node --test --experimental-strip-types tests/*.test.ts",
+    "fetch-model": "node scripts/fetch-bg-model.mjs"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
     "@fastify/multipart": "^9.0.3",
     "fastify": "^5.2.1",
-    "pg": "^8.13.1"
+    "onnxruntime-web": "^1.22.0",
+    "pg": "^8.13.1",
+    "sharp": "^0.34.3"
   },
   "devDependencies": {
     "@types/node": "^22.16.5",

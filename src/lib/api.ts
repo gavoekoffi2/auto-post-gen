@@ -74,7 +74,12 @@ function humanMessage(status: number, payload: unknown, fallbackText: string): s
       : "";
     if (candidate.trim()) return candidate;
   }
-  if (fallbackText.trim() && fallbackText.length < 300) return fallbackText;
+  // A short plain-text body is a message; markup is not. nginx answers 413,
+  // 502 and 504 itself with a ~180-character HTML page, which used to land
+  // verbatim in the error toast.
+  if (fallbackText.trim() && fallbackText.length < 300 && !/^\s*</.test(fallbackText)) {
+    return fallbackText;
+  }
   // No usable server message: say something the user can act on rather than
   // surfacing a bare status code.
   if (status === 401) return "Votre session a expiré. Reconnectez-vous.";
@@ -83,6 +88,9 @@ function humanMessage(status: number, payload: unknown, fallbackText: string): s
   if (status === 409) return "Cette action entre en conflit avec l'état actuel.";
   if (status === 413) return "Le fichier envoyé est trop volumineux.";
   if (status === 429) return "Trop de requêtes. Réessayez dans un moment.";
+  if (status === 502 || status === 503 || status === 504) {
+    return "Le serveur est momentanément indisponible. Réessayez dans un instant.";
+  }
   if (status >= 500) return "Le serveur a rencontré une erreur. Réessayez dans un instant.";
   return `La requête a échoué (${status}).`;
 }
@@ -231,6 +239,12 @@ export interface Profile {
   trial_plan: string;
   trial_ends_at: string | null;
   current_period_ends_at: string | null;
+  /** The cut-out laid on every poster, served by the API; null when none. */
+  poster_character_url: string | null;
+  poster_character_enabled: boolean;
+  poster_character_position: "left" | "right";
+  /** When the account confirmed its right to use the image. */
+  poster_character_rights_at: string | null;
 }
 
 export interface Post {
@@ -393,6 +407,32 @@ export const profile = {
       method: "POST",
       body: { granted },
     }),
+};
+
+// ---------------------------------------------------------------------------
+// Poster character — cut out on the server, laid on every poster. The photo
+// is never sent to the poster provider.
+// ---------------------------------------------------------------------------
+
+export interface CharacterUploadResult {
+  profile: Profile;
+  character: { width: number; height: number; cutOut: boolean; lowResolution: boolean };
+}
+
+export const posterCharacter = {
+  /** Cutting a photo out takes a few seconds; the ceiling allows for a queue. */
+  upload: (file: File, rightsConfirmed: boolean) => {
+    const form = new FormData();
+    // The confirmation travels before the file so the server reads it first.
+    form.append("rights_confirmed", rightsConfirmed ? "true" : "false");
+    form.append("file", file);
+    return request<CharacterUploadResult>("/profile/poster-character", {
+      method: "POST",
+      formData: form,
+      timeoutMs: 180_000,
+    });
+  },
+  remove: () => request<{ profile: Profile }>("/profile/poster-character", { method: "DELETE" }),
 };
 
 // ---------------------------------------------------------------------------

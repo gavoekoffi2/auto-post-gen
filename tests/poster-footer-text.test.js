@@ -37,7 +37,10 @@ test("manual and automatic poster generation place the exact saved message botto
   // One renderer builds the brief, so the manual and the weekly path cannot
   // drift into placing the user's message differently.
   assert.match(generation, /footerText/);
-  assert.match(generation, /angle inférieur gauche/);
+  // Bottom-left, or the bottom corner of the free side when a poster
+  // character stands on the left.
+  assert.match(generation, /const footerCorner = characterSide \? `inférieur \$\{freeSide\}` : "inférieur gauche";/);
+  assert.match(generation, /dans l'angle \$\{footerCorner\}, dans un cartouche/);
   assert.match(generation, /texte exact/);
   // Reformulating it would silently rewrite a user's own words.
   assert.match(generation, /Ne le reformule pas/);
@@ -53,7 +56,7 @@ test("empty footer message stays optional and does not invent a replacement", ()
   const generation = read("server/src/services/generation.ts");
   assert.match(generation, /input\.footerText\.trim\(\)/);
   // No message means no cartouche — not a default slogan the user never wrote.
-  assert.match(generation, /n'ajoute aucun texte dans l'angle inférieur gauche/);
+  assert.match(generation, /n'ajoute aucun texte dans l'angle \$\{footerCorner\}/);
 });
 
 test("the saved message is capped where it is stored and where it is sent", () => {

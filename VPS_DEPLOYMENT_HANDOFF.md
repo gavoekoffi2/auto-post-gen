@@ -256,6 +256,8 @@ n'accepte un `profileId` ou un `userId` envoyé par le navigateur**.
 | PATCH | `/profile` | session | `{"sector":"Restauration","platforms":["LinkedIn"]}` → profil. **`plan`, `role`, `blocked_at`, `email` et le consentement sont refusés silencieusement** : ils ne figurent pas dans la liste blanche. |
 | POST | `/profile/audiences/detect` | session (10/h) | corps ignoré → `200 {"audiences":[…]}` |
 | POST | `/profile/leader-photo-consent` | session | `{"granted":true}` → profil |
+| POST | `/profile/poster-character` | session (10/h) | multipart `rights_confirmed=true` + `file` (≤ 12 Mo) → `201 {"profile":…,"character":{"width","height","cutOut","lowResolution"}}` ; sans la case → `400 rights_required` ; image sans sujet → `400 no_subject` |
+| DELETE | `/profile/poster-character` | session | → `200 {"profile":…}` (image et fichier supprimés) |
 
 ### Publications
 
@@ -372,7 +374,7 @@ Contraintes qui portent une règle produit :
 
 ## 8. Migrations à appliquer
 
-Six fichiers, dans l'ordre, **tous idempotents** :
+Sept fichiers, dans l'ordre, **tous idempotents** :
 
 | Fichier | Contenu |
 | --- | --- |
@@ -382,6 +384,7 @@ Six fichiers, dans l'ordre, **tous idempotents** :
 | `0003_trial_and_subscriptions.sql` | Essai gratuit et abonnements : colonnes de cycle de vie sur `profiles` (les comptes existants passent `active` sans échéance), table `subscription_requests` et ses index uniques. N'ajoute que ; ne supprime rien. |
 | `0004_generation_job_provider.sql` | `generation_jobs.provider` obligatoire partout (déjà `NOT NULL` en production ; rendu obligatoire sur une base neuve). Les jobs historiques sans fournisseur éventuels sont conservés tels quels ; une contrainte `NOT VALID` refuse les nouveaux. |
 | `0005_payment_reference_once.sql` | Une référence Mobile Money ne sert qu'**une fois**, quel que soit le statut de la déclaration (en attente, validée, refusée, annulée), sans tenir compte de la casse ni des espaces, tous moyens de paiement confondus. S'arrête avec un message si des doublons existent déjà. |
+| `0006_poster_character.sql` | Personnage sur les affiches : `profiles.poster_character_asset_id` (clé étrangère `ON DELETE SET NULL` vers `media_assets`), `poster_character_enabled` (défaut `false`), `poster_character_position` (`left`/`right`, défaut `right`), `poster_character_rights_at` ; `generation_jobs.character_overlay` (`jsonb`, nullable). N'ajoute que ; ne supprime rien. |
 
 ```bash
 cd /opt/pro-social-ai/server
@@ -465,6 +468,7 @@ PG_POOL_MAX                 défaut 10
 PUBLISH_TICK_SECONDS        défaut 60 ; 0 désactive le runner interne
 WEEKLY_GENERATION           "off" désactive le runner hebdomadaire
 NODE_ENV                    "production" active le cookie Secure
+BG_REMOVAL_MODEL_PATH       défaut /app/models/silueta.onnx (installé par le build de l'image)
 ```
 
 ### Côté dashboard

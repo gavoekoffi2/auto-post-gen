@@ -12,6 +12,69 @@
 
 ---
 
+## 000. Personnage sur les affiches + passe de corrections
+
+Branche `claude/poster-character-q2w6`, créée depuis
+`claude/selfhosted-provider-compat-r5k8` @ `1218ee09feac7d69be203e0a7da1a3bc81b7e67b`
+(le correctif `provider` + référence unique, §00, est donc inclus).
+
+### La fonctionnalité
+
+Dans **Profil → onglet Images**, carte « Personnage sur vos affiches » :
+l'utilisateur envoie la photo d'une personne (lui-même, un membre de
+l'équipe…) ou d'une mascotte. Le serveur **la détoure une fois** à l'envoi et
+la **pose sur chaque affiche générée**, du côté choisi (gauche/droite), debout
+sur le bord bas, à côté du contenu de l'affiche.
+
+- **La photo ne quitte jamais le serveur.** Graphiste GPT reçoit seulement
+  une consigne de mise en page (garder libre le côté du personnage, déplacer
+  accroche, message permanent et signature de l'autre côté). Le personnage
+  est composité localement sur le rendu fini (`sharp`). Un visage généré par
+  IA ne serait jamais fidèle ; le composite l'est, et ne coûte rien de plus.
+- **Détourage** : modèle `silueta` (U²-Net, Apache-2.0, 44 Mo, via le projet
+  rembg, MIT) exécuté par `onnxruntime-web` (WASM, compatible Alpine/musl)
+  dans un *worker thread* éphémère : l'API ne se bloque pas, la mémoire est
+  rendue après chaque détourage. Environ 5 s par photo, 1 à la fois (file).
+  Un PNG **déjà détouré** est gardé tel quel ; une image sans sujet net est
+  refusée avec une explication.
+- **Droit à l'image** : l'envoi exige de cocher « Je confirme avoir le droit
+  d'utiliser l'image de cette personne » ; la date est enregistrée
+  (`poster_character_rights_at`). Sans la case, l'API répond `400 rights_required`.
+- **Cohérence** : chaque tâche de rendu enregistre le personnage avec
+  lequel elle a démarré (`generation_jobs.character_overlay`) ; un rendu
+  terminé minutes plus tard est fini comme il a été commencé, même si le
+  réglage a changé entre-temps. Un personnage supprimé entre-temps ne fait
+  jamais perdre l'affiche payée : elle est gardée sans lui.
+- Le chemin manuel (tableau de bord) et le chemin hebdomadaire passent par
+  la même fonction : aucun des deux ne peut l'oublier.
+- Limites : 12 Mo par photo (JPEG, PNG, WebP), 10 envois par heure et par compte.
+
+### Ce que le déploiement doit savoir
+
+| | |
+|---|---|
+| **Migration** | `0006_poster_character.sql` — additive et idempotente : 4 colonnes sur `profiles` (défauts : désactivé, `right`), 1 colonne `jsonb` nullable sur `generation_jobs`, 1 clé étrangère `ON DELETE SET NULL`, 1 `CHECK`. Aucun `DROP`, aucune réécriture de ligne existante. La contrainte des types de média n'est **pas** reconstruite (l'image est rangée en `other`) : les valeurs héritées fusionnées par 0000 ne sont pas touchées. |
+| **Image Docker** | l'étape de build **télécharge** le modèle (`server/scripts/fetch-bg-model.mjs`) depuis `github.com/danielgatis/rembg/releases/download/v0.0.0/silueta.onnx` et vérifie son **SHA-256 épinglé** (`75da6c8d…ffeedb`) : fichier altéré = build en échec. **Le build a donc besoin d'un accès HTTPS sortant vers github.com.** Le modèle n'est pas dans git. |
+| **Variable** | `BG_REMOVAL_MODEL_PATH` — optionnelle ; par défaut `/app/models/silueta.onnx` dans l'image. Sans modèle, l'API démarre quand même, l'annonce (`capability unavailable: background-removal model …`) et n'accepte que des PNG déjà détourés (503 explicite sinon). |
+| **Mémoire** | pic d'environ 400 à 700 Mo pendant un détourage (quelques secondes), rendu ensuite. |
+| **nginx** | nouveau bloc `location = /api/profile/poster-character` : `client_max_body_size 13m`, `proxy_read_timeout 180s`. Le bloc `/api/` garde 6 Mo. **Le fichier `nginx.vps.conf` doit être redéployé** (il est monté par le Compose). |
+| **Retour arrière** | l'image précédente ignore les colonnes ajoutées par 0006 : revenir à l'image suffit, la migration n'a pas à être annulée. |
+| **Routes** | `POST /api/profile/poster-character` (multipart : `rights_confirmed=true` + `file`) → `201 {profile, character}` ; `DELETE /api/profile/poster-character` → `200 {profile}` ; `PATCH /api/profile` accepte `poster_character_enabled` (booléen) et `poster_character_position` (`left`/`right`). |
+
+### Défauts trouvés et corrigés pendant la passe
+
+| Défaut | Effet pour l'utilisateur | Correction |
+|---|---|---|
+| Consigne d'affiche tronquée **à la fin** à 1 800 caractères | avec un post ou une description longs, la position de la signature et les interdictions (fausses lettres, watermark) disparaissaient en silence | seules les lignes du message source sont raccourcies (« … ») ; toutes les consignes restent entières |
+| `"$&"`, `"$'"`… dans un post | recopiés comme motifs de remplacement dans la consigne envoyée | remplacement par fonction |
+| Réhébergement d'affiche plafonné à 5 Mo | une affiche PNG 2K dépassait la limite : on gardait l'URL du fournisseur, qui **expire** — l'affiche disparaissait des posts programmés | plafond propre aux rendus : 25 Mo |
+| Deux lectures simultanées d'un même rendu (2 onglets, ou l'onglet + la publication) | le rendu était finalisé deux fois ; une copie orpheline restait sur le disque | finalisation conditionnelle (`AND status = 'processing'`) ; le perdant supprime sa copie et renvoie celle du gagnant (test : échoue sans le correctif) |
+| Aucune barrière d'erreur dans le dashboard | après un redéploiement, un onglet resté ouvert demandant un module qui n'existe plus → **page blanche** | `AppErrorBoundary` : recharge automatiquement une fois (au plus une par minute), sinon message « Une nouvelle version est disponible » + bouton ; se réinitialise au changement de page |
+| Page d'erreur HTML de nginx (413, 502, 504 ; ~180 caractères) | affichée **telle quelle** (balises comprises) dans le message d'erreur | le texte brut n'est repris que s'il n'est pas du balisage ; messages français pour 502/503/504 |
+| Limite de débit répondue avant la lecture d'un gros envoi | derrière nginx, la connexion est coupée : l'utilisateur voit « 502 Bad Gateway » au lieu du message | la limite est vérifiée une fois le corps lu (vérifié derrière un vrai nginx) |
+
+---
+
 ## 00. Correctif : `generation_jobs.provider` et référence Mobile Money unique
 
 Correctif de `claude/selfhosted-subscriptions-release-q7t4` après la
@@ -205,20 +268,21 @@ hebdomadaires, changement d'email). Voir §9.
 
 | | |
 |---|---|
-| **Branche** | `claude/selfhosted-provider-compat-r5k8` |
-| **SHA du code** | `ec4e889cc7fd99309a852441d2933459b5561a60` |
+| **Branche** | `claude/poster-character-q2w6` |
+| **SHA du code** | `__CODE_SHA__` |
 | **SHA à déployer** | la pointe de la branche (ce document est le seul commit au-dessus du code ; `git log -1 --format=%H`) |
-| **Base** | `claude/selfhosted-subscriptions-release-q7t4` @ `41d70d40b77ed561fa5fd96f4175d0d05e34bcb4` (bloquée par la répétition : `generation_jobs.provider`) |
+| **Base** | `claude/selfhosted-provider-compat-r5k8` @ `1218ee09feac7d69be203e0a7da1a3bc81b7e67b` (correctif `provider` + référence unique, §00) |
+| **Base précédente** | `claude/selfhosted-subscriptions-release-q7t4` @ `41d70d40b77ed561fa5fd96f4175d0d05e34bcb4` (bloquée par la répétition : `generation_jobs.provider`) |
 | **Base de la base** | `claude/legacy-status-compat-9m2x` @ `783938efbf206055bf6cf67d6a684ef11656fc94` |
 | **Fonctionnalités intégrées depuis** | `claude/magical-thompson-mjuif9` @ `66416276127588bdb50f179b6e6566ddb50cb663` |
 | **`main`** | non modifié, non poussé, non fusionné |
 
 ```bash
 git fetch origin
-# ce qu'apporte ce correctif
-git diff --stat origin/claude/selfhosted-subscriptions-release-q7t4..origin/claude/selfhosted-provider-compat-r5k8
+# ce qu'apporte cette livraison (personnage + corrections)
+git diff --stat origin/claude/selfhosted-provider-compat-r5k8..origin/claude/poster-character-q2w6
 # tout ce qui s'ajoute à la livraison auto-hébergée précédente
-git diff --stat origin/claude/legacy-status-compat-9m2x..origin/claude/selfhosted-provider-compat-r5k8
+git diff --stat origin/claude/legacy-status-compat-9m2x..origin/claude/poster-character-q2w6
 ```
 
 ---
@@ -368,7 +432,29 @@ Vérifié aussi à la main, contre une base héritée migrée **portant la contr
 
 ---
 
-### 4 bis. Résultats de CETTE livraison (correctif `provider` + référence unique)
+### 4 ter. Résultats de CETTE livraison (personnage + corrections)
+
+Bac à sable, PostgreSQL 16 local, bases jetables `psa_*` uniquement, Node 22 :
+
+| Vérification | Résultat |
+|---|---|
+| `server`: `npm ci` · `npm run typecheck` · `npm run fetch-model` | OK · OK · `model present and verified` (SHA-256 épinglé) |
+| `server`: `npm test` (base neuve migrée) | `# tests 76  # pass 76  # fail 0` (65 → 76 : +11 sur le personnage, contre le vrai modèle et un vrai PostgreSQL) |
+| dépôt : `npm ci` · `npm test` | OK · `# tests 202  # pass 202  # fail 0` (193 → 202) |
+| dépôt : `npm run lint` | `0 errors, 8 warnings` — les 8 warnings préexistants (vérifié sur la base), aucun nouveau |
+| dépôt : `npm run typecheck` · `npm run build` | OK · OK |
+| Garde CI anti-Supabase (4 `grep`) | 0 occurrence |
+| `docker compose … --env-file deploy/fake.env config` | OK |
+| **Migration vierge** | `Applied 7 migration(s).` ; 2 rejeux complets (`psql -f`) sans erreur ; relance : `Schema already up to date.` |
+| **Migration legacy** (fixture du schéma réel) | `Applied 7 migration(s).` puis `Schema already up to date.` |
+| **Dry-run** (même fixture) | `DRY RUN OK — 7 migration(s) would apply cleanly.` · `Rolled back: the database is unchanged.` · aucune table `schema_migrations` laissée |
+| `nginx -t` sur `nginx.vps.conf` (nginx 1.24) | syntaxe OK ; derrière ce nginx : photo réelle de 10,3 Mo → `201` en 7,8 s ; 9 Mo sur `/api/media` → `413` (inchangé) ; limite dépassée → `429` + message français (et non `502`) |
+| Navigateur réel (Chromium) | carte affichée, envoi bloqué sans la case, « Détourage en cours… », aperçu détouré, bascule gauche/droite enregistrée ; module de page bloqué → rechargement unique puis message + bouton, qui rétablit la page |
+
+Non exécuté ici : `docker build` (pas de démon Docker) — il télécharge le
+modèle depuis github.com ; la répétition sur la **copie réelle** (§6.0).
+
+### 4 bis. Résultats de la livraison précédente (correctif `provider` + référence unique)
 
 Exécutés dans le bac à sable, PostgreSQL 16 local, bases jetables `psa_*`
 uniquement, Node 22.22 — exactement les commandes demandées :

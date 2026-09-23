@@ -44,7 +44,7 @@ test('a finished poster is copied into our own storage, not linked', () => {
   assert.match(generation, /INSERT INTO media_assets/);
   // Best-effort: keeping the provider URL is worse than owning the file, but
   // better than losing a render that was already paid for.
-  assert.match(generation, /return remoteUrl;/);
+  assert.match(generation, /return \{ url: remoteUrl, assetId: null \};/);
 });
 
 test('re-hosting validates the URL, the type and the size before writing', () => {
@@ -53,7 +53,10 @@ test('re-hosting validates the URL, the type and the size before writing', () =>
   // A redirect can land anywhere, so the type and size checks — not the
   // initial URL — are what actually bound this.
   assert.match(media, /extensionForType\(declared\)/);
-  assert.match(media, /declaredLength > MAX_UPLOAD_BYTES/);
+  // Bounded by its own ceiling: a 2K PNG render exceeds the 5 MB of an
+  // ordinary upload, and refusing it kept the expiring provider URL instead.
+  assert.match(media, /export const REMOTE_POSTER_MAX_BYTES = \d+ \* 1024 \* 1024;/);
+  assert.match(media, /declaredLength > REMOTE_POSTER_MAX_BYTES/);
   assert.match(media, /maxBytes/);
 });
 

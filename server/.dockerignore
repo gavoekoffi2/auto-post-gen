@@ -10,3 +10,6 @@ tests
 .npmrc
 .nvmrc
 media
+# The background-removal model is downloaded inside the build (Dockerfile),
+# pinned and checksummed; a local copy must not bloat the build context.
+models

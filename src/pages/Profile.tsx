@@ -25,6 +25,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { LogoUpload } from "@/components/LogoUpload";
+import { PosterCharacterCard } from "@/components/PosterCharacterCard";
 import { CustomImageLibrary } from "@/components/CustomImageLibrary";
 import { AccountSettings } from "@/components/AccountSettings";
 
@@ -685,6 +686,8 @@ export default function Profile() {
 
           {/* Images Tab */}
           <TabsContent value="images" className="space-y-6">
+            <PosterCharacterCard />
+
             <Card className="glass-card p-6">
               <h2 className="text-lg font-semibold mb-4">Identité visuelle (charte graphique)</h2>
               <p className="text-xs text-muted-foreground mb-4">
@@ -776,7 +779,7 @@ export default function Profile() {
                 <div>
                   <Label htmlFor="poster-footer-text">Texte permanent sur vos affiches</Label>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Écrivez votre appel à l’action, votre numéro ou votre message de signature. Il apparaîtra avec un bon contraste dans l’angle inférieur gauche de chaque affiche.
+                    Écrivez votre appel à l’action, votre numéro ou votre message de signature. Il apparaîtra avec un bon contraste dans l’angle inférieur gauche de chaque affiche (à droite si votre personnage est placé à gauche).
                   </p>
                 </div>
                 <Input
