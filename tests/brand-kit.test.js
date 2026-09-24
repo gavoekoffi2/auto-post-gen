@@ -17,7 +17,7 @@ test("the gestures are the same in the dashboard, the API and the database", () 
   const ui = keys(read("src/lib/poses.ts"), "export const GESTURES = {");
   const api = keys(read("server/src/services/poses.ts"), "export const GESTURES = {");
   assert.deepEqual(ui, api);
-  const migration = read("server/migrations/0008_brand_kit_and_poses.sql");
+  const migration = read("server/migrations/0009_brand_kit_and_poses.sql");
   const checked = /CHECK \(gesture IN \(([^)]+)\)\)/.exec(migration)[1].match(/'([a-z]+)'/g).map((s) => s.slice(1, -1));
   assert.deepEqual([...checked].sort(), [...api].sort());
 });
@@ -72,7 +72,7 @@ test("each post can take or leave the character", () => {
 });
 
 test("migration 0008 is additive", () => {
-  const sql = read("server/migrations/0008_brand_kit_and_poses.sql")
+  const sql = read("server/migrations/0009_brand_kit_and_poses.sql")
     .split("\n")
     .filter((line) => !line.trim().startsWith("--"))
     .join("\n");

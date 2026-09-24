@@ -51,7 +51,7 @@ Branche `claude/brand-kit-poses-k4p8`, créée depuis
 
 | | |
 |---|---|
-| **Migration** | `0008_brand_kit_and_poses.sql` — additive et idempotente : table `poster_character_poses` (FK `ON DELETE CASCADE`, `CHECK` sur le geste et l'orientation), colonnes `profiles.poster_logo_enabled` et `brand_colors_enabled` (`DEFAULT true` : le logo et les couleurs restent appliqués comme avant), `posts.include_character` (nullable = suit le réglage du compte), `generation_jobs.logo_overlay`. L'image unique de 0006 devient la première pose (une seule fois, même rejouée). Rien de supprimé. 9 migrations au total. |
+| **Migration** | `0009_brand_kit_and_poses.sql` — additive et idempotente : table `poster_character_poses` (FK `ON DELETE CASCADE`, `CHECK` sur le geste et l'orientation), colonnes `profiles.poster_logo_enabled` et `brand_colors_enabled` (`DEFAULT true` : le logo et les couleurs restent appliqués comme avant), `posts.include_character` (nullable = suit le réglage du compte), `generation_jobs.logo_overlay`. L'image unique de 0006 devient la première pose (une seule fois, même rejouée). Rien de supprimé. 9 migrations au total. |
 | **Variables / nginx / Compose / Dockerfile** | inchangés. |
 | **Retour arrière** | l'image précédente ignore la table et les colonnes ajoutées ; revenir à l'image suffit. |
 | **Routes** | `POST /api/profile/poster-character` ajoute une pose (champs `rights_confirmed`, `gesture`, `facing`, `file` ; 8 au maximum) ; `PATCH` / `DELETE /api/profile/poster-character/poses/:id` ; `DELETE /api/profile/poster-character` retire toutes les poses ; `PATCH /api/profile` accepte `poster_logo_enabled`, `brand_colors_enabled` ; `PATCH /api/posts/:id` accepte `include_character` (vrai, faux ou `null`). |
