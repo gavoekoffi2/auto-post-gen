@@ -14,18 +14,21 @@ test("the character's photo never travels to the poster provider", () => {
     generation.indexOf("export async function startPosterJob"),
     generation.indexOf("async function persistPoster"),
   );
-  // Only the side to keep free reaches the prompt; the asset stays local and
-  // is composited onto the finished render.
-  assert.match(start, /buildSubject\(input, spec, character\?\.position \?\? null\)/);
-  assert.doesNotMatch(start, /character\.assetId|mediaUrl\(character|publicMediaUrl/);
-  assert.match(generation, /compositeCharacter\(/);
+  // Only the layout (side, gesture) reaches the prompt; the photo stays local
+  // and is composited onto the finished render. A photo handed to the
+  // renderer as a "reference" came back as somebody else's face.
+  assert.match(start, /buildSubject\(input, spec, branding\)/);
+  assert.doesNotMatch(start, /character\.assetId|mediaUrl\(|publicMediaUrl|shareableMediaUrl/);
+  assert.doesNotMatch(start, /reference_image_urls = \[.*character/);
+  assert.match(generation, /composePoster\(/);
 });
 
 test("the render is finished with the character it was started with", () => {
   const migration = read("server/migrations/0006_poster_character.sql");
   const generation = read("server/src/services/generation.ts");
   assert.match(migration, /generation_jobs ADD COLUMN IF NOT EXISTS character_overlay jsonb/);
-  assert.match(generation, /asOverlay\(job\.character_overlay\)/);
+  assert.match(generation, /asCharacterOverlay\(job\.character_overlay\)/);
+  assert.match(generation, /asLogoOverlay\(job\.logo_overlay\)/);
 });
 
 test("migration 0006 is additive", () => {
@@ -51,7 +54,8 @@ test("uploading a person's image requires a recorded rights confirmation", () =>
   assert.match(route, /"rights_required"/);
   assert.match(route, /poster_character_rights_at = now\(\)/);
   const card = read("src/components/PosterCharacterCard.tsx");
-  assert.match(card, /disabled=\{uploading \|\| !rights\}/);
+  assert.match(card, /const canPick = !uploading && rights && !full;/);
+  assert.match(card, /disabled=\{!canPick\}/);
 });
 
 test("nginx lets a character photo through, and the rate limit is answered after the body", () => {

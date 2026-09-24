@@ -256,8 +256,10 @@ n'accepte un `profileId` ou un `userId` envoyé par le navigateur**.
 | PATCH | `/profile` | session | `{"sector":"Restauration","platforms":["LinkedIn"]}` → profil. **`plan`, `role`, `blocked_at`, `email` et le consentement sont refusés silencieusement** : ils ne figurent pas dans la liste blanche. |
 | POST | `/profile/audiences/detect` | session (10/h) | corps ignoré → `200 {"audiences":[…]}` |
 | POST | `/profile/leader-photo-consent` | session | `{"granted":true}` → profil |
-| POST | `/profile/poster-character` | session (10/h) | multipart `rights_confirmed=true` + `file` (≤ 12 Mo) → `201 {"profile":…,"character":{"width","height","cutOut","lowResolution"}}` ; sans la case → `400 rights_required` ; image sans sujet → `400 no_subject` |
-| DELETE | `/profile/poster-character` | session | → `200 {"profile":…}` (image et fichier supprimés) |
+| POST | `/profile/poster-character` | session (20/h) | ajoute une pose (8 au maximum) : multipart `rights_confirmed=true`, `gesture`, `facing` + `file` (≤ 12 Mo) → `201 {"profile":…,"character":{"width","height","cutOut","lowResolution"}}` ; sans la case → `400 rights_required` ; image sans sujet → `400 no_subject` |
+| PATCH | `/profile/poster-character/poses/:id` | session | `{"gesture":"pointe","facing":"left"}` → `200 {"profile":…}` |
+| DELETE | `/profile/poster-character/poses/:id` | session | → `200 {"profile":…}` (pose, image et fichier supprimés) |
+| DELETE | `/profile/poster-character` | session | → `200 {"profile":…}` (toutes les poses, images et fichiers supprimés) |
 
 ### Publications
 
@@ -374,7 +376,7 @@ Contraintes qui portent une règle produit :
 
 ## 8. Migrations à appliquer
 
-Huit fichiers, dans l'ordre, **tous idempotents** :
+Neuf fichiers, dans l'ordre, **tous idempotents** :
 
 | Fichier | Contenu |
 | --- | --- |
@@ -386,6 +388,7 @@ Huit fichiers, dans l'ordre, **tous idempotents** :
 | `0005_payment_reference_once.sql` | Une référence Mobile Money ne sert qu'**une fois**, quel que soit le statut de la déclaration (en attente, validée, refusée, annulée), sans tenir compte de la casse ni des espaces, tous moyens de paiement confondus. S'arrête avec un message si des doublons existent déjà. |
 | `0006_poster_character.sql` | Personnage sur les affiches : `profiles.poster_character_asset_id` (clé étrangère `ON DELETE SET NULL` vers `media_assets`), `poster_character_enabled` (défaut `false`), `poster_character_position` (`left`/`right`, défaut `right`), `poster_character_rights_at` ; `generation_jobs.character_overlay` (`jsonb`, nullable). N'ajoute que ; ne supprime rien. |
 | `0007_publish_recovery_bounded.sql` | Remplace `recover_stuck_publishing()` : un post bloqué en `publishing` qui n'a pas atteint le fournisseur passe en `failed` au bout de 5 tentatives au lieu d'être relancé indéfiniment. Aucune table touchée. |
+| `0008_brand_kit_and_poses.sql` | Identité visuelle : table `poster_character_poses` (plusieurs photos du personnage, une par geste ; l'image de 0006 devient la première), `profiles.poster_logo_enabled` et `brand_colors_enabled` (défaut `true`), `posts.include_character` (choix par publication, `NULL` = réglage du compte), `generation_jobs.logo_overlay`. N'ajoute que ; ne supprime rien. |
 
 ```bash
 cd /opt/pro-social-ai/server

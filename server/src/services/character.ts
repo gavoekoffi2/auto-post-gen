@@ -279,26 +279,23 @@ export function characterBox(width: number, height: number) {
   };
 }
 
-/**
- * Lays the character onto a finished poster.
- *
- * Standing on the bottom edge, on the requested side, scaled to fit the
- * reserved box, with a soft shadow so it sits in the scene rather than on top
- * of it. Returns a JPEG the size of the poster.
- */
-export async function compositeCharacter(
-  poster: Buffer,
+/** A corner of the poster, where the logo goes. */
+export type Corner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
+
+/** The character's layers (soft shadow, then the cut-out) for a poster of this size. */
+async function characterLayers(
+  width: number,
+  height: number,
   character: Buffer,
   position: CharacterPosition,
-): Promise<Buffer> {
-  const base = sharp(poster, { failOn: "error", limitInputPixels: MAX_INPUT_PIXELS }).rotate();
-  const { data: posterPixels, info: posterInfo } = await base.raw().toBuffer({ resolveWithObject: true });
-  const width = posterInfo.width;
-  const height = posterInfo.height;
+  mirror: boolean,
+): Promise<sharp.OverlayOptions[]> {
   const box = characterBox(width, height);
-
-  const fitted = await sharp(character)
-    .ensureAlpha()
+  let source = sharp(character).ensureAlpha();
+  // A pose looking or pointing away from the poster's centre is mirrored, so
+  // the gesture leads to the message instead of out of the frame.
+  if (mirror) source = source.flop();
+  const fitted = await source
     .resize(box.maxWidth, box.maxHeight, { fit: "inside" })
     .png()
     .toBuffer({ resolveWithObject: true });
@@ -346,9 +343,114 @@ export async function compositeCharacter(
     layers.push({ input: shadow, left: clipLeft, top: clipTop });
   }
   layers.push({ input: fitted.data, left: x, top: y });
+  return layers;
+}
+
+/**
+ * The box the logo is fitted into, and its margin. One definition for the
+ * prompt (which keeps that corner free) and the compositing.
+ */
+export function logoBox(width: number, height: number) {
+  const landscape = width > height * 1.15;
+  return {
+    maxWidth: Math.round(width * (landscape ? 0.16 : 0.22)),
+    maxHeight: Math.round(height * (landscape ? 0.14 : 0.09)),
+    margin: Math.round(Math.min(width, height) * 0.035),
+  };
+}
+
+/**
+ * The logo's layers: the logo exactly as uploaded, on a rounded plate that
+ * keeps it legible whatever the render put behind it — light for a dark or
+ * coloured logo, dark for a white one.
+ */
+async function logoLayers(
+  width: number,
+  height: number,
+  logo: Buffer,
+  corner: Corner,
+): Promise<sharp.OverlayOptions[]> {
+  const box = logoBox(width, height);
+  const fitted = await sharp(logo, { limitInputPixels: MAX_INPUT_PIXELS })
+    .ensureAlpha()
+    .resize(box.maxWidth, box.maxHeight, { fit: "inside" })
+    .png()
+    .toBuffer({ resolveWithObject: true });
+  const lw = fitted.info.width;
+  const lh = fitted.info.height;
+
+  const { data } = await sharp(fitted.data).raw().toBuffer({ resolveWithObject: true });
+  let sum = 0;
+  let count = 0;
+  for (let i = 0; i < lw * lh; i++) {
+    if (data[i * 4 + 3]! < 128) continue;
+    sum += 0.2126 * data[i * 4]! + 0.7152 * data[i * 4 + 1]! + 0.0722 * data[i * 4 + 2]!;
+    count++;
+  }
+  const lightLogo = count > 0 && sum / count > 200;
+
+  const padding = Math.max(6, Math.round(Math.min(lw, lh) * 0.18));
+  const pw = lw + padding * 2;
+  const ph = lh + padding * 2;
+  const radius = Math.round(Math.min(pw, ph) * 0.22);
+  const fill = lightLogo ? "rgba(15,23,42,0.86)" : "rgba(255,255,255,0.94)";
+  const plate = Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${pw}" height="${ph}">` +
+      `<rect width="${pw}" height="${ph}" rx="${radius}" ry="${radius}" fill="${fill}"/></svg>`,
+  );
+
+  const left = corner.endsWith("left") ? box.margin : width - pw - box.margin;
+  const top = corner.startsWith("top") ? box.margin : height - ph - box.margin;
+  return [
+    { input: plate, left, top },
+    { input: fitted.data, left: left + padding, top: top + padding },
+  ];
+}
+
+export interface PosterParts {
+  character?: { image: Buffer; position: CharacterPosition; mirror?: boolean };
+  logo?: { image: Buffer; corner: Corner };
+}
+
+/**
+ * Lays the character and/or the logo onto a finished poster, in one pass.
+ * Returns a JPEG the size of the poster.
+ */
+export async function composePoster(poster: Buffer, parts: PosterParts): Promise<Buffer> {
+  const base = sharp(poster, { failOn: "error", limitInputPixels: MAX_INPUT_PIXELS }).rotate();
+  const { data: posterPixels, info: posterInfo } = await base.raw().toBuffer({ resolveWithObject: true });
+  const width = posterInfo.width;
+  const height = posterInfo.height;
+
+  const layers: sharp.OverlayOptions[] = [];
+  if (parts.character) {
+    layers.push(
+      ...(await characterLayers(
+        width,
+        height,
+        parts.character.image,
+        parts.character.position,
+        parts.character.mirror ?? false,
+      )),
+    );
+  }
+  if (parts.logo) layers.push(...(await logoLayers(width, height, parts.logo.image, parts.logo.corner)));
 
   return sharp(posterPixels, { raw: { width, height, channels: posterInfo.channels } })
     .composite(layers)
     .jpeg({ quality: 90, chromaSubsampling: "4:4:4", mozjpeg: true })
     .toBuffer();
+}
+
+/**
+ * Lays the character onto a finished poster: standing on the bottom edge, on
+ * the requested side, scaled to fit the reserved box, with a soft shadow.
+ */
+export async function compositeCharacter(
+  poster: Buffer,
+  character: Buffer,
+  position: CharacterPosition,
+  mirror = false,
+): Promise<Buffer> {
+  return composePoster(poster, { character: { image: character, position, mirror } });
 }

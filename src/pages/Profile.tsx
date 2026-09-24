@@ -8,7 +8,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ArrowLeft, Save, Building2, Settings, ImageIcon } from "lucide-react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ApiError, profile as profileApi } from '@/lib/api';
 import { resolveEntitlement, type Entitlement } from "@/lib/plans";
 import { AudienceEditor } from '@/components/AudienceEditor';
@@ -24,7 +24,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { LogoUpload } from "@/components/LogoUpload";
+import { BrandKitCard } from "@/components/BrandKitCard";
 import { PosterCharacterCard } from "@/components/PosterCharacterCard";
 import { CustomImageLibrary } from "@/components/CustomImageLibrary";
 import { AccountSettings } from "@/components/AccountSettings";
@@ -41,6 +41,11 @@ const DAYS = [
 
 export default function Profile() {
   const navigate = useNavigate();
+  // ?tab=images opens "Identité visuelle" directly (link from the dashboard).
+  const [searchParams] = useSearchParams();
+  const initialTab = ["images", "account"].includes(searchParams.get("tab") ?? "")
+    ? (searchParams.get("tab") as string)
+    : "business";
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [analyzingAudiences, setAnalyzingAudiences] = useState(false);
@@ -54,7 +59,6 @@ export default function Profile() {
   const limits = entitlement.limits;
   const [profile, setProfile] = useState({
     company_name: "",
-    logo_url: "",
     poster_footer_text: "",
     sector: "",
     content_types: [] as string[],
@@ -71,10 +75,6 @@ export default function Profile() {
     image_people_type: "african",
     use_custom_images: false,
     custom_image_urls: [] as string[],
-    brand_primary_color: "#8B5CF6",
-    brand_secondary_color: "#3B82F6",
-    brand_accent_color: "#F59E0B",
-    brand_font: "Inter",
     image_style: "photorealistic",
     style_examples: [] as Array<{ label: string; content: string }>,
     audienceSuggestions: [] as AudienceSegment[],
@@ -98,7 +98,6 @@ export default function Profile() {
         setEntitlement(resolveEntitlement(data));
         setProfile({
           company_name: data.company_name || "",
-          logo_url: data.logo_url || "",
           poster_footer_text: data.poster_footer_text || "",
           sector: data.sector || "",
           content_types: data.content_types || [],
@@ -115,10 +114,6 @@ export default function Profile() {
           image_people_type: data.image_people_type || "african",
           use_custom_images: data.use_custom_images || false,
           custom_image_urls: data.custom_image_urls || [],
-          brand_primary_color: data.brand_primary_color || "#8B5CF6",
-          brand_secondary_color: data.brand_secondary_color || "#3B82F6",
-          brand_accent_color: data.brand_accent_color || "#F59E0B",
-          brand_font: data.brand_font || "Inter",
           image_style: data.image_style || "photorealistic",
           style_examples: Array.isArray(data.style_examples)
             ? (data.style_examples as Array<{ label: string; content: string }>)
@@ -196,7 +191,6 @@ export default function Profile() {
     try {
       await profileApi.update({
           company_name: profile.company_name,
-          logo_url: profile.logo_url,
           poster_footer_text: profile.poster_footer_text.trim() || null,
           sector: profile.sector,
           content_types: profile.content_types,
@@ -219,10 +213,8 @@ export default function Profile() {
           image_people_type: profile.image_people_type,
           use_custom_images: profile.use_custom_images,
           custom_image_urls: profile.custom_image_urls,
-          brand_primary_color: profile.brand_primary_color,
-          brand_secondary_color: profile.brand_secondary_color,
-          brand_accent_color: profile.brand_accent_color,
-          brand_font: profile.brand_font,
+          // The logo, palette and typography are saved by BrandKitCard
+          // alone, so this form can never overwrite them with stale values.
           image_style: profile.image_style,
           style_examples: profile.style_examples,
           audience_suggestions: profile.audienceSuggestions,
@@ -307,7 +299,7 @@ export default function Profile() {
       </header>
 
       <div className="container mx-auto max-w-4xl px-4 py-8">
-        <Tabs defaultValue="business" className="space-y-6">
+        <Tabs defaultValue={initialTab} className="space-y-6">
           <TabsList className="glass-card">
             <TabsTrigger value="business">
               <Building2 className="w-4 h-4 mr-2" />
@@ -315,7 +307,7 @@ export default function Profile() {
             </TabsTrigger>
             <TabsTrigger value="images">
               <ImageIcon className="w-4 h-4 mr-2" />
-              Images
+              Identité visuelle
             </TabsTrigger>
             <TabsTrigger value="account">
               <Settings className="w-4 h-4 mr-2" />
@@ -377,13 +369,12 @@ export default function Profile() {
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <Label>Logo de l'entreprise</Label>
-                  <LogoUpload
-                    currentLogoUrl={profile.logo_url}
-                    onUpload={(url) => setProfile({ ...profile, logo_url: url })}
-                    onRemove={() => setProfile({ ...profile, logo_url: "" })}
-                  />
+                <div className="space-y-2 text-sm text-muted-foreground">
+                  <Label>Logo et charte graphique</Label>
+                  <p>
+                    Votre logo, vos couleurs et votre typographie se règlent dans l'onglet
+                    « Identité visuelle ».
+                  </p>
                 </div>
               </div>
 
@@ -691,98 +682,14 @@ export default function Profile() {
             </Card>
           </TabsContent>
 
-          {/* Images Tab */}
+          {/* Visual identity: character, logo, palette, poster style */}
           <TabsContent value="images" className="space-y-6">
             <PosterCharacterCard />
 
+            <BrandKitCard companyName={profile.company_name} />
+
             <Card className="glass-card p-6">
-              <h2 className="text-lg font-semibold mb-4">Identité visuelle (charte graphique)</h2>
-              <p className="text-xs text-muted-foreground mb-4">
-                Ces réglages sont envoyés au générateur d'images pour que toutes vos visuels
-                respectent l'identité de votre marque (couleurs et typographie).
-              </p>
-
-              <div className="grid md:grid-cols-3 gap-4 mb-6">
-                <div className="space-y-2">
-                  <Label>Couleur principale</Label>
-                  <div className="flex gap-2">
-                    <input
-                      type="color"
-                      className="w-12 h-10 rounded border border-border bg-transparent cursor-pointer"
-                      value={profile.brand_primary_color}
-                      onChange={(e) => setProfile({ ...profile, brand_primary_color: e.target.value })}
-                    />
-                    <Input
-                      value={profile.brand_primary_color}
-                      onChange={(e) => setProfile({ ...profile, brand_primary_color: e.target.value })}
-                      placeholder="#8B5CF6"
-                      className="glass-card font-mono"
-                    />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label>Couleur secondaire</Label>
-                  <div className="flex gap-2">
-                    <input
-                      type="color"
-                      className="w-12 h-10 rounded border border-border bg-transparent cursor-pointer"
-                      value={profile.brand_secondary_color}
-                      onChange={(e) => setProfile({ ...profile, brand_secondary_color: e.target.value })}
-                    />
-                    <Input
-                      value={profile.brand_secondary_color}
-                      onChange={(e) => setProfile({ ...profile, brand_secondary_color: e.target.value })}
-                      placeholder="#3B82F6"
-                      className="glass-card font-mono"
-                    />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label>Couleur d'accent</Label>
-                  <div className="flex gap-2">
-                    <input
-                      type="color"
-                      className="w-12 h-10 rounded border border-border bg-transparent cursor-pointer"
-                      value={profile.brand_accent_color}
-                      onChange={(e) => setProfile({ ...profile, brand_accent_color: e.target.value })}
-                    />
-                    <Input
-                      value={profile.brand_accent_color}
-                      onChange={(e) => setProfile({ ...profile, brand_accent_color: e.target.value })}
-                      placeholder="#F59E0B"
-                      className="glass-card font-mono"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label>Typographie</Label>
-                <Select
-                  value={profile.brand_font}
-                  onValueChange={(v) => setProfile({ ...profile, brand_font: v })}
-                >
-                  <SelectTrigger className="glass-card w-full md:w-72">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Inter">Inter (moderne, neutre)</SelectItem>
-                    <SelectItem value="Poppins">Poppins (rond, amical)</SelectItem>
-                    <SelectItem value="Montserrat">Montserrat (élégant)</SelectItem>
-                    <SelectItem value="Playfair Display">Playfair Display (luxe)</SelectItem>
-                    <SelectItem value="Roboto">Roboto (tech)</SelectItem>
-                    <SelectItem value="Lato">Lato (humain)</SelectItem>
-                    <SelectItem value="Bebas Neue">Bebas Neue (impact)</SelectItem>
-                    <SelectItem value="Oswald">Oswald (presse, sport)</SelectItem>
-                    <SelectItem value="Merriweather">Merriweather (lecture)</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  Police de référence utilisée par l'IA quand des éléments typographiques apparaissent dans l'image.
-                </p>
-              </div>
-
-              <div className="mt-6 space-y-3 border-t border-border/50 pt-6">
+              <div className="space-y-3">
                 <div>
                   <Label htmlFor="poster-footer-text">Texte permanent sur vos affiches</Label>
                   <p className="mt-1 text-xs text-muted-foreground">
@@ -799,7 +706,7 @@ export default function Profile() {
                 />
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
                   <span>{profile.poster_footer_text.length} / 120 caractères</span>
-                  <span>Laissez vide pour ne rien afficher.</span>
+                  <span>Laissez vide pour ne rien afficher. Enregistrez avec « Enregistrer » en haut de la page.</span>
                 </div>
                 <div className="overflow-hidden rounded-xl border border-border/60 bg-gradient-to-br from-slate-950 via-slate-900 to-primary/40 p-5 text-white shadow-inner">
                   <p className="mb-12 text-xs font-medium uppercase tracking-[0.2em] text-white/50">Aperçu sur l’affiche</p>
@@ -816,7 +723,10 @@ export default function Profile() {
             </Card>
 
             <Card className="glass-card p-6">
-              <h2 className="text-lg font-semibold mb-4">Style visuel des images IA</h2>
+              <h2 className="text-lg font-semibold mb-1">Style visuel des affiches</h2>
+              <p className="text-xs text-muted-foreground mb-4">
+                Appliqué à chaque affiche. Enregistrez avec « Enregistrer » en haut de la page.
+              </p>
 
               <div className="space-y-2 mb-6">
                 <Label>Style d'image</Label>
@@ -855,7 +765,7 @@ export default function Profile() {
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
-                  Pertinent uniquement pour les styles photo et illustration.
+                  Utilisé quand votre personnage n'est pas sur l'affiche : les personnes dessinées par l'IA seront de ce type.
                 </p>
               </div>
             </Card>

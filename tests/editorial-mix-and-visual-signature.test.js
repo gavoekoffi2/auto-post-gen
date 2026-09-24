@@ -46,8 +46,14 @@ test('generated images complement the post and use a fixed discreet brand signat
   assert.match(generation, /complémentaire au texte/);
   // Bottom-right by default; with a poster character it moves to the top of
   // the free side, but it is always one small signature in a fixed corner.
-  assert.match(generation, /signature de marque discrète dans l'angle \$\{brandCorner\}/);
-  assert.match(generation, /const brandCorner = characterSide \? `supérieur \$\{freeSide\}` : "inférieur droit";/);
+  // Without a logo, the exact name signs the poster in the brand corner; with
+  // one, that corner is kept free and the real logo is applied there.
+  assert.match(generation, /signature de ` \+\s*`marque discrète dans l'angle \$\{brandCorner\}/);
+  assert.match(generation, /Logo : laisse l'angle \$\{brandCorner\} dégagé/);
+  const branding = read("server/src/services/branding.ts");
+  // Bottom-right by default; top of the free side when a character stands.
+  assert.match(branding, /return \{ footer: "bottom-left", brand: "bottom-right" \};/);
+  assert.match(branding, /if \(characterSide === "right"\) return \{ footer: "bottom-left", brand: "top-left" \};/);
   assert.match(generation, /ne transforme pas le visuel en publicité/);
   assert.match(generation, /contentCategory/);
   // The dashboard passes the post's editorial category when it creates the

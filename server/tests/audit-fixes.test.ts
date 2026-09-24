@@ -198,30 +198,66 @@ test("a status URL is only polled on the configured provider's origin", async ()
 
 // ── Posters ────────────────────────────────────────────────────────────
 
-test("the account's logo reaches the renderer as a fetchable capability URL", async () => {
+test("the logo is laid on every poster exactly as uploaded, and the palette is imposed — when switched on", async () => {
+  const { default: sharp } = await import("sharp");
   const account = await register("logo");
-  const logo = await storeBuffer(account.id, Buffer.from(PNG_1PX, "base64"), "image/png");
+  const logoPng = await sharp({ create: { width: 300, height: 150, channels: 4, background: "#e11d48" } }).png().toBuffer();
+  const logo = await storeBuffer(account.id, logoPng, "image/png");
   const [asset] = await query<{ id: string }>(
     `INSERT INTO media_assets (profile_id, kind, storage_path, mime_type, size_bytes)
      VALUES ($1, 'logo', $2, 'image/png', $3) RETURNING id`,
     [account.id, logo.storagePath, logo.sizeBytes],
   );
-  const postId = await newPost(account.id);
-  graphisteBodies.length = 0;
-  graphisteReply = { job_id: "job-logo" };
-  await startPosterJob(poster(account.id, postId, { logoUrl: `/api/media/${asset!.id}/file` }));
-  const sent = graphisteBodies[0]!.logo_urls as string[];
-  assert.match(sent[0]!, /^https:\/\/app\.example\.test\/api\/media\/public\/[0-9a-f]{64}$/);
+  await query(
+    `UPDATE profiles SET logo_url = $2, poster_logo_enabled = true, brand_colors_enabled = true,
+            brand_primary_color = '#112233', brand_secondary_color = '#445566',
+            brand_accent_color = '#778899', brand_font = 'Montserrat', image_style = 'flat_design'
+      WHERE id = $1`,
+    [account.id, `/api/media/${asset!.id}/file`],
+  );
+  const render = await sharp({ create: { width: 1080, height: 1350, channels: 3, background: "#1d4ed8" } }).png().toBuffer();
+  graphisteReply = { status: "completed", image_url: `data:image/png;base64,${render.toString("base64")}` };
 
-  // Without a public address there is nothing fetchable to send: no logo,
-  // rather than a relative path the renderer cannot use.
-  const saved = env.appPublicUrl;
-  env.appPublicUrl = "";
+  const pixelAt = async (url: string, x: number, y: number) => {
+    const id = /\/api\/media\/([0-9a-f-]{36})\/file/.exec(url)![1]!;
+    const row = await queryOne<{ storage_path: string }>(`SELECT storage_path FROM media_assets WHERE id = $1`, [id]);
+    const { data, info } = await sharp(resolveMediaPath(row!.storage_path)).raw().toBuffer({ resolveWithObject: true });
+    const i = (y * info.width + x) * info.channels;
+    return [data[i]!, data[i + 1]!, data[i + 2]!];
+  };
+  const isRed = ([r, g, b]: number[]) => r! > 180 && g! < 80 && b! < 120;
+  const isBlue = ([r, g, b]: number[]) => b! > 150 && r! < 80;
+
   try {
-    await startPosterJob(poster(account.id, postId, { logoUrl: `/api/media/${asset!.id}/file` }));
-    assert.equal("logo_urls" in graphisteBodies[1]!, false);
+    graphisteBodies.length = 0;
+    const job = await startPosterJob(poster(account.id, await newPost(account.id)));
+    assert.equal(job.status, "completed");
+    const body = graphisteBodies[0]!;
+    // The logo file never goes to the renderer (it would redraw it); the
+    // renderer keeps its corner free.
+    assert.equal("logo_urls" in body, false);
+    assert.match(String(body.subject), /Logo : laisse l'angle inférieur droit dégagé/);
+    assert.match(String(body.subject), /couleur principale #112233, couleur secondaire #445566, couleur d'accent #778899/);
+    assert.match(String(body.subject), /police Montserrat/);
+    assert.match(String(body.subject), /Style visuel : flat design vectoriel/);
+    assert.deepEqual(body.colors, ["#112233", "#445566", "#778899"]);
+    // Bottom-right corner of a 1080×1350 poster: the logo, on its plate.
+    assert.ok(isRed(await pixelAt(job.result_url!, 902, 1231)), "the logo is on the poster");
+    assert.ok(isBlue(await pixelAt(job.result_url!, 300, 300)), "the rest of the render is untouched");
+
+    // Switched off: no logo on the poster, the name signs it instead; no palette.
+    await query(
+      `UPDATE profiles SET poster_logo_enabled = false, brand_colors_enabled = false WHERE id = $1`,
+      [account.id],
+    );
+    const plain = await startPosterJob(poster(account.id, await newPost(account.id)));
+    const plainBody = graphisteBodies[1]!;
+    assert.match(String(plainBody.subject), /Identité de marque : écris le nom exact/);
+    assert.doesNotMatch(String(plainBody.subject), /Charte graphique/);
+    assert.equal("colors" in plainBody, false);
+    assert.ok(isBlue(await pixelAt(plain.result_url!, 902, 1231)), "no logo when switched off");
   } finally {
-    env.appPublicUrl = saved;
+    graphisteReply = { job_id: "job-1" };
   }
 });
 
@@ -432,8 +468,8 @@ test("automatic generation counts against the plan's monthly ceiling", async () 
 test("the daily maintenance removes stale sessions, rate events and tokens", async () => {
   const account = await register("prune");
   await query(
-    `INSERT INTO ip_rate_events (bucket, created_at) VALUES ('prune-test', now() - interval '3 days'),
-                                                          ('prune-test', now())`,
+    `INSERT INTO ip_rate_events (bucket, created_at) VALUES ($1, now() - interval '3 days'), ($1, now())`,
+    [`prune-test-${stamp}`],
   );
   await query(
     `INSERT INTO sessions (profile_id, token_hash, expires_at) VALUES ($1, $2, now() - interval '1 day')`,
@@ -441,7 +477,7 @@ test("the daily maintenance removes stale sessions, rate events and tokens", asy
   );
   const removed = await pruneStaleRows();
   assert.ok(removed >= 2);
-  const left = await query(`SELECT 1 FROM ip_rate_events WHERE bucket = 'prune-test'`);
+  const left = await query(`SELECT 1 FROM ip_rate_events WHERE bucket = $1`, [`prune-test-${stamp}`]);
   assert.equal(left.length, 1, "the recent event stays");
   assert.equal(await queryOne(`SELECT 1 FROM sessions WHERE token_hash = $1`, [`expired-${stamp}`]), null);
 });

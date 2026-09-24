@@ -27,7 +27,7 @@ const PLATFORMS_ALLOWED = [
 const POST_COLUMNS = `
   id, title, content, content_category, platforms, status, scheduled_for, published_at,
   image_url, image_status, image_job_id, publish_error, publish_attempts,
-  external_post_ids, created_at
+  external_post_ids, include_character, created_at
 `;
 
 /**
@@ -52,6 +52,7 @@ interface PostRow {
   publish_error: string | null;
   publish_attempts: number;
   external_post_ids: Record<string, string>;
+  include_character: boolean | null;
   created_at: Date;
 }
 
@@ -122,6 +123,15 @@ export async function postRoutes(app: FastifyInstance): Promise<void> {
       assignments.push(`${column} = $${params.length}`);
     };
 
+    // Whether this post's poster shows the account's character. null follows
+    // the account's default (profiles.poster_character_enabled).
+    if ("include_character" in body) {
+      const value = body.include_character;
+      if (value !== null && typeof value !== "boolean") {
+        throw badRequest("« include_character » doit être vrai, faux ou nul.");
+      }
+      set("include_character", value);
+    }
     if ("title" in body) set("title", asString(body.title, "title", { max: 200, optional: true }));
     if ("content" in body) set("content", asString(body.content, "content", { min: 1, max: 10000 }));
     // Regenerated text can change the post's editorial category; left stale,

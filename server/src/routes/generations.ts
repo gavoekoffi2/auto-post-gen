@@ -102,13 +102,10 @@ export async function generationRoutes(app: FastifyInstance): Promise<void> {
       sector: string | null;
       description: string | null;
       poster_footer_text: string | null;
-      brand_primary_color: string | null;
-      brand_secondary_color: string | null;
-      brand_accent_color: string | null;
-      logo_url: string | null;
     }>(
-      `SELECT company_name, sector, description, poster_footer_text,
-              brand_primary_color, brand_secondary_color, brand_accent_color, logo_url
+      // The visual identity (character, logo, palette) is read by
+      // startPosterJob itself, the same way for every caller.
+      `SELECT company_name, sector, description, poster_footer_text
          FROM profiles WHERE id = $1`,
       [ctx.profileId],
     );
@@ -153,12 +150,6 @@ export async function generationRoutes(app: FastifyInstance): Promise<void> {
         sector: sectorLabel(profile.sector),
         description: profile.description ?? "",
         footerText: profile.poster_footer_text ?? "",
-        colors: [
-          profile.brand_primary_color,
-          profile.brand_secondary_color,
-          profile.brand_accent_color,
-        ].filter((c): c is string => Boolean(c && /^#[0-9a-f]{6}$/i.test(c))),
-        logoUrl: profile.logo_url,
       });
     } catch (err) {
       await releaseQuota(ctx.profileId, "generate-image");

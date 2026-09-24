@@ -10,6 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { media, profile as profileApi } from "@/lib/api";
 import { Upload, X } from "lucide-react";
+import { Link } from "react-router-dom";
 
 type UserProfileLike = {
   sector?: string | null;
@@ -42,8 +43,6 @@ export default function SettingsDialog({ isOpen, onOpenChange, userProfile, onPr
     styleExample: "",
     platforms: [] as string[],
     useStyleExample: false,
-    useCustomVisuals: false,
-    logoUrl: "",
     useCustomImages: false,
     customImageUrls: [] as string[],
   });
@@ -59,8 +58,6 @@ export default function SettingsDialog({ isOpen, onOpenChange, userProfile, onPr
         styleExample: userProfile.style_example || "",
         platforms: userProfile.platforms || [],
         useStyleExample: !!userProfile.style_example,
-        useCustomVisuals: !!userProfile.logo_url,
-        logoUrl: userProfile.logo_url || "",
         useCustomImages: !!userProfile.use_custom_images,
         customImageUrls: userProfile.custom_image_urls || [],
       });
@@ -90,7 +87,9 @@ export default function SettingsDialog({ isOpen, onOpenChange, userProfile, onPr
           description: formData.description,
           style_example: formData.useStyleExample ? formData.styleExample : null,
           platforms: formData.platforms.length > 0 ? formData.platforms : ['Instagram'],
-          logo_url: formData.useCustomVisuals ? formData.logoUrl : null,
+          // The logo is not written from here: it lives in Profil → Identité
+          // visuelle, with its own "show on every poster" switch. This dialog
+          // used to set it to null whenever its old toggle was off.
           use_custom_images: formData.useCustomImages,
           // Never erase the uploaded library when the toggle is off — just stop
           // using it (toggling off previously wiped custom_image_urls).
@@ -105,33 +104,6 @@ export default function SettingsDialog({ isOpen, onOpenChange, userProfile, onPr
       toast.error(message);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    try {
-      // Checked here for an immediate message; the API re-checks both, since a
-      // browser-side check is a convenience and never a guarantee.
-      if (!file.type.startsWith("image/")) {
-        toast.error("Veuillez sélectionner une image");
-        return;
-      }
-      if (file.size > 5 * 1024 * 1024) {
-        toast.error("L'image ne doit pas dépasser 5 Mo");
-        return;
-      }
-
-      // The API derives the storage path from the session, so the browser
-      // cannot write into another account's media.
-      const asset = await media.upload(file, "logo");
-      setFormData({ ...formData, logoUrl: asset.url });
-      toast.success("Logo uploadé !");
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : "Erreur lors de l'upload du logo";
-      toast.error(message);
     }
   };
 
@@ -325,57 +297,18 @@ export default function SettingsDialog({ isOpen, onOpenChange, userProfile, onPr
             )}
           </div>
 
-          {/* Visuels personnalisés */}
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-semibold text-lg">Visuels personnalisés (optionnel)</h3>
-              <div className="flex items-center space-x-2">
-                <Switch
-                  id="use-visuals"
-                  checked={formData.useCustomVisuals}
-                  onCheckedChange={(checked) => setFormData({ ...formData, useCustomVisuals: checked })}
-                />
-                <Label htmlFor="use-visuals" className="cursor-pointer">Activer</Label>
-              </div>
-            </div>
-            
-            {formData.useCustomVisuals && (
-              <div className="space-y-2">
-                <Label htmlFor="logo">Logo ou visuel principal</Label>
-                {formData.logoUrl ? (
-                  <div className="relative">
-                    <img src={formData.logoUrl} alt="Logo" className="w-32 h-32 object-cover rounded-lg" />
-                    <Button
-                      size="icon"
-                      variant="destructive"
-                      className="absolute -top-2 -right-2"
-                      onClick={() => setFormData({ ...formData, logoUrl: "" })}
-                    >
-                      <X className="w-4 h-4" />
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="border-2 border-dashed border-border rounded-lg p-6 text-center">
-                    <input
-                      type="file"
-                      id="logo-upload"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={handleLogoUpload}
-                    />
-                    <label htmlFor="logo-upload" className="cursor-pointer">
-                      <Upload className="w-8 h-8 mx-auto mb-2 text-muted-foreground" />
-                      <p className="text-sm text-muted-foreground">
-                        Cliquez pour uploader votre logo
-                      </p>
-                    </label>
-                  </div>
-                )}
-                <p className="text-xs text-muted-foreground">
-                  L'IA pourra utiliser ce visuel dans vos posts
-                </p>
-              </div>
-            )}
+          {/* Identité visuelle */}
+          <div className="space-y-2 rounded-lg border border-border/60 p-4">
+            <h3 className="font-semibold text-lg">Logo, personnage et charte graphique</h3>
+            <p className="text-sm text-muted-foreground">
+              Votre logo, vos photos pour les affiches, vos couleurs et votre typographie se règlent
+              dans votre profil.
+            </p>
+            <Button asChild variant="outline" size="sm">
+              <Link to="/profile?tab=images" onClick={() => onOpenChange(false)}>
+                Ouvrir « Identité visuelle »
+              </Link>
+            </Button>
           </div>
 
           {/* Bibliothèque d'images personnalisées */}

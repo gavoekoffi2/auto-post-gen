@@ -68,6 +68,10 @@ const WRITABLE = {
   // confirmation that goes with it, only change through
   // POST/DELETE /profile/poster-character.
   poster_character_enabled: (v: unknown) => asBoolean(v, "poster_character_enabled", false),
+  // "Show my logo on every poster" and "apply my brand colours to every
+  // poster" — both applied by the API to every render.
+  poster_logo_enabled: (v: unknown) => asBoolean(v, "poster_logo_enabled", true),
+  brand_colors_enabled: (v: unknown) => asBoolean(v, "brand_colors_enabled", true),
   poster_character_position: (v: unknown) => {
     const side = asString(v, "poster_character_position", { max: 5 });
     if (side !== "left" && side !== "right") throw badRequest("Côté du personnage inconnu.");
@@ -121,7 +125,7 @@ const SELECT_COLUMNS = `
   plan, leader_photo_consent_at,
   subscription_status, trial_plan, trial_ends_at, current_period_ends_at,
   poster_character_asset_id, poster_character_enabled, poster_character_position,
-  poster_character_rights_at
+  poster_character_rights_at, poster_logo_enabled, brand_colors_enabled
 `;
 
 export async function loadProfile(profileId: string) {
@@ -130,10 +134,38 @@ export async function loadProfile(profileId: string) {
     [profileId],
   );
   if (!row) throw notFound("Profil introuvable.");
-  // The dashboard shows the cut-out through the ordinary, session-checked
-  // media route; the asset id itself is not something it needs.
-  const { poster_character_asset_id: assetId, ...rest } = row;
-  return { ...rest, poster_character_url: assetId ? mediaUrl(assetId) : null };
+  // The dashboard shows the cut-outs through the ordinary, session-checked
+  // media route; the asset ids themselves are not something it needs.
+  const { poster_character_asset_id: _legacyAssetId, ...rest } = row;
+  const poses = await query<{
+    id: string;
+    asset_id: string;
+    gesture: string;
+    facing: string;
+    width: number | null;
+    height: number | null;
+  }>(
+    `SELECT x.id, x.asset_id, x.gesture, x.facing, x.width, x.height
+       FROM poster_character_poses x
+       JOIN media_assets m ON m.id = x.asset_id AND m.profile_id = x.profile_id
+      WHERE x.profile_id = $1
+      ORDER BY x.created_at ASC`,
+    [profileId],
+  );
+  const posterCharacterPoses = poses.map((pose) => ({
+    id: pose.id,
+    url: mediaUrl(pose.asset_id),
+    gesture: pose.gesture,
+    facing: pose.facing,
+    width: pose.width,
+    height: pose.height,
+  }));
+  return {
+    ...rest,
+    poster_character_poses: posterCharacterPoses,
+    // The first pose, for anything that shows a single picture.
+    poster_character_url: posterCharacterPoses[0]?.url ?? null,
+  };
 }
 
 const AUDIENCE_HOURLY_MAX = 10;

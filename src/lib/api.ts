@@ -20,6 +20,7 @@
 //     status code or an unhandled rejection.
 
 import type { BillingPeriod, Entitlement, PaymentMethod, PlanId } from "./plans";
+import type { Facing, Gesture } from "./poses";
 
 /** Error carrying the server's message, its HTTP status and an optional code. */
 export class ApiError extends Error {
@@ -239,8 +240,15 @@ export interface Profile {
   trial_plan: string;
   trial_ends_at: string | null;
   current_period_ends_at: string | null;
-  /** The cut-out laid on every poster, served by the API; null when none. */
+  /** The first pose, for anything that shows a single picture; null when none. */
   poster_character_url: string | null;
+  /** The same person in different gestures; each poster gets the one that suits it. */
+  poster_character_poses: CharacterPose[];
+  /** "Show my logo on every poster". */
+  poster_logo_enabled: boolean;
+  /** "Apply my brand colours to every poster". */
+  brand_colors_enabled: boolean;
+  /** Default for new posters; each post can override it (Post.include_character). */
   poster_character_enabled: boolean;
   poster_character_position: "left" | "right";
   /** When the account confirmed its right to use the image. */
@@ -262,6 +270,8 @@ export interface Post {
   publish_error: string | null;
   publish_attempts: number;
   external_post_ids: Record<string, string>;
+  /** The character on this post's poster; null follows the account's default. */
+  include_character: boolean | null;
   created_at: string;
 }
 
@@ -414,17 +424,29 @@ export const profile = {
 // is never sent to the poster provider.
 // ---------------------------------------------------------------------------
 
+export interface CharacterPose {
+  id: string;
+  url: string;
+  gesture: Gesture;
+  facing: Facing;
+  width: number | null;
+  height: number | null;
+}
+
 export interface CharacterUploadResult {
   profile: Profile;
+  pose: { id: string; gesture: Gesture; facing: Facing };
   character: { width: number; height: number; cutOut: boolean; lowResolution: boolean };
 }
 
 export const posterCharacter = {
-  /** Cutting a photo out takes a few seconds; the ceiling allows for a queue. */
-  upload: (file: File, rightsConfirmed: boolean) => {
+  /** Adds a pose. Cutting a photo out takes a few seconds; the ceiling allows for a queue. */
+  upload: (file: File, rightsConfirmed: boolean, gesture: Gesture = "neutre", facing: Facing = "front") => {
     const form = new FormData();
-    // The confirmation travels before the file so the server reads it first.
+    // The fields travel before the file so the server reads them first.
     form.append("rights_confirmed", rightsConfirmed ? "true" : "false");
+    form.append("gesture", gesture);
+    form.append("facing", facing);
     form.append("file", file);
     return request<CharacterUploadResult>("/profile/poster-character", {
       method: "POST",
@@ -432,6 +454,16 @@ export const posterCharacter = {
       timeoutMs: 180_000,
     });
   },
+  updatePose: (id: string, patch: { gesture?: Gesture; facing?: Facing }) =>
+    request<{ profile: Profile }>(`/profile/poster-character/poses/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: patch,
+    }),
+  removePose: (id: string) =>
+    request<{ profile: Profile }>(`/profile/poster-character/poses/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
+  /** Removes every pose. */
   remove: () => request<{ profile: Profile }>("/profile/poster-character", { method: "DELETE" }),
 };
 
@@ -455,7 +487,10 @@ export const posts = {
     patch: Partial<
       // No "status": the server never takes it from a PATCH (validating and
       // publishing have their own routes).
-      Pick<Post, "title" | "content" | "content_category" | "platforms" | "scheduled_for" | "image_url">
+      Pick<
+        Post,
+        "title" | "content" | "content_category" | "platforms" | "scheduled_for" | "image_url" | "include_character"
+      >
     >,
   ) => request<Post>(`/posts/${encodeURIComponent(id)}`, { method: "PATCH", body: patch }),
 
