@@ -12,6 +12,52 @@
 
 ---
 
+## 00000. Identité visuelle sur chaque affiche : personnage adapté au message, logo, charte
+
+Branche `claude/brand-kit-poses-k4p8`, créée depuis
+`claude/poster-character-audit-h7n3` @ `51e39908d56903accfb791fab899990a03e36b13`
+(audit de pré-production, §0000, inclus).
+
+### Ce qui change pour l'utilisateur (Profil → onglet « Identité visuelle »)
+
+- **Son personnage, avec des gestes adaptés au message.** L'utilisateur ajoute
+  jusqu'à 8 photos de lui dans des gestes différents (présente, pointe, pouce
+  levé, explique, réfléchit, salue, célèbre, bras croisés, de face). Pour
+  chaque affiche, l'API choisit le geste qui correspond au message (Claude si
+  `OPENROUTER_API_KEY` est configurée, sinon une règle déterministe sur les
+  mots et la catégorie du post), fait composer la scène par Graphiste autour
+  de ce geste, puis pose **sa vraie photo** détourée. La photo n'est jamais
+  confiée au moteur : une photo donnée en « référence » revient avec le
+  visage de quelqu'un d'autre. C'est ce que l'utilisateur a constaté.
+  Rotation entre plusieurs photos d'un même geste ; une pose tournée vers
+  l'extérieur est retournée pour regarder le message.
+- **Par publication** : interrupteur « Mon personnage sur cette affiche » sur
+  chaque post du tableau de bord, en plus du réglage par défaut « Sur chaque
+  nouvelle affiche ». La génération hebdomadaire suit le même réglage.
+- **Logo** : « Afficher mon logo sur chaque affiche ». Le fichier du logo est
+  apposé tel quel dans un angle (plaque claire, ou sombre pour un logo
+  blanc), jamais redessiné ; l'angle est laissé libre dans la consigne.
+  Désactivé : le nom de l'entreprise signe l'affiche.
+- **Charte graphique** : couleurs principale, secondaire et d'accent,
+  typographie, avec « Appliquer à chaque affiche ». Imposées dans la consigne
+  (« Charte graphique à respecter strictement… ») et envoyées dans `colors`.
+- **Réglages qui ne servaient à rien, désormais utilisés** : la police, le
+  « Style d'image » et le « Type de personnes » étaient enregistrés mais
+  jamais transmis au générateur.
+- La vignette du tableau de bord montre l'affiche entière (elle en coupait le
+  bas, donc le personnage et le logo).
+
+### Ce que le déploiement doit savoir
+
+| | |
+|---|---|
+| **Migration** | `0008_brand_kit_and_poses.sql` — additive et idempotente : table `poster_character_poses` (FK `ON DELETE CASCADE`, `CHECK` sur le geste et l'orientation), colonnes `profiles.poster_logo_enabled` et `brand_colors_enabled` (`DEFAULT true` : le logo et les couleurs restent appliqués comme avant), `posts.include_character` (nullable = suit le réglage du compte), `generation_jobs.logo_overlay`. L'image unique de 0006 devient la première pose (une seule fois, même rejouée). Rien de supprimé. 9 migrations au total. |
+| **Variables / nginx / Compose / Dockerfile** | inchangés. |
+| **Retour arrière** | l'image précédente ignore la table et les colonnes ajoutées ; revenir à l'image suffit. |
+| **Routes** | `POST /api/profile/poster-character` ajoute une pose (champs `rights_confirmed`, `gesture`, `facing`, `file` ; 8 au maximum) ; `PATCH` / `DELETE /api/profile/poster-character/poses/:id` ; `DELETE /api/profile/poster-character` retire toutes les poses ; `PATCH /api/profile` accepte `poster_logo_enabled`, `brand_colors_enabled` ; `PATCH /api/posts/:id` accepte `include_character` (vrai, faux ou `null`). |
+
+---
+
 ## 0000. Audit de pré-production (corrections uniquement)
 
 Branche `claude/poster-character-audit-h7n3`, créée depuis
@@ -343,10 +389,11 @@ hebdomadaires, changement d'email). Voir §9.
 
 | | |
 |---|---|
-| **Branche** | `claude/poster-character-audit-h7n3` |
-| **SHA du code** | `d3cc7a0ef6065910305db24aca4cdbf9806e0527` |
+| **Branche** | `claude/brand-kit-poses-k4p8` |
+| **SHA du code** | `__CODE_SHA__` |
 | **SHA à déployer** | la pointe de la branche (ce document est le seul commit au-dessus du code ; `git log -1 --format=%H`) |
-| **Base** | `claude/poster-character-q2w6` @ `bfce311933fc72146c426bc6a17c06ce28481f1a` (personnage sur les affiches, §000) |
+| **Base** | `claude/poster-character-audit-h7n3` @ `51e39908d56903accfb791fab899990a03e36b13` (audit de pré-production, §0000) |
+| **Base précédente** | `claude/poster-character-q2w6` @ `bfce311933fc72146c426bc6a17c06ce28481f1a` (personnage sur les affiches, §000) |
 | **Base de la base** | `claude/selfhosted-provider-compat-r5k8` @ `1218ee09feac7d69be203e0a7da1a3bc81b7e67b` (correctif `provider` + référence unique, §00) |
 | **Base précédente** | `claude/selfhosted-subscriptions-release-q7t4` @ `41d70d40b77ed561fa5fd96f4175d0d05e34bcb4` (bloquée par la répétition : `generation_jobs.provider`) |
 | **Base de la base** | `claude/legacy-status-compat-9m2x` @ `783938efbf206055bf6cf67d6a684ef11656fc94` |
@@ -355,10 +402,10 @@ hebdomadaires, changement d'email). Voir §9.
 
 ```bash
 git fetch origin
-# ce qu'apporte cette livraison (audit de pré-production)
-git diff --stat origin/claude/poster-character-q2w6..origin/claude/poster-character-audit-h7n3
+# ce qu'apporte cette livraison (identité visuelle)
+git diff --stat origin/claude/poster-character-audit-h7n3..origin/claude/brand-kit-poses-k4p8
 # tout ce qui s'ajoute à la livraison auto-hébergée précédente
-git diff --stat origin/claude/legacy-status-compat-9m2x..origin/claude/poster-character-audit-h7n3
+git diff --stat origin/claude/legacy-status-compat-9m2x..origin/claude/brand-kit-poses-k4p8
 ```
 
 ---
@@ -508,7 +555,28 @@ Vérifié aussi à la main, contre une base héritée migrée **portant la contr
 
 ---
 
-### 4 quater. Résultats de CETTE livraison (audit de pré-production)
+### 4 quinquies. Résultats de CETTE livraison (identité visuelle)
+
+Bac à sable, PostgreSQL 16 local, bases jetables `psa_*` uniquement, Node 22 :
+
+| Vérification | Résultat |
+|---|---|
+| `server`: `npm ci` · `npm run build` · `npm run typecheck` · `npm run fetch-model` | OK · OK · OK · modèle présent et vérifié |
+| `server`: `npm test` (base neuve migrée) | `# tests 96  # pass 96  # fail 0` (91 → 96 : `tests/brand-kit.test.ts` ; `character.test.ts` et `audit-fixes.test.ts` étendus — poses, choix par post, logo vérifié au pixel sur l'affiche finale, charte dans la consigne) |
+| dépôt : `npm ci` · `npm test` | OK · `# tests 216  # pass 216  # fail 0` (209 → 216) |
+| dépôt : `npm run lint` | `0 errors, 8 warnings` — les 8 warnings préexistants |
+| dépôt : `npm run typecheck` · `npm run build` | OK · OK |
+| Garde CI anti-Supabase · `docker compose … config` · `nginx -t` | OK · OK · OK |
+| **Migration vierge** | `Applied 9 migration(s).` ; 2 rejeux complets sans erreur ; relance : `Schema already up to date.` |
+| **Migration legacy** (fixture du schéma réel) | `Applied 9 migration(s).` puis `Schema already up to date.` |
+| **Dry-run** (même fixture) | `DRY RUN OK — 9 migration(s) would apply cleanly.` · `Rolled back: the database is unchanged.` · schéma identique · aucune table laissée |
+| Navigateur réel + faux Graphiste local | 3 poses envoyées depuis l'onglet (geste suggéré à chaque fois) ; logo et charte enregistrés ; 3 affiches : l'offre avec la pose « présente », l'astuce avec « explique », la 3ᵉ sans personnage (interrupteur du post) ; logo en haut à gauche quand le personnage est à droite, en bas à droite sans personnage ; couleurs de la charte transmises ; vignettes entières |
+
+Non exécuté ici : `docker build` (pas de démon Docker), la répétition sur la
+**copie réelle** (§6.0), un rendu avec le vrai Graphiste GPT (clé réelle
+interdite dans le bac à sable).
+
+### 4 quater. Résultats de la livraison précédente (audit de pré-production)
 
 Bac à sable, PostgreSQL 16 local, bases jetables `psa_*` uniquement, Node 22 :
 

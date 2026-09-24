@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import {
   ApiError,
@@ -47,10 +48,14 @@ type Post = {
   image_status_url?: string | null;
   status: PostStatus;
   publish_error?: string | null;
+  /** The character on this post's poster; null/undefined follows the account's default. */
+  include_character?: boolean | null;
 };
 
 type UserProfile = SubscriptionFields & {
   id?: string;
+  poster_character_enabled?: boolean;
+  poster_character_poses?: unknown[];
   description?: string | null;
   company_name?: string | null;
   platforms?: string[] | null;
@@ -593,6 +598,32 @@ export default function Dashboard() {
     }
   };
 
+  const hasCharacter = (userProfile?.poster_character_poses?.length ?? 0) > 0;
+  const characterOn = (post: Post) => post.include_character ?? !!userProfile?.poster_character_enabled;
+
+  // Per post: the character on this poster or not, whatever the default.
+  const handleToggleCharacter = async (post: Post, include: boolean) => {
+    const previous = post.include_character ?? null;
+    setPosts((prev) => prev.map((p) => (p.id === post.id ? { ...p, include_character: include } : p)));
+    try {
+      await postsApi.update(post.id, { include_character: include });
+      const updated = { ...post, include_character: include };
+      toast.success(
+        include ? "Votre personnage sera sur cette affiche." : "Cette affiche sera sans votre personnage.",
+        post.image_url || post.image_status
+          ? {
+              description: "Régénérez l'affiche pour appliquer le changement.",
+              action: { label: "Régénérer", onClick: () => void handleRegenerateImage(updated) },
+              duration: 10000,
+            }
+          : undefined,
+      );
+    } catch (error) {
+      setPosts((prev) => prev.map((p) => (p.id === post.id ? { ...p, include_character: previous } : p)));
+      toast.error(error instanceof Error ? error.message : "Le réglage n'a pas pu être enregistré.");
+    }
+  };
+
   const handleRegenerateContent = async (post: Post) => {
     if (regeneratingContentIds.has(post.id)) return;
     setRegeneratingContentIds((prev) => new Set(prev).add(post.id));
@@ -906,7 +937,7 @@ export default function Dashboard() {
                          <img
                            src={post.image_url}
                            alt="Post illustration"
-                           className="w-full h-48 object-cover"
+                           className="w-full h-80 object-contain"
                            onError={(e) => {
                              const img = e.currentTarget;
                              img.style.display = "none";
@@ -937,6 +968,19 @@ export default function Dashboard() {
                            <span className="text-xs">Générer l'image</span>
                          </Button>
                        </div>
+                     )}
+                     {hasCharacter && post.status !== "published" && (
+                       <label className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-border/60 px-3 py-2 text-sm">
+                         <span className="flex items-center gap-2">
+                           <User className="w-4 h-4 text-primary" />
+                           Mon personnage sur cette affiche
+                         </span>
+                         <Switch
+                           checked={characterOn(post)}
+                           onCheckedChange={(checked) => void handleToggleCharacter(post, checked)}
+                           aria-label="Mon personnage sur cette affiche"
+                         />
+                       </label>
                      )}
                      {post.status !== "published" && formatPublishError(post.publish_error) && (
                        <p className="text-xs text-destructive mb-3 break-words">

@@ -36,7 +36,7 @@ export const LogoUpload = ({ currentLogoUrl, onUpload, onRemove }: LogoUploadPro
       // its own account's media.
       const asset = await media.upload(file, "logo");
       onUpload(asset.url);
-      toast.success("Logo téléchargé avec succès");
+      toast.success("Logo envoyé.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Erreur lors du téléchargement";
       toast.error(message);
@@ -52,7 +52,7 @@ export const LogoUpload = ({ currentLogoUrl, onUpload, onRemove }: LogoUploadPro
           <img
             src={currentLogoUrl}
             alt="Logo entreprise"
-            className="w-24 h-24 object-contain rounded-lg border border-border bg-muted"
+            className="w-40 h-24 object-contain p-1 rounded-lg border border-border bg-muted"
           />
           <Button
             size="icon"
@@ -72,7 +72,7 @@ export const LogoUpload = ({ currentLogoUrl, onUpload, onRemove }: LogoUploadPro
       <div>
         <input
           type="file"
-          accept="image/*"
+          accept="image/png,image/jpeg,image/webp"
           onChange={handleUpload}
           className="hidden"
           id="logo-upload"
@@ -90,7 +90,7 @@ export const LogoUpload = ({ currentLogoUrl, onUpload, onRemove }: LogoUploadPro
               {uploading ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Téléchargement...
+                  Envoi…
                 </>
               ) : (
                 <>

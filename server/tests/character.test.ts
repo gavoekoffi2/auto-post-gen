@@ -216,29 +216,61 @@ test("the upload requires the rights confirmation, then stores and switches the 
   const refused = await upload({}, photo);
   assert.equal(refused.status, 400);
   assert.equal(refused.body.code, "rights_required");
+  assert.equal((await upload({ rights_confirmed: "true", gesture: "danse" }, photo)).status, 400);
 
-  const ok = await upload({ rights_confirmed: "true" }, photo);
+  const ok = await upload({ rights_confirmed: "true", gesture: "pointe", facing: "right" }, photo);
   assert.equal(ok.status, 201, JSON.stringify(ok.body));
   assert.equal(ok.body.character.cutOut, true);
+  assert.equal(ok.body.pose.gesture, "pointe");
   assert.equal(ok.body.profile.poster_character_enabled, true);
   assert.equal(ok.body.profile.poster_character_position, "right");
   assert.match(ok.body.profile.poster_character_url, /^\/api\/media\/[0-9a-f-]{36}\/file$/);
   assert.ok(ok.body.profile.poster_character_rights_at);
   assert.equal("poster_character_asset_id" in ok.body.profile, false);
+  assert.equal(ok.body.profile.poster_character_poses.length, 1);
+  assert.deepEqual(
+    { gesture: ok.body.profile.poster_character_poses[0].gesture, facing: ok.body.profile.poster_character_poses[0].facing },
+    { gesture: "pointe", facing: "right" },
+  );
 
   // What is stored is the PNG this server produced, not the upload.
   const asset = await queryOne<{ mime_type: string; storage_path: string }>(
-    `SELECT m.mime_type, m.storage_path FROM profiles p JOIN media_assets m ON m.id = p.poster_character_asset_id
-      WHERE p.id = $1`,
+    `SELECT m.mime_type, m.storage_path FROM poster_character_poses x JOIN media_assets m ON m.id = x.asset_id
+      WHERE x.profile_id = $1`,
     [account.id],
   );
   assert.equal(asset!.mime_type, "image/png");
   assert.ok(existsSync(resolveMediaPath(asset!.storage_path)));
 
-  // Replacing it removes the previous file and row.
-  const replaced = await upload({ rights_confirmed: "true" }, photo);
-  assert.equal(replaced.status, 201);
-  assert.equal(existsSync(resolveMediaPath(asset!.storage_path)), false, "the previous cut-out is deleted");
+  // A second photo is a second pose, not a replacement.
+  const second = await upload({ rights_confirmed: "true", gesture: "presente" }, photo);
+  assert.equal(second.status, 201, JSON.stringify(second.body));
+  const poses = second.body.profile.poster_character_poses as Json[];
+  assert.deepEqual(poses.map((p) => p.gesture), ["pointe", "presente"]);
+  assert.ok(existsSync(resolveMediaPath(asset!.storage_path)), "the first pose is kept");
+
+  // A pose's gesture can be corrected; a pose can be removed, file included.
+  const patched = await app.inject({
+    method: "PATCH",
+    url: `/api/profile/poster-character/poses/${poses[1]!.id}`,
+    headers: { cookie: account.cookie },
+    payload: { gesture: "pouce", facing: "left" },
+  });
+  assert.equal(patched.statusCode, 200, patched.body);
+  assert.equal((patched.json() as Json).profile.poster_character_poses[1].gesture, "pouce");
+  const secondFile = await queryOne<{ storage_path: string }>(
+    `SELECT m.storage_path FROM poster_character_poses x JOIN media_assets m ON m.id = x.asset_id WHERE x.id = $1`,
+    [poses[1]!.id],
+  );
+  const removed = await app.inject({
+    method: "DELETE",
+    url: `/api/profile/poster-character/poses/${poses[1]!.id}`,
+    headers: { cookie: account.cookie },
+  });
+  assert.equal(removed.statusCode, 200, removed.body);
+  assert.equal((removed.json() as Json).profile.poster_character_poses.length, 1);
+  assert.equal(existsSync(resolveMediaPath(secondFile!.storage_path)), false);
+  assert.equal((removed.json() as Json).profile.poster_character_enabled, true, "one pose left: still on");
 });
 
 test("the upload ceiling is the route's 12 MB, not the 5 MB of an ordinary upload", async () => {
@@ -292,6 +324,8 @@ test("a render started with a character: the provider keeps that side free and n
   assert.equal(received.length, 1);
   const sent = JSON.stringify(received[0]);
   assert.match(String(received[0]!.subject), /Zone réservée[\s\S]*côté gauche/);
+  // The scene is composed around the gesture of the pose that will be laid on.
+  assert.match(String(received[0]!.subject), /pointe du doigt vers le centre/);
   // The layout travels; the image does not — in no field, in no form.
   assert.doesNotMatch(sent, /\/api\/media\//);
   assert.doesNotMatch(sent, /reference_image|base64|data:image/);
@@ -300,6 +334,8 @@ test("a render started with a character: the provider keeps that side free and n
     [job.id],
   );
   assert.equal(snapshot!.character_overlay.position, "left");
+  assert.equal(snapshot!.character_overlay.gesture, "pointe");
+  assert.equal(snapshot!.character_overlay.facing, "right");
   assert.match(snapshot!.character_overlay.assetId, /^[0-9a-f-]{36}$/);
 
   // Switched off: nothing reserved, nothing snapshotted.
@@ -314,7 +350,22 @@ test("a render started with a character: the provider keeps that side free and n
     [plain.id],
   );
   assert.equal(none!.character_overlay, null);
+
+  // A post can override the account's default, both ways.
+  await query(`UPDATE posts SET include_character = true WHERE id = $1`, [post!.id]);
+  await startPosterJob({
+    profileId: account.id, postId: post!.id, postContent: "x", contentCategory: "value",
+    platforms: ["Instagram"], companyName: "B", sector: "", description: "", footerText: "",
+  });
+  assert.match(String(received[2]!.subject), /Zone réservée/, "on for this post although off by default");
   await query(`UPDATE profiles SET poster_character_enabled = true WHERE id = $1`, [account.id]);
+  await query(`UPDATE posts SET include_character = false WHERE id = $1`, [post!.id]);
+  await startPosterJob({
+    profileId: account.id, postId: post!.id, postContent: "x", contentCategory: "value",
+    platforms: ["Instagram"], companyName: "B", sector: "", description: "", footerText: "",
+  });
+  assert.doesNotMatch(String(received[3]!.subject), /Zone réservée/, "off for this post although on by default");
+  await query(`UPDATE posts SET include_character = NULL WHERE id = $1`, [post!.id]);
 
   // Completing it lays the character on and replaces the provider's file.
   const rendered = await storeBuffer(
@@ -390,14 +441,16 @@ test("a missing character never costs the paid render", async () => {
 });
 
 test("removing the character deletes the file and switches the feature off", async () => {
-  const asset = await queryOne<{ storage_path: string }>(
-    `SELECT m.storage_path FROM profiles p JOIN media_assets m ON m.id = p.poster_character_asset_id WHERE p.id = $1`,
+  const assets = await query<{ storage_path: string }>(
+    `SELECT m.storage_path FROM poster_character_poses x JOIN media_assets m ON m.id = x.asset_id WHERE x.profile_id = $1`,
     [account.id],
   );
+  assert.ok(assets.length > 0);
   const res = await app.inject({ method: "DELETE", url: "/api/profile/poster-character", headers: { cookie: account.cookie } });
   assert.equal(res.statusCode, 200, res.body);
   const profile = (res.json() as Json).profile;
   assert.equal(profile.poster_character_url, null);
+  assert.equal(profile.poster_character_poses.length, 0);
   assert.equal(profile.poster_character_enabled, false);
-  assert.equal(existsSync(resolveMediaPath(asset!.storage_path)), false);
+  for (const asset of assets) assert.equal(existsSync(resolveMediaPath(asset.storage_path)), false);
 });

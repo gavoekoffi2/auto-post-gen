@@ -79,17 +79,12 @@ interface WeeklyProfile {
   use_custom_images: boolean;
   custom_image_urls: string[] | null;
   poster_footer_text: string | null;
-  brand_primary_color: string | null;
-  brand_secondary_color: string | null;
-  brand_accent_color: string | null;
-  logo_url: string | null;
 }
 
 const PROFILE_COLUMNS = `
   id, company_name, sector, description, tone, platforms, preferred_days, preferred_time,
   post_frequency, promo_posts_per_week, research_posts_per_week, target_audiences,
-  auto_publish, use_custom_images, custom_image_urls, poster_footer_text,
-  brand_primary_color, brand_secondary_color, brand_accent_color, logo_url
+  auto_publish, use_custom_images, custom_image_urls, poster_footer_text
 `;
 
 export { buildEditorialPlan, slotInstant } from "../shared/weeklyPlan.js";
@@ -302,12 +297,6 @@ export async function generateWeekFor(profileId: string): Promise<WeeklyResult> 
           sector,
           description,
           footerText: profile.poster_footer_text || "",
-          colors: [
-            profile.brand_primary_color,
-            profile.brand_secondary_color,
-            profile.brand_accent_color,
-          ].filter((c): c is string => Boolean(c && /^#[0-9a-f]{6}$/i.test(c))),
-          logoUrl: profile.logo_url,
         });
         // Refused before any render: not a generation, give it back.
         if (job.status === "failed") await releaseQuota(profileId, "generate-image");

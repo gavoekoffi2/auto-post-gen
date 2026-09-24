@@ -34,7 +34,7 @@ test('an SVG is never accepted as a finished poster, even from the provider', ()
 });
 
 test('the request sends the documented v1.1 contract fields', () => {
-  assert.match(generation, /subject: buildSubject\(input, spec, character\?\.position \?\? null\)/);
+  assert.match(generation, /subject: buildSubject\(input, spec, branding\)/);
   assert.match(generation, /title:/);
   assert.match(generation, /aspect_ratio: aspectRatio\(spec\)/);
   assert.match(generation, /resolution: "2K"/);
@@ -43,11 +43,11 @@ test('the request sends the documented v1.1 contract fields', () => {
   // one transient renderer timeout leaves every post without media.
   assert.match(generation, /reliability_mode: true/);
   assert.match(generation, /"Idempotency-Key": crypto\.randomUUID\(\)/);
-  assert.match(generation, /requestBody\.colors = input\.colors/);
-  // The stored logo is session-guarded: the renderer gets a capability URL
-  // it can actually fetch, never the relative path.
-  assert.match(generation, /shareableMediaUrl\(input\.profileId, input\.logoUrl\)/);
-  assert.match(generation, /requestBody\.logo_urls = \[logo\]/);
+  assert.match(generation, /requestBody\.colors = branding\.palette\.map\(\(c\) => c\.hex\)/);
+  // The logo is applied onto the finished render, exactly as uploaded: never
+  // handed to the renderer, which would redraw it (or add a second one).
+  assert.doesNotMatch(generation, /logo_urls/);
+  assert.match(generation, /parts\.logo = \{ image, corner: overlays\.logo\.corner \}/);
 });
 
 test('a provider error reaches the user as a message they can act on', () => {

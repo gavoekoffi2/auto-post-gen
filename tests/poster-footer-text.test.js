@@ -39,7 +39,10 @@ test("manual and automatic poster generation place the exact saved message botto
   assert.match(generation, /footerText/);
   // Bottom-left, or the bottom corner of the free side when a poster
   // character stands on the left.
-  assert.match(generation, /const footerCorner = characterSide \? `inférieur \$\{freeSide\}` : "inférieur gauche";/);
+  assert.match(generation, /const footerCorner = CORNER_FR\[layout\.footer\];/);
+  const branding = read("server/src/services/branding.ts");
+  assert.match(branding, /return \{ footer: "bottom-left", brand: "bottom-right" \};/);
+  assert.match(branding, /if \(characterSide === "left"\) return \{ footer: "bottom-right", brand: "top-right" \};/);
   assert.match(generation, /dans l'angle \$\{footerCorner\}, dans un cartouche/);
   assert.match(generation, /texte exact/);
   // Reformulating it would silently rewrite a user's own words.
