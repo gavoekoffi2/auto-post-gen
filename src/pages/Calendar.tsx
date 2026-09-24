@@ -94,7 +94,7 @@ export default function CalendarPage() {
       loadPosts();
     } catch (error) {
       console.error('Error scheduling post:', error);
-      toast.error('Erreur lors de la programmation');
+      toast.error(error instanceof Error ? error.message : 'Erreur lors de la programmation');
     }
   };
 

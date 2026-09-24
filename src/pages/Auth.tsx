@@ -5,7 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Sparkles } from "lucide-react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { profile as profileApi } from "@/lib/api";
 import { useSession } from "@/lib/session";
@@ -23,6 +23,15 @@ export default function Auth() {
   const [searchParams] = useSearchParams();
   const requestedPlan = searchParams.get("plan");
   const trialPlan = isPlanId(requestedPlan) ? requestedPlan : "pro";
+  // Where a signed-out visitor was going (a guarded page, the "renew" link of
+  // a reminder email). Internal paths only.
+  const location = useLocation();
+  const from = (location.state as { from?: { pathname?: string; search?: string } } | null)?.from;
+  const returnTo =
+    from?.pathname && from.pathname.startsWith("/") && !from.pathname.startsWith("//") &&
+    from.pathname !== "/auth"
+      ? `${from.pathname}${from.search ?? ""}`
+      : null;
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -55,7 +64,7 @@ export default function Auth() {
       // comes from the server's session, not from a hard-coded email as before.
       if (user.role === "admin" || user.role === "super_admin") {
         toast.success("Connexion réussie !");
-        navigate("/admin");
+        navigate(returnTo ?? "/admin");
         return;
       }
 
@@ -71,7 +80,7 @@ export default function Auth() {
       }
 
       toast.success("Connexion réussie !");
-      navigate("/dashboard");
+      navigate(returnTo ?? "/dashboard");
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Erreur lors de la connexion";
       toast.error(message);

@@ -3,8 +3,9 @@ import { query, queryOne } from "../lib/db.js";
 import { requireTenant } from "../lib/tenant.js";
 import { badRequest, notConfigured, notFound, rateLimited } from "../lib/errors.js";
 import { env } from "../lib/env.js";
+import { mediaUrl } from "../lib/media.js";
 import { consumeQuota, releaseQuota } from "../services/quota.js";
-import { loadEntitlement } from "../services/entitlement.js";
+import { loadEntitlement, requireActiveEntitlement } from "../services/entitlement.js";
 import { AudienceProfileIncomplete, detectAudiences } from "../services/audiences.js";
 import {
   asBoolean,
@@ -63,6 +64,15 @@ const WRITABLE = {
   image_people_type: (v: unknown) => asString(v, "image_people_type", { max: 40, optional: true }),
   image_style: (v: unknown) => asString(v, "image_style", { max: 80, optional: true }) || null,
   use_custom_images: (v: unknown) => asBoolean(v, "use_custom_images", false),
+  // The poster character's settings. The image itself, and the rights
+  // confirmation that goes with it, only change through
+  // POST/DELETE /profile/poster-character.
+  poster_character_enabled: (v: unknown) => asBoolean(v, "poster_character_enabled", false),
+  poster_character_position: (v: unknown) => {
+    const side = asString(v, "poster_character_position", { max: 5 });
+    if (side !== "left" && side !== "right") throw badRequest("Côté du personnage inconnu.");
+    return side;
+  },
   // Every one of these is handed to the poster renderer, which fetches it
   // from its own network — so each is validated, not just length-capped.
   custom_image_urls: (v: unknown) =>
@@ -109,13 +119,21 @@ const SELECT_COLUMNS = `
   brand_accent_color, brand_font, logo_url, poster_footer_text, audience_suggestions,
   target_audiences, audiences_confirmed_at, auto_reply_enabled, auto_reply_instructions,
   plan, leader_photo_consent_at,
-  subscription_status, trial_plan, trial_ends_at, current_period_ends_at
+  subscription_status, trial_plan, trial_ends_at, current_period_ends_at,
+  poster_character_asset_id, poster_character_enabled, poster_character_position,
+  poster_character_rights_at
 `;
 
 export async function loadProfile(profileId: string) {
-  const row = await queryOne(`SELECT ${SELECT_COLUMNS} FROM profiles WHERE id = $1`, [profileId]);
+  const row = await queryOne<Record<string, unknown> & { poster_character_asset_id: string | null }>(
+    `SELECT ${SELECT_COLUMNS} FROM profiles WHERE id = $1`,
+    [profileId],
+  );
   if (!row) throw notFound("Profil introuvable.");
-  return row;
+  // The dashboard shows the cut-out through the ordinary, session-checked
+  // media route; the asset id itself is not something it needs.
+  const { poster_character_asset_id: assetId, ...rest } = row;
+  return { ...rest, poster_character_url: assetId ? mediaUrl(assetId) : null };
 }
 
 const AUDIENCE_HOURLY_MAX = 10;
@@ -188,6 +206,8 @@ export async function profileRoutes(app: FastifyInstance): Promise<void> {
    */
   app.post("/profile/audiences/detect", async (request, reply) => {
     const ctx = await requireTenant(request, reply);
+    // An AI call like any other generation: not for an expired account.
+    await requireActiveEntitlement(ctx.profileId);
 
     if (!env.openRouterKey) {
       throw notConfigured(

@@ -7,6 +7,7 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { SessionProvider } from "@/lib/session";
 import { ProtectedAdminRoute } from "@/components/ProtectedAdminRoute";
+import { AppErrorBoundary } from "@/components/AppErrorBoundary";
 import Index from "./pages/Index";
 
 const Auth = lazy(() => import("./pages/Auth"));
@@ -45,6 +46,7 @@ const App = () => (
         {/* The session is an HttpOnly cookie, so "who am I" is asked of the
             server once here and shared, instead of on every guarded route. */}
         <SessionProvider>
+        <AppErrorBoundary>
         <Suspense fallback={<PageLoader />}>
           <Routes>
             {/* Public routes */}
@@ -130,6 +132,7 @@ const App = () => (
             <Route path="*" element={<NotFound />} />
           </Routes>
         </Suspense>
+        </AppErrorBoundary>
         </SessionProvider>
       </BrowserRouter>
     </TooltipProvider>

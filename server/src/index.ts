@@ -12,6 +12,7 @@ import { mediaRoutes } from "./routes/media.js";
 import { generationRoutes } from "./routes/generations.js";
 import { miscRoutes } from "./routes/misc.js";
 import { billingRoutes } from "./routes/billing.js";
+import { characterRoutes } from "./routes/character.js";
 import {
   startScheduler,
   startWeeklyScheduler,
@@ -81,6 +82,7 @@ await app.register(
     await generationRoutes(scope);
     await miscRoutes(scope);
     await billingRoutes(scope);
+    await characterRoutes(scope);
   },
   { prefix: "/api" },
 );

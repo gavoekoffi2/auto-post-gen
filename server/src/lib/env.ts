@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 // Configuration, read once at boot.
 //
 // Two rules hold here:
@@ -122,6 +125,13 @@ export const env = {
     moov_money: optional("PAYMENT_MOOV_MONEY"),
   },
   paymentBeneficiary: optional("PAYMENT_BENEFICIARY") ?? optional("APP_NAME") ?? "Pro Social AI",
+
+  // --- Poster character. The segmentation model used to cut the character
+  // out of its photo. Installed by the image build (scripts/fetch-bg-model.mjs);
+  // override only to point at a copy elsewhere.
+  bgModelPath:
+    optional("BG_REMOVAL_MODEL_PATH") ??
+    fileURLToPath(new URL("../../../models/silueta.onnx", import.meta.url)),
   // TAVILY_API_KEY / BRAVE_SEARCH_API_KEY are deliberately absent: web
   // research is not implemented on this stack (see the handoff). Declaring
   // them would advertise a capability nothing reads.
@@ -144,6 +154,12 @@ export function missingCapabilities(): string[] {
     );
   }
   if (!env.zernioKey) missing.push("ZERNIO_API_KEY — social publishing is unavailable");
+  if (!existsSync(env.bgModelPath)) {
+    missing.push(
+      `background-removal model (${env.bgModelPath}) — a poster character must be uploaded ` +
+        "already cut out (transparent PNG); run: node scripts/fetch-bg-model.mjs",
+    );
+  }
   if (!Object.values(env.paymentAccounts).some(Boolean)) {
     missing.push(
       "PAYMENT_WAVE / PAYMENT_ORANGE_MONEY / PAYMENT_MTN_MOMO / PAYMENT_MOOV_MONEY — " +

@@ -1,4 +1,5 @@
 import { query } from "../lib/db.js";
+import { pruneExpiredSessions } from "../lib/session.js";
 import { publishPost } from "./publish.js";
 import { runWeeklyGeneration } from "./weekly.js";
 import { runSubscriptionReminders } from "./subscriptions.js";
@@ -72,11 +73,17 @@ export async function runPublishTick(): Promise<TickResult> {
 }
 
 let timer: NodeJS.Timeout | null = null;
+let tickRunning = false;
 
 /** Starts the in-process runner. Idempotent; a second call is ignored. */
 export function startScheduler(intervalMs: number, log: (message: string) => void): void {
   if (timer) return;
   const tick = () => {
+    // A slow provider can make a batch outlast the interval. Overlapping
+    // ticks could not double-post (each post is claimed), but the second
+    // one's crash recovery would see the first one's posts mid-publish.
+    if (tickRunning) return;
+    tickRunning = true;
     runPublishTick()
       .then((result) => {
         if (result.attempted || result.recovered) {
@@ -86,7 +93,10 @@ export function startScheduler(intervalMs: number, log: (message: string) => voi
           );
         }
       })
-      .catch((err) => console.error("[scheduler] tick failed:", (err as Error).message));
+      .catch((err) => console.error("[scheduler] tick failed:", (err as Error).message))
+      .finally(() => {
+        tickRunning = false;
+      });
   };
   // unref so a pending timer never holds the process open during shutdown.
   timer = setInterval(tick, intervalMs);
@@ -127,9 +137,35 @@ export async function runWeeklyTick(log: (message: string) => void): Promise<voi
     console.error("[scheduler] subscription reminders failed:", (err as Error).message);
   }
 
+  try {
+    const pruned = await pruneStaleRows();
+    if (pruned) log(`maintenance: ${pruned} stale row(s) removed`);
+  } catch (err) {
+    console.error("[scheduler] maintenance failed:", (err as Error).message);
+  }
+
   const results = await runWeeklyGeneration();
   const total = results.reduce((sum, r) => sum + r.generated, 0);
   if (total) log(`weekly generation: ${total} post(s) across ${results.length} account(s)`);
+}
+
+/**
+ * Removes rows that no longer mean anything: expired sessions, rate-limit
+ * events far outside any window (the longest is one hour), and one-time
+ * tokens long expired. Nothing else did — every login, sign-up and token
+ * check added a row that stayed forever.
+ */
+export async function pruneStaleRows(): Promise<number> {
+  const sessions = await pruneExpiredSessions();
+  const events = await query<{ n: number }>(
+    `WITH d AS (DELETE FROM ip_rate_events WHERE created_at < now() - interval '2 days' RETURNING 1)
+     SELECT count(*)::int AS n FROM d`,
+  );
+  const tokens = await query<{ n: number }>(
+    `WITH d AS (DELETE FROM one_time_tokens WHERE expires_at < now() - interval '30 days' RETURNING 1)
+     SELECT count(*)::int AS n FROM d`,
+  );
+  return sessions + (events[0]?.n ?? 0) + (tokens[0]?.n ?? 0);
 }
 
 export function startWeeklyScheduler(log: (message: string) => void): void {

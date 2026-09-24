@@ -12,6 +12,144 @@
 
 ---
 
+## 0000. Audit de pré-production (corrections uniquement)
+
+Branche `claude/poster-character-audit-h7n3`, créée depuis
+`claude/poster-character-q2w6` @ `bfce311933fc72146c426bc6a17c06ce28481f1a`
+(personnage sur les affiches, §000, inclus). Relecture complète de l'API, du
+dashboard et du déploiement ; **aucune fonctionnalité nouvelle**, seulement
+des défauts corrigés, chacun couvert par un test.
+
+### Ce que le déploiement doit savoir
+
+| | |
+|---|---|
+| **Migration** | `0008_publish_recovery_bounded.sql` — un seul `CREATE OR REPLACE FUNCTION recover_stuck_publishing()`. Aucune table touchée, aucune ligne réécrite par la migration. 8 migrations au total. |
+| **Variables** | aucune nouvelle. `APP_PUBLIC_URL` (déjà obligatoire dans le Compose) sert désormais aussi à transmettre le logo à Graphiste. |
+| **nginx / Compose / Dockerfile** | inchangés depuis §000. |
+| **Retour arrière** | revenir à l'image précédente suffit ; la fonction de 0007 reste compatible avec l'ancien code. |
+
+### Défauts corrigés
+
+**Argent et publication**
+
+| Défaut | Effet | Correction |
+|---|---|---|
+| Un post accepté par Zernio mais **mis en file** (`queued`) repassait en `validated` | **publié deux fois** sur le réseau au passage suivant | il reste « Publication en cours » avec l'identifiant Zernio enregistré ; la reprise le passe « publié » après 10 min, jamais en nouvelle tentative |
+| L'identifiant du post chez Zernio n'était jamais enregistré | la reprise après crash ne pouvait pas savoir qu'un post était déjà parti | `provider_post_id` enregistré |
+| « Valider » acceptait un post en cours d'envoi ou déjà publié | le remettait en file → double publication (le bouton apparaissait sur un post `publishing`, affiché « En attente ») | refus `409` hors `pending`/`validated`/`failed` ; statut « Publication en cours » affiché |
+| La reprise ne passait jamais un post en échec | un post qui bloque l'envoi était relancé toutes les 15 min, **indéfiniment** | 0007 : échec au bout de 5 tentatives, comme l'API |
+| Image non partageable (sans `APP_PUBLIC_URL`) : exception après la réservation du post | post bloqué en `publishing`, puis boucle ci-dessus | tentative enregistrée en échec, avec un message qui nomme la variable |
+| La génération hebdomadaire et « générer la semaine » **ne décomptaient rien** | textes et affiches premium hors plafond mensuel ; supprimer la semaine puis la regénérer = rendus payants **sans limite** | chaque texte et chaque affiche automatique est compté dans le plafond du forfait ; au-delà, arrêt (`plan_limit_reached`) ; « générer la semaine » limité à 6/h |
+| Analyse IA des cibles possible pour un compte expiré | contraire à l'invariant n°1 | refusée (`402`) comme toute génération |
+| Texte IA : jusqu'à 3 modèles × 90 s | le navigateur et nginx abandonnent à 120 s ; l'utilisateur relance et paie deux fois | budget total de 100 s pour toute la chaîne |
+
+**Sécurité**
+
+| Défaut | Correction |
+|---|---|
+| L'URL de statut d'un rendu, lue dans la réponse du fournisseur, était interrogée **avec la clé API Graphiste**, quel que soit son hôte | uniquement sur l'origine de `GRAPHISTE_GPT_API_URL` (vérifié à l'enregistrement et avant chaque lecture, lignes anciennes comprises) |
+| Récupération des affiches : redirections suivies sans contrôle, noms DNS jamais vérifiés | chaque redirection revalidée ; le résolveur du socket refuse toute adresse non publique (IPv4/IPv6, IPv4 mappée, CGNAT, métadonnées cloud), y compris un nom qui change d'adresse entre-temps |
+| `asImageUrl` laissait passer `[::ffff:127.0.0.1]`, `100.64.x.x`, `fd00::`, `*.internal` | refusés |
+| Réinitialisation du mot de passe : l'email était attendu avant de répondre | la durée de la réponse révélait si l'adresse a un compte ; l'email part sans être attendu |
+
+**Comptes et exploitation**
+
+| Défaut | Correction |
+|---|---|
+| Limite de connexion de 20 essais par IP | les opérateurs mobiles mettent des milliers d'abonnés derrière une IP : quelques erreurs de mot de passe bloquaient tout le monde. Désormais 10 essais par adresse email et par IP, 300 par IP |
+| Deux inscriptions simultanées (double clic) → `500` | `409` « Un compte existe déjà » (inscription et création par l'admin) |
+| Sessions expirées, événements de limite et jetons jamais purgés | tables en croissance infinie ; purge quotidienne |
+| Deux passages de la file de publication pouvaient se chevaucher | un seul à la fois |
+
+**Affiches et contenu**
+
+| Défaut | Correction |
+|---|---|
+| Le logo était envoyé à Graphiste en chemin relatif (`/api/media/…`) | **le logo n'apparaissait sur aucune affiche** ; il part désormais en lien signé que Graphiste peut télécharger |
+| Affiche renvoyée en `data:image/…;base64` | stockée comme fichier, au lieu d'enregistrer toute l'URI comme adresse de l'image |
+| Secteur, ton, types de contenu envoyés en codes anglais (« Secteur : food », « Ton : casual ») | traduits en français dans toutes les consignes (texte, semaine, cibles, affiches) |
+| Image personnalisée supprimée mais encore dans la liste enregistrée | la génération hebdomadaire pouvait l'attacher à un post (image cassée) ; liste enregistrée immédiatement, images disparues ignorées |
+| Texte régénéré : catégorie éditoriale non mise à jour | quotas promo/recherche et affiche suivante calculés sur l'ancienne |
+
+**Dashboard**
+
+| Défaut | Correction |
+|---|---|
+| Date d'un post calculée en UTC, heure en local | en UTC+1 (Bénin, Cameroun, Nigeria…), un post à 00 h 30 s'affichait la veille, et **« Enregistrer » sans rien changer le décalait d'un jour** |
+| Lecture du profil en échec (502 pendant un redéploiement) | un compte configuré était envoyé à l'onboarding, où enregistrer écrase le profil ; maintenant message + « Réessayer » |
+| Session expirée au même moment | « Chargement… » infini ; maintenant retour à la connexion |
+| Après connexion, toujours le tableau de bord | retour à la page demandée (ex. lien « Renouveler » d'un email vers `/abonnement`) |
+| Analyse des cibles depuis le Profil : lisait le profil **enregistré** | une description modifiée mais non enregistrée était ignorée ; elle est enregistrée d'abord |
+| Image d'un post en erreur puis régénérée | restait « Image indisponible » jusqu'au rechargement |
+| Export des données (Firefox, Safari) | le téléchargement pouvait ne pas démarrer |
+| Calendrier, statistiques, profil : messages d'erreur génériques | message réel du serveur (invariant n°6) |
+
+---
+
+## 000. Personnage sur les affiches + passe de corrections
+
+Branche `claude/poster-character-q2w6`, créée depuis
+`claude/selfhosted-provider-compat-r5k8` @ `1218ee09feac7d69be203e0a7da1a3bc81b7e67b`
+(le correctif `provider` + référence unique, §00, est donc inclus).
+
+### La fonctionnalité
+
+Dans **Profil → onglet Images**, carte « Personnage sur vos affiches » :
+l'utilisateur envoie la photo d'une personne (lui-même, un membre de
+l'équipe…) ou d'une mascotte. Le serveur **la détoure une fois** à l'envoi et
+la **pose sur chaque affiche générée**, du côté choisi (gauche/droite), debout
+sur le bord bas, à côté du contenu de l'affiche.
+
+- **La photo ne quitte jamais le serveur.** Graphiste GPT reçoit seulement
+  une consigne de mise en page (garder libre le côté du personnage, déplacer
+  accroche, message permanent et signature de l'autre côté). Le personnage
+  est composité localement sur le rendu fini (`sharp`). Un visage généré par
+  IA ne serait jamais fidèle ; le composite l'est, et ne coûte rien de plus.
+- **Détourage** : modèle `silueta` (U²-Net, Apache-2.0, 44 Mo, via le projet
+  rembg, MIT) exécuté par `onnxruntime-web` (WASM, compatible Alpine/musl)
+  dans un *worker thread* éphémère : l'API ne se bloque pas, la mémoire est
+  rendue après chaque détourage. Environ 5 s par photo, 1 à la fois (file).
+  Un PNG **déjà détouré** est gardé tel quel ; une image sans sujet net est
+  refusée avec une explication.
+- **Droit à l'image** : l'envoi exige de cocher « Je confirme avoir le droit
+  d'utiliser l'image de cette personne » ; la date est enregistrée
+  (`poster_character_rights_at`). Sans la case, l'API répond `400 rights_required`.
+- **Cohérence** : chaque tâche de rendu enregistre le personnage avec
+  lequel elle a démarré (`generation_jobs.character_overlay`) ; un rendu
+  terminé minutes plus tard est fini comme il a été commencé, même si le
+  réglage a changé entre-temps. Un personnage supprimé entre-temps ne fait
+  jamais perdre l'affiche payée : elle est gardée sans lui.
+- Le chemin manuel (tableau de bord) et le chemin hebdomadaire passent par
+  la même fonction : aucun des deux ne peut l'oublier.
+- Limites : 12 Mo par photo (JPEG, PNG, WebP), 10 envois par heure et par compte.
+
+### Ce que le déploiement doit savoir
+
+| | |
+|---|---|
+| **Migration** | `0007_poster_character.sql` — additive et idempotente : 4 colonnes sur `profiles` (défauts : désactivé, `right`), 1 colonne `jsonb` nullable sur `generation_jobs`, 1 clé étrangère `ON DELETE SET NULL`, 1 `CHECK`. Aucun `DROP`, aucune réécriture de ligne existante. La contrainte des types de média n'est **pas** reconstruite (l'image est rangée en `other`) : les valeurs héritées fusionnées par 0000 ne sont pas touchées. |
+| **Image Docker** | l'étape de build **télécharge** le modèle (`server/scripts/fetch-bg-model.mjs`) depuis `github.com/danielgatis/rembg/releases/download/v0.0.0/silueta.onnx` et vérifie son **SHA-256 épinglé** (`75da6c8d…ffeedb`) : fichier altéré = build en échec. **Le build a donc besoin d'un accès HTTPS sortant vers github.com.** Le modèle n'est pas dans git. |
+| **Variable** | `BG_REMOVAL_MODEL_PATH` — optionnelle ; par défaut `/app/models/silueta.onnx` dans l'image. Sans modèle, l'API démarre quand même, l'annonce (`capability unavailable: background-removal model …`) et n'accepte que des PNG déjà détourés (503 explicite sinon). |
+| **Mémoire** | pic d'environ 400 à 700 Mo pendant un détourage (quelques secondes), rendu ensuite. |
+| **nginx** | nouveau bloc `location = /api/profile/poster-character` : `client_max_body_size 13m`, `proxy_read_timeout 180s`. Le bloc `/api/` garde 6 Mo. **Le fichier `nginx.vps.conf` doit être redéployé** (il est monté par le Compose). |
+| **Retour arrière** | l'image précédente ignore les colonnes ajoutées par 0006 : revenir à l'image suffit, la migration n'a pas à être annulée. |
+| **Routes** | `POST /api/profile/poster-character` (multipart : `rights_confirmed=true` + `file`) → `201 {profile, character}` ; `DELETE /api/profile/poster-character` → `200 {profile}` ; `PATCH /api/profile` accepte `poster_character_enabled` (booléen) et `poster_character_position` (`left`/`right`). |
+
+### Défauts trouvés et corrigés pendant la passe
+
+| Défaut | Effet pour l'utilisateur | Correction |
+|---|---|---|
+| Consigne d'affiche tronquée **à la fin** à 1 800 caractères | avec un post ou une description longs, la position de la signature et les interdictions (fausses lettres, watermark) disparaissaient en silence | seules les lignes du message source sont raccourcies (« … ») ; toutes les consignes restent entières |
+| `"$&"`, `"$'"`… dans un post | recopiés comme motifs de remplacement dans la consigne envoyée | remplacement par fonction |
+| Réhébergement d'affiche plafonné à 5 Mo | une affiche PNG 2K dépassait la limite : on gardait l'URL du fournisseur, qui **expire** — l'affiche disparaissait des posts programmés | plafond propre aux rendus : 25 Mo |
+| Deux lectures simultanées d'un même rendu (2 onglets, ou l'onglet + la publication) | le rendu était finalisé deux fois ; une copie orpheline restait sur le disque | finalisation conditionnelle (`AND status = 'processing'`) ; le perdant supprime sa copie et renvoie celle du gagnant (test : échoue sans le correctif) |
+| Aucune barrière d'erreur dans le dashboard | après un redéploiement, un onglet resté ouvert demandant un module qui n'existe plus → **page blanche** | `AppErrorBoundary` : recharge automatiquement une fois (au plus une par minute), sinon message « Une nouvelle version est disponible » + bouton ; se réinitialise au changement de page |
+| Page d'erreur HTML de nginx (413, 502, 504 ; ~180 caractères) | affichée **telle quelle** (balises comprises) dans le message d'erreur | le texte brut n'est repris que s'il n'est pas du balisage ; messages français pour 502/503/504 |
+| Limite de débit répondue avant la lecture d'un gros envoi | derrière nginx, la connexion est coupée : l'utilisateur voit « 502 Bad Gateway » au lieu du message | la limite est vérifiée une fois le corps lu (vérifié derrière un vrai nginx) |
+
+---
+
 ## 00. Correctif : `generation_jobs.provider` et référence Mobile Money unique
 
 Correctif de `claude/selfhosted-subscriptions-release-q7t4` après la
@@ -205,20 +343,22 @@ hebdomadaires, changement d'email). Voir §9.
 
 | | |
 |---|---|
-| **Branche** | `claude/selfhosted-provider-compat-r5k8` |
-| **SHA du code** | `ec4e889cc7fd99309a852441d2933459b5561a60` |
+| **Branche** | `claude/poster-character-audit-h7n3` |
+| **SHA du code** | `d3cc7a0ef6065910305db24aca4cdbf9806e0527` |
 | **SHA à déployer** | la pointe de la branche (ce document est le seul commit au-dessus du code ; `git log -1 --format=%H`) |
-| **Base** | `claude/selfhosted-subscriptions-release-q7t4` @ `41d70d40b77ed561fa5fd96f4175d0d05e34bcb4` (bloquée par la répétition : `generation_jobs.provider`) |
+| **Base** | `claude/poster-character-q2w6` @ `bfce311933fc72146c426bc6a17c06ce28481f1a` (personnage sur les affiches, §000) |
+| **Base de la base** | `claude/selfhosted-provider-compat-r5k8` @ `1218ee09feac7d69be203e0a7da1a3bc81b7e67b` (correctif `provider` + référence unique, §00) |
+| **Base précédente** | `claude/selfhosted-subscriptions-release-q7t4` @ `41d70d40b77ed561fa5fd96f4175d0d05e34bcb4` (bloquée par la répétition : `generation_jobs.provider`) |
 | **Base de la base** | `claude/legacy-status-compat-9m2x` @ `783938efbf206055bf6cf67d6a684ef11656fc94` |
 | **Fonctionnalités intégrées depuis** | `claude/magical-thompson-mjuif9` @ `66416276127588bdb50f179b6e6566ddb50cb663` |
 | **`main`** | non modifié, non poussé, non fusionné |
 
 ```bash
 git fetch origin
-# ce qu'apporte ce correctif
-git diff --stat origin/claude/selfhosted-subscriptions-release-q7t4..origin/claude/selfhosted-provider-compat-r5k8
+# ce qu'apporte cette livraison (audit de pré-production)
+git diff --stat origin/claude/poster-character-q2w6..origin/claude/poster-character-audit-h7n3
 # tout ce qui s'ajoute à la livraison auto-hébergée précédente
-git diff --stat origin/claude/legacy-status-compat-9m2x..origin/claude/selfhosted-provider-compat-r5k8
+git diff --stat origin/claude/legacy-status-compat-9m2x..origin/claude/poster-character-audit-h7n3
 ```
 
 ---
@@ -368,7 +508,52 @@ Vérifié aussi à la main, contre une base héritée migrée **portant la contr
 
 ---
 
-### 4 bis. Résultats de CETTE livraison (correctif `provider` + référence unique)
+### 4 quater. Résultats de CETTE livraison (audit de pré-production)
+
+Bac à sable, PostgreSQL 16 local, bases jetables `psa_*` uniquement, Node 22 :
+
+| Vérification | Résultat |
+|---|---|
+| `server`: `npm ci` · `npm run build` · `npm run typecheck` · `npm run fetch-model` | OK · OK · OK · modèle présent et vérifié |
+| `server`: `npm test` (base neuve migrée) | `# tests 91  # pass 91  # fail 0` (76 → 91 : +15 dans `tests/audit-fixes.test.ts`) |
+| Contre-épreuve | code d'origine remis temporairement : les tests des corrections échouent (statut Graphiste, logo, double publication, blocage `publishing`, inscription simultanée, limite de connexion, quota hebdomadaire, purge, URL internes) |
+| dépôt : `npm ci` · `npm test` | OK · `# tests 209  # pass 209  # fail 0` (202 → 209) |
+| dépôt : `npm run lint` | `0 errors, 8 warnings` — les 8 warnings préexistants, aucun nouveau |
+| dépôt : `npm run typecheck` · `npm run build` | OK · OK |
+| Garde CI anti-Supabase (4 `grep`) | 0 occurrence |
+| `docker compose … --env-file deploy/fake.env config` | OK |
+| `nginx -t` sur `nginx.vps.conf` | OK |
+| **Migration vierge** | `Applied 8 migration(s).` ; 2 rejeux complets (`psql -f`) sans erreur ; relance : `Schema already up to date.` |
+| **Migration legacy** (fixture du schéma réel) | `Applied 8 migration(s).` puis `Schema already up to date.` |
+| **Dry-run** (même fixture) | `DRY RUN OK — 8 migration(s) would apply cleanly.` · `Rolled back: the database is unchanged.` · schéma identique colonne pour colonne · aucune table `schema_migrations` laissée |
+| Navigateur réel (Chromium, fuseau `Africa/Lagos`) | post à 00 h 30 affiché le bon jour, « Enregistrer » sans changement → date inchangée en base ; « Publication en cours » sans bouton « Valider » ; API coupée → message + « Réessayer » (pas d'onboarding), puis reprise ; analyse des cibles → description enregistrée d'abord ; `/abonnement` → connexion → retour sur `/abonnement` |
+
+Non exécuté ici : `docker build` (pas de démon Docker), la répétition sur la
+**copie réelle** (§6.0).
+
+### 4 ter. Résultats de la livraison précédente (personnage + corrections)
+
+Bac à sable, PostgreSQL 16 local, bases jetables `psa_*` uniquement, Node 22 :
+
+| Vérification | Résultat |
+|---|---|
+| `server`: `npm ci` · `npm run typecheck` · `npm run fetch-model` | OK · OK · `model present and verified` (SHA-256 épinglé) |
+| `server`: `npm test` (base neuve migrée) | `# tests 76  # pass 76  # fail 0` (65 → 76 : +11 sur le personnage, contre le vrai modèle et un vrai PostgreSQL) |
+| dépôt : `npm ci` · `npm test` | OK · `# tests 202  # pass 202  # fail 0` (193 → 202) |
+| dépôt : `npm run lint` | `0 errors, 8 warnings` — les 8 warnings préexistants (vérifié sur la base), aucun nouveau |
+| dépôt : `npm run typecheck` · `npm run build` | OK · OK |
+| Garde CI anti-Supabase (4 `grep`) | 0 occurrence |
+| `docker compose … --env-file deploy/fake.env config` | OK |
+| **Migration vierge** | `Applied 7 migration(s).` ; 2 rejeux complets (`psql -f`) sans erreur ; relance : `Schema already up to date.` |
+| **Migration legacy** (fixture du schéma réel) | `Applied 7 migration(s).` puis `Schema already up to date.` |
+| **Dry-run** (même fixture) | `DRY RUN OK — 7 migration(s) would apply cleanly.` · `Rolled back: the database is unchanged.` · aucune table `schema_migrations` laissée |
+| `nginx -t` sur `nginx.vps.conf` (nginx 1.24) | syntaxe OK ; derrière ce nginx : photo réelle de 10,3 Mo → `201` en 7,8 s ; 9 Mo sur `/api/media` → `413` (inchangé) ; limite dépassée → `429` + message français (et non `502`) |
+| Navigateur réel (Chromium) | carte affichée, envoi bloqué sans la case, « Détourage en cours… », aperçu détouré, bascule gauche/droite enregistrée ; module de page bloqué → rechargement unique puis message + bouton, qui rétablit la page |
+
+Non exécuté ici : `docker build` (pas de démon Docker) — il télécharge le
+modèle depuis github.com ; la répétition sur la **copie réelle** (§6.0).
+
+### 4 bis. Résultats de la livraison précédente (correctif `provider` + référence unique)
 
 Exécutés dans le bac à sable, PostgreSQL 16 local, bases jetables `psa_*`
 uniquement, Node 22.22 — exactement les commandes demandées :

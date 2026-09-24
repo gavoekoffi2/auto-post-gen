@@ -1,5 +1,6 @@
 import { queryOne, query } from "../lib/db.js";
 import { env } from "../lib/env.js";
+import { contentTypeLabel, sectorLabel, toneLabel } from "../lib/labels.js";
 import { buildAudiencePrompt, normalizeAudiences } from "../shared/audience.js";
 import { ensurePostEngagement } from "../shared/postEngagement.js";
 import { getTextLimit, tightLengthBrief } from "../shared/platformTextLimits.js";
@@ -59,7 +60,16 @@ export async function callClaude(input: {
   timeoutMs?: number;
 }): Promise<string> {
   let lastError = "no model attempted";
+  // One budget for the whole chain, not per model: three slow models at 90 s
+  // each outlasted the dashboard's (and nginx's) 120 s, so the user saw a
+  // timeout, retried, and paid twice for a generation that was still running.
+  const deadline = Date.now() + (input.timeoutMs ?? 100_000);
   for (const model of textModels()) {
+    const remaining = deadline - Date.now();
+    if (remaining < 5_000) {
+      lastError = `${lastError}; time budget exhausted`;
+      break;
+    }
     try {
       const response = await fetch(OPENROUTER_ENDPOINT, {
         method: "POST",
@@ -75,7 +85,7 @@ export async function callClaude(input: {
           temperature: input.temperature ?? 0.65,
           top_p: input.topP ?? 0.9,
         }),
-        signal: AbortSignal.timeout(input.timeoutMs ?? 90_000),
+        signal: AbortSignal.timeout(Math.min(90_000, remaining)),
       });
 
       if (!response.ok) {
@@ -147,8 +157,8 @@ export async function generateText(input: {
   const postType = POST_TYPES[Math.floor(Math.random() * POST_TYPES.length)]!;
   const angle = ANGLES[Math.floor(Math.random() * ANGLES.length)]!;
   const companyName = profile.company_name?.trim() || "notre entreprise";
-  const sector = profile.sector || "Business";
-  const tone = profile.tone || "Professionnel";
+  const sector = sectorLabel(profile.sector) || "Entreprise";
+  const tone = toneLabel(profile.tone) || "Professionnel";
   const description = profile.description || "";
 
   const audiences = normalizeAudiences(profile.target_audiences);
@@ -172,7 +182,7 @@ PROFIL DU CLIENT
 Nom de l'entreprise : ${companyName}
 Secteur : ${sector}
 ${description ? `Activité : ${description}` : ""}
-Types de contenu : ${(profile.content_types ?? []).join(", ") || "mixte"}
+Types de contenu : ${(profile.content_types ?? []).map(contentTypeLabel).join(", ") || "mixte"}
 Tonalité : ${tone}
 ${profile.style_example ? `Style préféré : ${profile.style_example}` : ""}
 ${audienceBlock}

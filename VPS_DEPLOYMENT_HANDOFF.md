@@ -241,7 +241,7 @@ n'accepte un `profileId` ou un `userId` envoyé par le navigateur**.
 | Méthode | Chemin | Auth | Corps / réponse |
 | --- | --- | --- | --- |
 | POST | `/auth/register` | non (20/h par IP) | `{"email":"a@b.c","password":"…"}` → `201 {"user":{…}}` + cookie |
-| POST | `/auth/login` | non (20/15 min par IP) | `{"email":"a@b.c","password":"…"}` → `200 {"user":{…}}` + cookie |
+| POST | `/auth/login` | non (10/15 min par adresse et par IP, 300/15 min par IP) | `{"email":"a@b.c","password":"…"}` → `200 {"user":{…}}` + cookie |
 | POST | `/auth/logout` | session | — → `204` |
 | GET | `/auth/me` | session | → `200 {"user":{"id","email","role","createdAt"}}` |
 | PATCH | `/auth/password` | session | `{"currentPassword":"…","newPassword":"…"}` → `200 {"ok":true}` ; invalide toutes les autres sessions |
@@ -256,6 +256,8 @@ n'accepte un `profileId` ou un `userId` envoyé par le navigateur**.
 | PATCH | `/profile` | session | `{"sector":"Restauration","platforms":["LinkedIn"]}` → profil. **`plan`, `role`, `blocked_at`, `email` et le consentement sont refusés silencieusement** : ils ne figurent pas dans la liste blanche. |
 | POST | `/profile/audiences/detect` | session (10/h) | corps ignoré → `200 {"audiences":[…]}` |
 | POST | `/profile/leader-photo-consent` | session | `{"granted":true}` → profil |
+| POST | `/profile/poster-character` | session (10/h) | multipart `rights_confirmed=true` + `file` (≤ 12 Mo) → `201 {"profile":…,"character":{"width","height","cutOut","lowResolution"}}` ; sans la case → `400 rights_required` ; image sans sujet → `400 no_subject` |
+| DELETE | `/profile/poster-character` | session | → `200 {"profile":…}` (image et fichier supprimés) |
 
 ### Publications
 
@@ -265,10 +267,10 @@ n'accepte un `profileId` ou un `userId` envoyé par le navigateur**.
 | POST | `/posts` | session | `{"content":"…","platforms":["LinkedIn"],"scheduledFor":"2026-10-01T14:30:00Z","contentCategory":"value"}` → `201` |
 | PATCH | `/posts/:id` | session | `{"content":"…"}` ou `{"scheduled_for":"…Z"}` → post. `status` n'est **pas** modifiable ici. |
 | DELETE | `/posts/:id` | session | → `204` |
-| POST | `/posts/:id/validate` | session | — → post validé, budget de retry remis à zéro **par le serveur** |
+| POST | `/posts/:id/validate` | session | — → post validé, budget de retry remis à zéro **par le serveur** ; `409 already_published` pour un post en cours d'envoi ou publié |
 | POST | `/posts/:id/publish` | session | — → `{"results":[…],"post":{…}}` |
 | POST | `/posts/validate-by-token` | non (60/h par IP) | `{"token":"…"}` → `200 {"ok":true,"postId":"…"}` |
-| POST | `/posts/generate-week` | session | — → `{"profileId","generated","skipped?"}` |
+| POST | `/posts/generate-week` | session (6/h) | — → `{"profileId","generated","skipped?"}` ; compté dans le plafond mensuel du forfait (`skipped: "plan_limit_reached"` au-delà) |
 | GET | `/posts/statistics` | session | → totaux, série hebdomadaire, répartition par réseau |
 
 ### Générations
@@ -372,7 +374,7 @@ Contraintes qui portent une règle produit :
 
 ## 8. Migrations à appliquer
 
-Six fichiers, dans l'ordre, **tous idempotents** :
+Huit fichiers, dans l'ordre, **tous idempotents** :
 
 | Fichier | Contenu |
 | --- | --- |
@@ -382,6 +384,8 @@ Six fichiers, dans l'ordre, **tous idempotents** :
 | `0003_trial_and_subscriptions.sql` | Essai gratuit et abonnements : colonnes de cycle de vie sur `profiles` (les comptes existants passent `active` sans échéance), table `subscription_requests` et ses index uniques. N'ajoute que ; ne supprime rien. |
 | `0004_generation_job_provider.sql` | `generation_jobs.provider` obligatoire partout (déjà `NOT NULL` en production ; rendu obligatoire sur une base neuve). Les jobs historiques sans fournisseur éventuels sont conservés tels quels ; une contrainte `NOT VALID` refuse les nouveaux. |
 | `0005_payment_reference_once.sql` | Une référence Mobile Money ne sert qu'**une fois**, quel que soit le statut de la déclaration (en attente, validée, refusée, annulée), sans tenir compte de la casse ni des espaces, tous moyens de paiement confondus. S'arrête avec un message si des doublons existent déjà. |
+| `0007_poster_character.sql` | Personnage sur les affiches : `profiles.poster_character_asset_id` (clé étrangère `ON DELETE SET NULL` vers `media_assets`), `poster_character_enabled` (défaut `false`), `poster_character_position` (`left`/`right`, défaut `right`), `poster_character_rights_at` ; `generation_jobs.character_overlay` (`jsonb`, nullable). N'ajoute que ; ne supprime rien. |
+| `0008_publish_recovery_bounded.sql` | Remplace `recover_stuck_publishing()` : un post bloqué en `publishing` qui n'a pas atteint le fournisseur passe en `failed` au bout de 5 tentatives au lieu d'être relancé indéfiniment. Aucune table touchée. |
 
 ```bash
 cd /opt/pro-social-ai/server
@@ -465,6 +469,7 @@ PG_POOL_MAX                 défaut 10
 PUBLISH_TICK_SECONDS        défaut 60 ; 0 désactive le runner interne
 WEEKLY_GENERATION           "off" désactive le runner hebdomadaire
 NODE_ENV                    "production" active le cookie Secure
+BG_REMOVAL_MODEL_PATH       défaut /app/models/silueta.onnx (installé par le build de l'image)
 ```
 
 ### Côté dashboard

@@ -79,13 +79,23 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const { hash, salt } = await hashPassword(password);
-    const created = await queryOne<ProfileAuthRow>(
-      `INSERT INTO profiles
-         (email, password_hash, password_salt, subscription_status, trial_plan, trial_ends_at)
-       VALUES ($1, $2, $3, 'trialing', $4, now() + make_interval(days => $5))
-       RETURNING id, email, role, plan, created_at, blocked_at, password_hash, password_salt`,
-      [email, hash, salt, requestedPlan, TRIAL_DAYS],
-    );
+    let created: ProfileAuthRow | null;
+    try {
+      created = await queryOne<ProfileAuthRow>(
+        `INSERT INTO profiles
+           (email, password_hash, password_salt, subscription_status, trial_plan, trial_ends_at)
+         VALUES ($1, $2, $3, 'trialing', $4, now() + make_interval(days => $5))
+         RETURNING id, email, role, plan, created_at, blocked_at, password_hash, password_salt`,
+        [email, hash, salt, requestedPlan, TRIAL_DAYS],
+      );
+    } catch (err) {
+      // Two sign-ups for the same address at once (a double click): the
+      // unique index decides, and the loser is told why rather than "500".
+      if ((err as { code?: string }).code === "23505") {
+        throw conflict("Un compte existe déjà pour cette adresse email.", "email_taken");
+      }
+      throw err;
+    }
     if (!created) throw badRequest("La création du compte a échoué.");
 
     await createSession(reply, created.id, {
@@ -96,11 +106,16 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.post("/auth/login", async (request, reply) => {
-    await hitRateLimit(`login:${clientIp(request)}`, 20, 900);
-
     const body = (request.body ?? {}) as Record<string, unknown>;
     const email = asEmail(body.email);
     const password = asString(body.password, "password", { max: 200 });
+
+    // Guessing is bounded per address (from one network), and a network as a
+    // whole gets a much larger budget: mobile carriers put thousands of
+    // subscribers behind one IP, and a single per-IP limit of 20 locked all
+    // of them out as soon as a few mistyped their password.
+    await hitRateLimit(`login:${clientIp(request)}:${email}`, 10, 900);
+    await hitRateLimit(`login:${clientIp(request)}`, 300, 900);
 
     const row = await queryOne<ProfileAuthRow>(
       `SELECT id, email, role, plan, created_at, blocked_at, password_hash, password_salt
@@ -202,7 +217,9 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
         [row.id, hashOneTimeToken(token), new Date(Date.now() + RESET_TTL_MS)],
       );
       const link = `${env.appPublicUrl}/reset-password?token=${encodeURIComponent(token)}`;
-      await sendMail({
+      // Not awaited: the time an email provider takes to answer would tell
+      // apart an address that has an account from one that has not.
+      void sendMail({
         to: email,
         subject: `Réinitialisation de votre mot de passe ${env.appName}`,
         html:

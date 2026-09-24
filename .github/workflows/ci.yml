@@ -85,6 +85,11 @@ jobs:
         working-directory: server
       - run: npm run typecheck
         working-directory: server
+      # The poster-character cut-out needs its segmentation model (pinned,
+      # checksummed). `npm test` fetches it too; doing it as its own step makes
+      # a download problem show up as exactly that.
+      - run: npm run fetch-model
+        working-directory: server
       - run: npm run migrate
         working-directory: server
 

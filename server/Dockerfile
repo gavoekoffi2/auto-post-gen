@@ -24,6 +24,12 @@ COPY tsconfig.json ./
 COPY src ./src
 RUN npm run build
 
+# The background-removal model that cuts out the poster character. Fetched
+# from a pinned release and checked against a pinned SHA-256 — a corrupted or
+# substituted file fails the build instead of being loaded. Not in git (44 MB).
+COPY scripts/fetch-bg-model.mjs ./scripts/
+RUN node scripts/fetch-bg-model.mjs /app/models/silueta.onnx
+
 # Reinstall with dev dependencies pruned. The compiled output in dist/ is
 # already produced, so TypeScript and the type packages have no reason to
 # travel any further.
@@ -45,6 +51,7 @@ WORKDIR /app
 # mounted volume.
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
+COPY --from=build --chown=node:node /app/models ./models
 COPY --chown=node:node package.json ./
 # Migrations are read from disk at run time by `node dist/src/migrate.js`.
 COPY --chown=node:node migrations ./migrations

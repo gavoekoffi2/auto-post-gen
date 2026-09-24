@@ -12,9 +12,12 @@ test("a provider failure reaches the user as a message they can act on", () => {
   assert.match(publish, /Publication refusée \(\$\{postResponse\.status\}\)/);
   assert.match(publish, /Impossible de lire les comptes connectés \(\$\{accountsResponse\.status\}\)/);
 
-  // An unconfigured server says which secret is missing, so an operator can
-  // fix the deployment without reading the code.
-  assert.match(routes, /ZERNIO_API_KEY/);
+  // Social OAuth is handled by the isolated Zernio connector. Its server-only
+  // configuration failure still names the missing secret, while the route
+  // delegates rather than returning the retired handoff placeholder.
+  const zernio = readFileSync("server/src/lib/zernio.ts", "utf8");
+  assert.match(zernio, /ZERNIO_API_KEY/);
+  assert.match(routes, /connectSocial\(ctx\.profileId, body\.platform\)/);
 
   // The API client turns the server's message into an ApiError, so the dialog
   // surfaces that message directly instead of digging through an envelope.

@@ -1,11 +1,14 @@
 import { query, queryOne } from "../lib/db.js";
 import { env } from "../lib/env.js";
+import { mediaAssetIdFromUrl } from "../lib/media.js";
+import { sectorLabel, toneLabel } from "../lib/labels.js";
 import { buildAudiencePrompt, normalizeAudiences } from "../shared/audience.js";
 import { ensurePostEngagement } from "../shared/postEngagement.js";
 import { getTextLimit, tightLengthBrief } from "../shared/platformTextLimits.js";
 import { callClaude } from "./text.js";
 import { startPosterJob } from "./generation.js";
-import { loadEntitlement } from "./entitlement.js";
+import { loadEntitlement, monthlyUsage } from "./entitlement.js";
+import { consumeQuota, releaseQuota } from "./quota.js";
 import {
   buildEditorialPlan,
   isoWeekNumber,
@@ -22,6 +25,27 @@ import {
 // batch for a week that is already full.
 
 const HARD_MAX_POSTS_PER_RUN = 20;
+
+/**
+ * Hourly bound on what the automatic path may reserve. Its volume is already
+ * clamped by the plan's postsPerWeek; this stops a loop of "delete the week,
+ * generate it again" from running unbounded.
+ */
+const WEEKLY_HOURLY_CEILING = 40;
+
+/**
+ * Counts one automatic generation against the plan's rolling 30-day ceiling
+ * — the same ledger the dashboard's generations use. False when the ceiling
+ * (or the hourly bound) is reached.
+ *
+ * The automatic path used to record nothing: its texts and premium poster
+ * renders were invisible to the plan's cost ceiling, and a user could delete
+ * the week's posts and regenerate them, paid renders included, without limit.
+ */
+async function reserve(profileId: string, fn: string, monthlyCeiling: number): Promise<boolean> {
+  if ((await monthlyUsage(profileId, fn)) >= monthlyCeiling) return false;
+  return consumeQuota(profileId, fn, WEEKLY_HOURLY_CEILING, 3600);
+}
 
 const AUTO_ANGLES = [
   "Astuce concrète et applicable immédiatement",
@@ -144,19 +168,37 @@ export async function generateWeekFor(profileId: string): Promise<WeeklyResult> 
   const plan = buildEditorialPlan(promoTarget, researchTarget, toGenerate);
 
   const companyName = profile.company_name?.trim() || "notre entreprise";
-  const sector = profile.sector || "Business";
+  const sector = sectorLabel(profile.sector) || "Entreprise";
   const description = profile.description || "";
-  const tone = profile.tone || "Professionnel";
+  const tone = toneLabel(profile.tone) || "Professionnel";
   const audiences = normalizeAudiences(profile.target_audiences);
   const weekNumber = isoWeekNumber(now);
 
-  const customImages =
+  const listed =
     profile.use_custom_images && Array.isArray(profile.custom_image_urls)
       ? profile.custom_image_urls.filter((u): u is string => typeof u === "string" && Boolean(u))
       : [];
+  // Only images that still exist: one deleted from the library but still in
+  // the saved list would give the post a broken image.
+  const localIds = listed.map(mediaAssetIdFromUrl).filter((id): id is string => Boolean(id));
+  const present = new Set(
+    localIds.length
+      ? (
+          await query<{ id: string }>(
+            `SELECT id::text FROM media_assets WHERE profile_id = $1 AND id = ANY($2::uuid[])`,
+            [profileId, localIds],
+          )
+        ).map((r) => r.id)
+      : [],
+  );
+  const customImages = listed.filter((url) => {
+    const id = mediaAssetIdFromUrl(url);
+    return id ? present.has(id.toLowerCase()) : true;
+  });
 
   const generatedThisRun: string[] = [];
   let generated = 0;
+  let limitReached = false;
 
   for (let i = 0; i < toGenerate; i++) {
     const category = plan[i] ?? "value";
@@ -180,6 +222,10 @@ export async function generateWeekFor(profileId: string): Promise<WeeklyResult> 
       angle: AUTO_ANGLES[(i + weekNumber) % AUTO_ANGLES.length]!,
     });
 
+    if (!(await reserve(profileId, "generate-text", entitlement.limits.monthlyTextGenerations))) {
+      limitReached = true;
+      break;
+    }
     let content = "";
     try {
       content = await callClaude({
@@ -188,11 +234,15 @@ export async function generateWeekFor(profileId: string): Promise<WeeklyResult> 
         topP: 0.9,
       });
     } catch (err) {
-      // One failed post must not abandon the rest of the week.
+      // One failed post must not abandon the rest of the week, nor cost it.
+      await releaseQuota(profileId, "generate-text");
       console.error(`[weekly] generation failed for ${profileId}:`, (err as Error).message);
       continue;
     }
-    if (!content.trim()) continue;
+    if (!content.trim()) {
+      await releaseQuota(profileId, "generate-text");
+      continue;
+    }
 
     content = ensurePostEngagement({
       content,
@@ -235,9 +285,14 @@ export async function generateWeekFor(profileId: string): Promise<WeeklyResult> 
 
     // No custom image → start a poster. Best-effort: a failure here leaves the
     // post text-only rather than losing the text that was just generated.
-    if (!customImage && env.graphisteKey) {
+    // Past the plan's poster ceiling, the post stays text-only.
+    if (
+      !customImage &&
+      env.graphisteKey &&
+      (await reserve(profileId, "generate-image", entitlement.limits.monthlyImageGenerations))
+    ) {
       try {
-        await startPosterJob({
+        const job = await startPosterJob({
           profileId,
           postId: inserted.id,
           postContent: content,
@@ -251,16 +306,21 @@ export async function generateWeekFor(profileId: string): Promise<WeeklyResult> 
             profile.brand_primary_color,
             profile.brand_secondary_color,
             profile.brand_accent_color,
-          ].filter((c): c is string => Boolean(c)),
+          ].filter((c): c is string => Boolean(c && /^#[0-9a-f]{6}$/i.test(c))),
           logoUrl: profile.logo_url,
         });
+        // Refused before any render: not a generation, give it back.
+        if (job.status === "failed") await releaseQuota(profileId, "generate-image");
       } catch (err) {
+        await releaseQuota(profileId, "generate-image");
         console.error(`[weekly] poster failed for ${inserted.id}:`, (err as Error).message);
       }
     }
   }
 
-  return { profileId, generated };
+  return limitReached
+    ? { profileId, generated, skipped: "plan_limit_reached" }
+    : { profileId, generated };
 }
 
 /** Runs a weekly top-up for every account that has finished onboarding. */

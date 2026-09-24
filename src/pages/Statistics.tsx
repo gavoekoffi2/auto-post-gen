@@ -90,8 +90,8 @@ export default function Statistics() {
         Object.entries(platformCounts).map(([name, value]) => ({ name, value }))
       );
 
-    } catch (_error) {
-      toast.error('Erreur lors du chargement des statistiques');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Erreur lors du chargement des statistiques');
     } finally {
       setLoading(false);
     }

@@ -34,7 +34,7 @@ test('an SVG is never accepted as a finished poster, even from the provider', ()
 });
 
 test('the request sends the documented v1.1 contract fields', () => {
-  assert.match(generation, /subject: buildSubject\(input, spec\)/);
+  assert.match(generation, /subject: buildSubject\(input, spec, character\?\.position \?\? null\)/);
   assert.match(generation, /title:/);
   assert.match(generation, /aspect_ratio: aspectRatio\(spec\)/);
   assert.match(generation, /resolution: "2K"/);
@@ -44,7 +44,10 @@ test('the request sends the documented v1.1 contract fields', () => {
   assert.match(generation, /reliability_mode: true/);
   assert.match(generation, /"Idempotency-Key": crypto\.randomUUID\(\)/);
   assert.match(generation, /requestBody\.colors = input\.colors/);
-  assert.match(generation, /requestBody\.logo_urls = \[input\.logoUrl\]/);
+  // The stored logo is session-guarded: the renderer gets a capability URL
+  // it can actually fetch, never the relative path.
+  assert.match(generation, /shareableMediaUrl\(input\.profileId, input\.logoUrl\)/);
+  assert.match(generation, /requestBody\.logo_urls = \[logo\]/);
 });
 
 test('a provider error reaches the user as a message they can act on', () => {
