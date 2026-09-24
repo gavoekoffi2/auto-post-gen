@@ -390,7 +390,7 @@ hebdomadaires, changement d'email). Voir §9.
 | | |
 |---|---|
 | **Branche** | `claude/brand-kit-poses-k4p8` |
-| **SHA du code** | `__CODE_SHA__` |
+| **SHA du code** | `2a2e1ef5929aa60881a561397b7d4f0769bfd523` |
 | **SHA à déployer** | la pointe de la branche (ce document est le seul commit au-dessus du code ; `git log -1 --format=%H`) |
 | **Base** | `claude/poster-character-audit-h7n3` @ `51e39908d56903accfb791fab899990a03e36b13` (audit de pré-production, §0000) |
 | **Base précédente** | `claude/poster-character-q2w6` @ `bfce311933fc72146c426bc6a17c06ce28481f1a` (personnage sur les affiches, §000) |
