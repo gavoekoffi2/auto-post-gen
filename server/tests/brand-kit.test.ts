@@ -121,7 +121,7 @@ test("the layout keeps the logo clear of the character", () => {
   assert.deepEqual(posterLayout("left"), { footer: "bottom-right", brand: "top-right" });
 });
 
-test("migration 0008 turns the single cut-out of 0006 into the first pose, once", async () => {
+test("migration 0009 turns the single cut-out of 0007 into the first pose, once", async () => {
   const id = await account("backfill");
   const png = await sharp({ create: { width: 10, height: 10, channels: 4, background: "#000" } }).png().toBuffer();
   const file = await storeBuffer(id, png, "image/png");
@@ -132,7 +132,7 @@ test("migration 0008 turns the single cut-out of 0006 into the first pose, once"
   );
   await query(`UPDATE profiles SET poster_character_asset_id = $2 WHERE id = $1`, [id, asset!.id]);
 
-  const sql = readFileSync(new URL("../migrations/0008_brand_kit_and_poses.sql", import.meta.url), "utf8");
+  const sql = readFileSync(new URL("../migrations/0009_brand_kit_and_poses.sql", import.meta.url), "utf8");
   await pool.query(sql);
   await pool.query(sql); // replayed: idempotent
   const poses = await query<{ gesture: string }>(

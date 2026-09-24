@@ -383,7 +383,7 @@ async function recordJob(
   },
 ): Promise<JobRow> {
   // The columns up to `format` are exactly what the write probe in migration
-  // 0000 mirrors; character_overlay (0006) and logo_overlay (0008) are
+  // 0000 mirrors; character_overlay (0007) and logo_overlay (0009) are
   // nullable.
   const row = await queryOne<JobRow>(
     `INSERT INTO generation_jobs

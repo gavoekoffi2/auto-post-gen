@@ -1,6 +1,6 @@
 // The gestures a poster character's photo can show. The keys mirror the
 // server's (server/src/services/poses.ts, and the CHECK constraint of
-// migration 0008); a test keeps them in step.
+// migration 0009); a test keeps them in step.
 
 export const GESTURES = {
   neutre: { label: "Souriant, de face", hint: "Une photo simple, de face" },

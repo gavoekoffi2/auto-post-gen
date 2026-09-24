@@ -1,12 +1,12 @@
 -- =====================================================================
--- 0008 — Brand kit on every poster, and a character that adapts its gesture.
+-- 0009 — Brand kit on every poster, and a character that adapts its gesture.
 --
 -- 1. POSES. The account's character can now be several photos of the same
 --    person in different gestures (presenting, pointing, thumbs up...). For
 --    each poster the API picks the one that suits the post's message and
 --    lays the REAL photo on the render — the renderer never redraws the
 --    person, which is how "another face" ended up on posters.
---    The single cut-out of 0006 becomes the first pose (backfill below).
+--    The single cut-out of 0007 becomes the first pose (backfill below).
 -- 2. LOGO. "Show my logo on every poster": the account's own logo file is
 --    applied onto the finished render, exactly as uploaded.
 -- 3. BRAND COLOURS. "Apply my brand colours to every poster".
@@ -47,7 +47,7 @@ DO $$ BEGIN
     CHECK (facing IN ('left', 'front', 'right'));
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
--- The 0006 cut-out becomes the account's first pose. Guarded, so a replay
+-- The 0007 cut-out becomes the account's first pose. Guarded, so a replay
 -- adds nothing.
 INSERT INTO poster_character_poses (profile_id, asset_id, gesture, facing)
 SELECT p.id, p.poster_character_asset_id, 'neutre', 'front'
