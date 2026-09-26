@@ -20,7 +20,7 @@
 //
 import { getSocialImageSpec, type SocialImageSpec } from "./socialImageSpecs.ts";
 import { fetchImageBytes } from "./safeFetch.ts";
-import { extractJobId, extractStatusUrl, jobFailed } from "./graphisteParse.ts";
+import { extractJobId, extractStatusUrl, jobFailed, sameOriginStatusUrl } from "./graphisteParse.ts";
 
 const GRAPHISTE_GPT_DEFAULT_URL =
   "https://bbfzfgcdioewzbmlgaqy.supabase.co/functions/v1/api-v1/v1/posters/generate";
@@ -203,7 +203,8 @@ function statusCandidates(endpoint: string, statusUrl: string | null, jobId: str
     out.push(`${base}/jobs/${encodeURIComponent(jobId)}`);
     out.push(`${u.origin}/functions/v1/api-v1/v1/jobs/${encodeURIComponent(jobId)}`);
   }
-  if (statusUrl) out.push(statusUrl.startsWith("http") ? statusUrl : new URL(statusUrl, endpoint).toString());
+  const safeStatusUrl = sameOriginStatusUrl(endpoint, statusUrl);
+  if (safeStatusUrl) out.push(safeStatusUrl);
   return [...new Set(out)];
 }
 

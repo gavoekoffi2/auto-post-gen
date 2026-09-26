@@ -8,6 +8,7 @@ import { ArrowLeft, Mail, MessageSquare, Send } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { functionErrorPayload } from "@/lib/functionErrors";
 
 const SUPPORT_EMAIL = "contact@prosocialai.com";
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -40,14 +41,14 @@ export default function Contact() {
       const { data, error } = await supabase.functions.invoke("send-contact", {
         body: formData,
       });
-      // supabase.functions.invoke throws on non-2xx; data.error covers the
-      // "configured but rejected" case.
       if (error || (data && data.error)) {
-        const code = (data && data.code) || "";
-        if (code === "not_configured") {
+        // On non-2xx, data is null: the server's { error, code } body lives on
+        // error.context.
+        const payload = (error ? await functionErrorPayload(error) : null) || data || {};
+        if (payload.code === "not_configured") {
           toast.error(`Messagerie indisponible. Écrivez-nous à ${SUPPORT_EMAIL}.`);
         } else {
-          toast.error((data && data.error) || "Échec de l'envoi. Réessayez plus tard.");
+          toast.error(payload.error || "Échec de l'envoi. Réessayez plus tard.");
         }
         return;
       }

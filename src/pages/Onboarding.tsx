@@ -10,8 +10,9 @@ import { ArrowRight, ArrowLeft, Sparkles } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { functionErrorMessage } from "@/lib/functionErrors";
 import { AudienceEditor } from "@/components/AudienceEditor";
-import { AudienceSegment, normalizeAudienceSegments } from "@/lib/audiences";
+import { AudienceSegment, audiencesToJson, normalizeAudienceSegments } from "@/lib/audiences";
 
 export default function Onboarding() {
   const navigate = useNavigate();
@@ -81,7 +82,7 @@ export default function Onboarding() {
           contentTypes: [formData.contentType],
         },
       });
-      if (error) throw error;
+      if (error) throw new Error(await functionErrorMessage(error, "Erreur du service"));
       const audiences = normalizeAudienceSegments(data?.audiences);
       if (audiences.length < 2) throw new Error("Analyse incomplète");
       setFormData((current) => ({
@@ -134,10 +135,10 @@ export default function Onboarding() {
               preferred_days: formData.preferredDays,
               auto_publish: false,
               image_people_type: formData.imagePeopleType,
-              audience_suggestions: formData.audienceSuggestions,
-              target_audiences: formData.audienceSuggestions.filter((audience) =>
+              audience_suggestions: audiencesToJson(formData.audienceSuggestions),
+              target_audiences: audiencesToJson(formData.audienceSuggestions.filter((audience) =>
                 formData.selectedAudienceIds.includes(audience.id)
-              ),
+              )),
               audiences_confirmed_at: new Date().toISOString(),
             },
             { onConflict: 'id' }

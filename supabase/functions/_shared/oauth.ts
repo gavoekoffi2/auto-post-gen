@@ -32,13 +32,16 @@ function base64UrlEncode(bytes: Uint8Array): string {
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
-function base64UrlDecode(s: string): Uint8Array {
+// Returns a plain ArrayBuffer so it is a valid BufferSource for WebCrypto
+// under both older and newer (generic Uint8Array) TypeScript lib typings.
+function base64UrlDecode(s: string): ArrayBuffer {
   const pad = s.length % 4;
   if (pad) s += "=".repeat(4 - pad);
   const bin = atob(s.replace(/-/g, "+").replace(/_/g, "/"));
-  const out = new Uint8Array(bin.length);
+  const buf = new ArrayBuffer(bin.length);
+  const out = new Uint8Array(buf);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
+  return buf;
 }
 
 async function getHmacKey(): Promise<CryptoKey> {
@@ -78,9 +81,15 @@ export async function verifyState(
     new TextEncoder().encode(body),
   );
   if (!ok) throw new Error("Invalid state signature");
-  const payload = JSON.parse(new TextDecoder().decode(base64UrlDecode(body))) as
-    Record<string, unknown> & { ts: number };
-  if (Date.now() - payload.ts > maxAgeMs) throw new Error("State expired");
+  let payload: Record<string, unknown> & { ts: number };
+  try {
+    payload = JSON.parse(new TextDecoder().decode(base64UrlDecode(body)));
+  } catch {
+    throw new Error("Invalid state");
+  }
+  if (typeof payload?.ts !== "number" || Date.now() - payload.ts > maxAgeMs) {
+    throw new Error("State expired");
+  }
   return payload;
 }
 

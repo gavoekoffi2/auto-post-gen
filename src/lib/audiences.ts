@@ -1,3 +1,5 @@
+import type { Json } from "@/integrations/supabase/types";
+
 export interface AudienceSegment {
   id: string;
   name: string;
@@ -32,4 +34,10 @@ export function normalizeAudienceSegments(value: unknown): AudienceSegment[] {
       };
     })
     .filter((item) => item.name.trim());
+}
+
+// AudienceSegment is plain JSON data, but TypeScript cannot prove an interface
+// matches the recursive Json type, so jsonb columns need this explicit bridge.
+export function audiencesToJson(segments: AudienceSegment[]): Json {
+  return segments as unknown as Json;
 }

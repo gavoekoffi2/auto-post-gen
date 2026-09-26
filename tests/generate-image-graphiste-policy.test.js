@@ -129,8 +129,9 @@ test('generate-image prioritizes the canonical public poll route over an emitted
   const fnEnd = source.indexOf('\n}\n', fnStart);
   const fn = source.slice(fnStart, fnEnd);
   assert.ok(fn.indexOf('if (jobId)') >= 0);
-  assert.ok(fn.indexOf('if (statusUrl)') >= 0);
-  assert.ok(fn.indexOf('if (jobId)') < fn.indexOf('if (statusUrl)'),
+  assert.ok(fn.indexOf('sameOriginStatusUrl(endpoint, statusUrl)') >= 0,
+    'client/DB-supplied status URLs must be origin-checked before being polled with the API key');
+  assert.ok(fn.indexOf('if (jobId)') < fn.indexOf('sameOriginStatusUrl(endpoint, statusUrl)'),
     'canonical job-id route must be tried before potentially stale/internal status_url');
 });
 

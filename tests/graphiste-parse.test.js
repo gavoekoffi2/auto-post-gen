@@ -8,6 +8,7 @@ import {
   extractJobId,
   extractStatusUrl,
   jobFailed,
+  sameOriginStatusUrl,
 } from '../supabase/functions/_shared/graphisteParse.ts';
 
 // The canonical v1.1 async response (POST /v1/posters/generate, HTTP 202), per
@@ -64,4 +65,28 @@ test('jobFailed flags terminal states and non-2xx Graphiste error envelopes', ()
   assert.equal(jobFailed({ data: { status: 'processing' } }), false);
   assert.equal(jobFailed({ data: { status: 'completed' } }), false);
   assert.equal(jobFailed(ASYNC_ACCEPTED), false);
+});
+
+// Status URLs come from the client and from a user-writable column, and are
+// polled WITH the Graphiste API key: only the endpoint's own origin is allowed.
+test('sameOriginStatusUrl keeps same-origin status URLs (absolute or relative)', () => {
+  const endpoint = 'https://api.graphiste.example/functions/v1/api-v1/v1/posters/generate';
+  assert.equal(
+    sameOriginStatusUrl(endpoint, 'https://api.graphiste.example/functions/v1/api-v1/v1/posters/job-1'),
+    'https://api.graphiste.example/functions/v1/api-v1/v1/posters/job-1',
+  );
+  assert.equal(
+    sameOriginStatusUrl(endpoint, '/functions/v1/api-v1/v1/posters/job-1'),
+    'https://api.graphiste.example/functions/v1/api-v1/v1/posters/job-1',
+  );
+});
+
+test('sameOriginStatusUrl rejects foreign hosts, scheme changes and junk', () => {
+  const endpoint = 'https://api.graphiste.example/v1/posters/generate';
+  assert.equal(sameOriginStatusUrl(endpoint, 'https://attacker.example/steal'), null);
+  assert.equal(sameOriginStatusUrl(endpoint, '//attacker.example/steal'), null);
+  assert.equal(sameOriginStatusUrl(endpoint, 'http://api.graphiste.example/v1/posters/job-1'), null);
+  assert.equal(sameOriginStatusUrl(endpoint, 'https://api.graphiste.example.attacker.example/x'), null);
+  assert.equal(sameOriginStatusUrl(endpoint, null), null);
+  assert.equal(sameOriginStatusUrl('not a url', '/x'), null);
 });

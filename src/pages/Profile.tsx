@@ -10,8 +10,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ArrowLeft, Save, Building2, Settings, ImageIcon } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from '@/integrations/supabase/client';
+import { functionErrorMessage } from '@/lib/functionErrors';
 import { AudienceEditor } from '@/components/AudienceEditor';
-import { AudienceSegment, normalizeAudienceSegments } from '@/lib/audiences';
+import { AudienceSegment, audiencesToJson, normalizeAudienceSegments } from '@/lib/audiences';
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -158,7 +159,7 @@ export default function Profile() {
           contentTypes: profile.content_types,
         },
       });
-      if (error) throw error;
+      if (error) throw new Error(await functionErrorMessage(error, "Erreur du service"));
       const audiences = normalizeAudienceSegments(data?.audiences);
       if (audiences.length < 2) throw new Error("Analyse incomplète");
       setProfile((current) => ({
@@ -212,10 +213,10 @@ export default function Profile() {
           brand_font: profile.brand_font,
           image_style: profile.image_style,
           style_examples: profile.style_examples,
-          audience_suggestions: profile.audienceSuggestions,
-          target_audiences: profile.audienceSuggestions.filter((audience) =>
+          audience_suggestions: audiencesToJson(profile.audienceSuggestions),
+          target_audiences: audiencesToJson(profile.audienceSuggestions.filter((audience) =>
             profile.selectedAudienceIds.includes(audience.id)
-          ),
+          )),
           audiences_confirmed_at: new Date().toISOString(),
         })
         .eq('id', session.user.id);

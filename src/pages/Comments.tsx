@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { functionErrorMessage } from "@/lib/functionErrors";
 import type { Database } from "@/integrations/supabase/types";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -88,7 +89,7 @@ const Comments = () => {
     setSyncing(true);
     try {
       const { data, error } = await supabase.functions.invoke("sync-comments", {});
-      if (error) throw error;
+      if (error) throw new Error(await functionErrorMessage(error, "Erreur du service"));
       if (data?.notice) toast.info(data.notice);
       else {
         toast.success(
@@ -113,7 +114,7 @@ const Comments = () => {
       const { data, error } = await supabase.functions.invoke("comment-reply", {
         body: { mode: "draft", commentId: c.id },
       });
-      if (error) throw error;
+      if (error) throw new Error(await functionErrorMessage(error, "Erreur du service"));
       if (data?.error) throw new Error(data.error);
       setDrafts((prev) => ({ ...prev, [c.id]: data?.reply || "" }));
     } catch (err) {
@@ -134,7 +135,7 @@ const Comments = () => {
       const { data, error } = await supabase.functions.invoke("comment-reply", {
         body: { mode: "send", commentId: c.id, reply },
       });
-      if (error) throw error;
+      if (error) throw new Error(await functionErrorMessage(error, "Erreur du service"));
       if (data?.error) throw new Error(data.error);
       toast.success("Réponse envoyée");
       setComments((prev) =>

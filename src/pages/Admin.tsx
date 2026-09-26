@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { functionErrorMessage } from "@/lib/functionErrors";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -42,7 +43,7 @@ export default function Admin() {
 
   const invoke = async (body: Record<string, unknown>) => {
     const { data: response, error } = await supabase.functions.invoke("admin-api", { body });
-    if (error) throw error;
+    if (error) throw new Error(await functionErrorMessage(error, "Erreur du service"));
     if (response?.error) throw new Error(response.error);
     return response;
   };

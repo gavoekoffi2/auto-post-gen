@@ -64,3 +64,20 @@ export function jobFailed(value: unknown): boolean {
   }
   return false;
 }
+
+// Resolve a job status URL (absolute or relative) against the configured
+// Graphiste endpoint and keep it ONLY if it stays on the endpoint's origin.
+// Status URLs reach us from the client (resume requests) and from the
+// user-writable posts.image_status_url column, and every poll carries the
+// Graphiste API key in the Authorization header — an attacker-chosen host
+// would receive that secret. Anything off-origin or unparsable is dropped.
+export function sameOriginStatusUrl(endpoint: string, statusUrl: string | null): string | null {
+  if (!statusUrl) return null;
+  try {
+    const base = new URL(endpoint);
+    const resolved = new URL(statusUrl, base);
+    return resolved.origin === base.origin ? resolved.toString() : null;
+  } catch {
+    return null;
+  }
+}

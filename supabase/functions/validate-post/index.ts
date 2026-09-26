@@ -56,7 +56,7 @@ serve(async (req) => {
 
     const { data: post, error } = await supabase
       .from("posts")
-      .select("id,status,validation_token_created_at,validation_token_used_at")
+      .select("id,status,created_at,validation_token_created_at,validation_token_used_at")
       .eq("validation_token", token)
       .maybeSingle();
 
@@ -75,9 +75,13 @@ serve(async (req) => {
       );
     }
 
-    if (post.validation_token_created_at) {
-      const ageMs = Date.now() - new Date(post.validation_token_created_at).getTime();
-      if (ageMs > TOKEN_TTL_MS) {
+    // Rows created before validation_token_created_at had a default carry a
+    // NULL there; fall back to the post's creation time so their token still
+    // expires instead of staying valid forever.
+    const tokenIssuedAt = post.validation_token_created_at || post.created_at;
+    if (tokenIssuedAt) {
+      const ageMs = Date.now() - new Date(tokenIssuedAt).getTime();
+      if (!Number.isFinite(ageMs) || ageMs > TOKEN_TTL_MS) {
         return new Response(
           JSON.stringify({ error: "Token expired" }),
           { status: 410, headers: { ...corsHeaders, "Content-Type": "application/json" } },

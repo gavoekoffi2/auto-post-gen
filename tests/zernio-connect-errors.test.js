@@ -9,6 +9,8 @@ test("Zernio billing errors are actionable instead of the generic Edge Function 
   assert.match(edge, /free_tier_exceeded/);
   assert.match(edge, /ZERNIO_PAYMENT_REQUIRED/);
   assert.match(edge, /limite gratuite Zernio de 2 comptes connectés/);
-  assert.match(ui, /functionError\.context\.clone\(\)\.json\(\)/);
+  const helper = readFileSync("src/lib/functionErrors.ts", "utf8");
+  assert.match(ui, /from "@\/lib\/functionErrors"/);
+  assert.match(helper, /context\.clone\(\)\.json\(\)/);
   assert.match(ui, /toast\.error\(await functionErrorMessage/);
 });

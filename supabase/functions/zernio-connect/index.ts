@@ -68,9 +68,22 @@ serve(async (req) => {
         .eq("id", userId)
         .maybeSingle();
       const name = (prof?.company_name || prof?.email || `user-${userId.slice(0, 8)}`).slice(0, 60);
-      // Try a dedicated profile; if the plan limit is reached, fall back to
-      // the operator's default profile so connection still works.
+      // Every user needs a dedicated profile: publish-post, zernio-status and
+      // sync-comments all scope by profile, so users sharing one would publish
+      // to, list and read comments from each other's social accounts. Falling
+      // back to the operator's default profile is therefore opt-in and only
+      // safe for a single-tenant deployment (ZERNIO_ALLOW_SHARED_PROFILE=true).
       profileId = await zernioCreateProfile(name);
+      if (!profileId && Deno.env.get("ZERNIO_ALLOW_SHARED_PROFILE") !== "true") {
+        return jsonResponse(
+          {
+            error:
+              "Impossible de créer un espace Zernio dédié à votre compte (limite de profils du plan Zernio atteinte). Contactez le support.",
+            code: "ZERNIO_PROFILE_LIMIT",
+          },
+          { status: 503, cors },
+        );
+      }
       if (!profileId) {
         const profiles = await zernioListProfiles();
         profileId = profiles.find((p) => p.isDefault)?._id || profiles[0]?._id || null;

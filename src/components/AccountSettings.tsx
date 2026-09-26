@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Lock, Trash2, Mail, Download } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { functionErrorMessage } from "@/lib/functionErrors";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 
@@ -38,7 +39,7 @@ export function AccountSettings({ userEmail }: AccountSettingsProps) {
     setExporting(true);
     try {
       const { data, error } = await supabase.functions.invoke("export-account-data", {});
-      if (error) throw error;
+      if (error) throw new Error(await functionErrorMessage(error, "Erreur du service"));
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -110,7 +111,7 @@ export function AccountSettings({ userEmail }: AccountSettingsProps) {
       // The edge function uses the admin API to wipe storage, app data
       // AND the auth.users row in a single transaction.
       const { error } = await supabase.functions.invoke("delete-account", {});
-      if (error) throw error;
+      if (error) throw new Error(await functionErrorMessage(error, "Erreur du service"));
 
       await supabase.auth.signOut();
 

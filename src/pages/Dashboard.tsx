@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { functionErrorMessage } from "@/lib/functionErrors";
 import { getSocialImageSpec } from "@/lib/socialImageSpecs";
 import { useNavigate } from "react-router-dom";
 import SettingsDialog from "@/components/SettingsDialog";
@@ -295,7 +296,7 @@ export default function Dashboard() {
         body: { postId: post.id },
       });
       toast.dismiss(loadingToast);
-      if (error) throw error;
+      if (error) throw new Error(await functionErrorMessage(error, "Erreur du service"));
       const results = (data?.results || []) as Array<{ status: string; platform: string; message?: string; externalUrl?: string }>;
       const anyOk = results.some((r) => r.status === "ok");
       const anyPending = results.some((r) => r.status === "pending");
@@ -422,7 +423,7 @@ export default function Dashboard() {
 
       if (error) {
         console.error('Edge function error:', error);
-        throw error;
+        throw new Error(await functionErrorMessage(error, "Erreur du service"));
       }
       if (!data || !data.content) {
         throw new Error('Aucun contenu reçu de la génération');
@@ -575,7 +576,7 @@ export default function Dashboard() {
           userPreferences: userProfile,
         },
       });
-      if (error) throw error;
+      if (error) throw new Error(await functionErrorMessage(error, "Erreur du service"));
       if (!data?.content) throw new Error("Aucun contenu reçu");
 
       const updatedPost: Post = {

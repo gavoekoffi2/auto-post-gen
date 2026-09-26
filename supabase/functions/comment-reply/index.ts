@@ -8,6 +8,9 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 import { buildCorsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { ayrsharePostReply, draftReply, zernioReply } from "../_shared/engagement.ts";
 
+const DRAFT_RATE_LIMIT_MAX = 30;
+const MAX_REPLY_CHARS = 2000;
+
 serve(async (req) => {
   const cors = buildCorsHeaders(req.headers.get("origin"));
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
@@ -62,6 +65,21 @@ serve(async (req) => {
 
   try {
     if (body.mode === "draft" || !body.mode) {
+      // Each draft is a paid AI call: meter it like the other generators.
+      const { data: quotaOk, error: quotaErr } = await supabase.rpc("consume_generation_quota", {
+        p_user: userId,
+        p_function: "comment-reply",
+        p_max: DRAFT_RATE_LIMIT_MAX,
+        p_window_seconds: 3600,
+      });
+      if (quotaErr) {
+        console.error("consume_generation_quota (comment-reply) failed, allowing:", quotaErr.message);
+      } else if (quotaOk === false) {
+        return jsonResponse(
+          { error: `Limite de ${DRAFT_RATE_LIMIT_MAX} suggestions de réponse par heure atteinte.` },
+          { status: 429, cors },
+        );
+      }
       const reply = await draftReply({
         comment: comment.message || "",
         postContent: post?.content || null,
@@ -74,6 +92,12 @@ serve(async (req) => {
     if (body.mode === "send") {
       const reply = (body.reply || "").trim();
       if (!reply) return jsonResponse({ error: "reply vide" }, { status: 400, cors });
+      if (reply.length > MAX_REPLY_CHARS) {
+        return jsonResponse(
+          { error: `Réponse trop longue (${MAX_REPLY_CHARS} caractères maximum).` },
+          { status: 400, cors },
+        );
+      }
 
       let res: { ok: boolean; id?: string; error?: string };
       if (comment.provider === "zernio") {

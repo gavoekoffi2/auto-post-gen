@@ -4,6 +4,7 @@ import { buildCorsHeaders, jsonResponse } from "../_shared/cors.ts";
 
 const FOUNDER_EMAIL = "c1domefa@gmail.com";
 const VALID_PLANS = new Set(["starter", "pro", "enterprise"]);
+const VALID_ROLES = new Set(["user", "admin", "super_admin"]);
 
 type AdminBody = {
   action?: string;
@@ -16,6 +17,10 @@ type AdminBody = {
   companyName?: string;
 };
 
+function isBanned(bannedUntil: string | null | undefined): boolean {
+  return !!bannedUntil && new Date(bannedUntil).getTime() > Date.now();
+}
+
 function safeUser(user: User) {
   return {
     id: user.id,
@@ -23,7 +28,7 @@ function safeUser(user: User) {
     createdAt: user.created_at,
     lastSignInAt: user.last_sign_in_at ?? null,
     role: user.app_metadata?.role ?? "user",
-    blocked: !!user.banned_until && new Date(user.banned_until).getTime() > Date.now(),
+    blocked: isBanned((user as User & { banned_until?: string | null }).banned_until),
   };
 }
 
@@ -54,14 +59,29 @@ serve(async (req) => {
   // email can promote itself. Every subsequent request relies on app_metadata,
   // which ordinary browser clients cannot edit.
   let actorRole = actor.app_metadata?.role ?? "user";
-  if (actor.email?.toLowerCase() === FOUNDER_EMAIL && actorRole !== "super_admin") {
-    const { data, error } = await admin.auth.admin.updateUserById(actor.id, {
-      app_metadata: { ...actor.app_metadata, role: "super_admin" },
-    });
-    if (error || !data.user) {
-      return jsonResponse({ error: "Impossible d’activer le compte propriétaire" }, { status: 500, cors: corsHeaders });
+  // The bootstrap is one-time: it only runs while NO super_admin exists yet.
+  // Production auto-confirms sign-ups (mailer_autoconfirm), so a confirmed
+  // founder email alone proves nothing — if the founder account were ever
+  // deleted, anyone registering that address would otherwise be promoted.
+  if (
+    actor.email?.toLowerCase() === FOUNDER_EMAIL &&
+    !!actor.email_confirmed_at &&
+    actorRole !== "super_admin"
+  ) {
+    const { data: existing, error: listError } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+    if (listError) {
+      return jsonResponse({ error: "Impossible de vérifier les administrateurs" }, { status: 500, cors: corsHeaders });
     }
-    actorRole = "super_admin";
+    const hasSuperAdmin = existing.users.some((u) => u.app_metadata?.role === "super_admin");
+    if (!hasSuperAdmin) {
+      const { data, error } = await admin.auth.admin.updateUserById(actor.id, {
+        app_metadata: { ...actor.app_metadata, role: "super_admin" },
+      });
+      if (error || !data.user) {
+        return jsonResponse({ error: "Impossible d’activer le compte propriétaire" }, { status: 500, cors: corsHeaders });
+      }
+      actorRole = "super_admin";
+    }
   }
   if (!new Set(["admin", "super_admin"]).has(actorRole)) {
     return jsonResponse({ error: "Accès administrateur requis" }, { status: 403, cors: corsHeaders });
@@ -135,6 +155,9 @@ serve(async (req) => {
         return jsonResponse({ error: "Email et mot de passe (8 caractères minimum) requis" }, { status: 400, cors: corsHeaders });
       }
       const role = body.role || "user";
+      if (!VALID_ROLES.has(role)) {
+        return jsonResponse({ error: "Rôle invalide" }, { status: 400, cors: corsHeaders });
+      }
       const { data, error } = await admin.auth.admin.createUser({
         email,
         password: body.password,
@@ -160,7 +183,7 @@ serve(async (req) => {
       const { error } = await admin.from("profiles").update({ plan: body.plan }).eq("id", targetId);
       if (error) throw error;
     } else if (action === "set_role") {
-      if (!body.role || !new Set(["user", "admin", "super_admin"]).has(body.role)) return jsonResponse({ error: "Rôle invalide" }, { status: 400, cors: corsHeaders });
+      if (!body.role || !VALID_ROLES.has(body.role)) return jsonResponse({ error: "Rôle invalide" }, { status: 400, cors: corsHeaders });
       if (targetIsFounder && body.role !== "super_admin") return jsonResponse({ error: "Le propriétaire principal ne peut pas être rétrogradé" }, { status: 400, cors: corsHeaders });
       const { error } = await admin.auth.admin.updateUserById(targetId, { app_metadata: { ...target.app_metadata, role: body.role } });
       if (error) throw error;
